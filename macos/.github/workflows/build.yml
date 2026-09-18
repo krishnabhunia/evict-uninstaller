@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The Release step needs to write to the repository; new repos hand workflows a read-only token.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
