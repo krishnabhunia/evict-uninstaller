@@ -45,14 +45,17 @@ final class AppState: ObservableObject {
 
     // ── environment ──
     @Published var fullDiskAccess: Bool = FullDiskAccess.isGranted
-    @Published var settings: Settings
-    let settingsStore = SettingsStore()
+    @Published var settings: EvictKit.Settings
+    let settingsStore: SettingsStore
     let history = HistoryStore()
     private let planner = UninstallPlanner()
     private var casks: [String] = []
 
     init() {
-        settings = settingsStore.current
+        // The store must exist before `settings` can be read from it.
+        let store = SettingsStore()
+        settingsStore = store
+        settings = store.current
     }
 
     var colorScheme: ColorScheme? {
@@ -74,7 +77,7 @@ final class AppState: ObservableObject {
 
     var totalSize: Int64 { apps.reduce(0) { $0 + $1.sizeBytes } }
 
-    func updateSettings(_ change: (inout Settings) -> Void) {
+    func updateSettings(_ change: (inout EvictKit.Settings) -> Void) {
         settingsStore.update(change)
         settings = settingsStore.current
     }

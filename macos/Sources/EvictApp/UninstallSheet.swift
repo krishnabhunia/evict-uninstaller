@@ -106,10 +106,10 @@ struct UninstallSheet: View {
                     if !result.failed.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Not removed").font(.headline)
-                            ForEach(Array(result.failed.enumerated()), id: \.offset) { _, failure in
+                            ForEach(result.failed.indices, id: \.self) { index in
                                 VStack(alignment: .leading, spacing: 1) {
-                                    Text(failure.path).font(.caption).textSelection(.enabled)
-                                    Text(failure.error).font(.caption2).foregroundStyle(.secondary)
+                                    Text(result.failed[index].path).font(.caption).textSelection(.enabled)
+                                    Text(result.failed[index].error).font(.caption2).foregroundStyle(.secondary)
                                 }
                             }
                         }

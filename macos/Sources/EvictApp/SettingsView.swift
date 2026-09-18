@@ -65,7 +65,7 @@ struct SettingsView: View {
         }
     }
 
-    private func binding(_ keyPath: WritableKeyPath<Settings, Bool>) -> Binding<Bool> {
+    private func binding(_ keyPath: WritableKeyPath<EvictKit.Settings, Bool>) -> Binding<Bool> {
         Binding(get: { state.settings[keyPath: keyPath] },
                 set: { value in state.updateSettings { $0[keyPath: keyPath] = value } })
     }

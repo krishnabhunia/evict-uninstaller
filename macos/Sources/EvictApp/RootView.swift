@@ -8,7 +8,7 @@ struct RootView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: Binding(get: { state.page }, set: { state.page = $0 ?? .applications })) {
+            List(selection: Binding<AppState.Page?>(get: { state.page }, set: { state.page = $0 ?? .applications })) {
                 Section("Evict") {
                     ForEach(AppState.Page.allCases) { page in
                         Label(page.rawValue, systemImage: page.icon).tag(page)
