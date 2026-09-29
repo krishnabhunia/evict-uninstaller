@@ -16,6 +16,8 @@ public partial class App : Application
     public static bool IsExiting { get; set; }
     /// <summary>--tray / --scheduled-scan: the window is not shown at start.</summary>
     public static bool StartedHeadless { get; private set; }
+    /// <summary>Set by <c>--self-cleanup ask</c>: only the "remove Evict's leftovers" window runs.</summary>
+    public static CommandLineOptions? SelfCleanupMode { get; set; }
 
     /// <summary>The one way to quit: marks the exit as intentional so "close to tray" does not intercept it.</summary>
     public static void Quit()
@@ -27,6 +29,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (SelfCleanupMode != null) { StartSelfCleanup(SelfCleanupMode); return; }
         // The window can be hidden in the tray, so the process lifetime is controlled explicitly.
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
@@ -79,6 +82,27 @@ public partial class App : Application
             _ = mainVm.CheckForUpdatesOnStartupAsync();
             _ = mainVm.RunMissedScheduledScanIfDueAsync();
         }
+    }
+
+    /// <summary>Minimal start: theme + the self-cleanup window. No services, no settings writes, no log file.</summary>
+    private void StartSelfCleanup(CommandLineOptions options)
+    {
+        ShutdownMode = ShutdownMode.OnMainWindowClose;
+        var theme = "Light";
+        try
+        {
+            var file = System.IO.Path.Combine(AppPaths.DataRootPath, "settings.json");
+            if (System.IO.File.Exists(file))
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(file));
+                if (doc.RootElement.TryGetProperty("Theme", out var t) && t.GetString() is { } s) theme = s;
+            }
+        }
+        catch { /* default theme */ }
+        ApplyTheme(theme);
+        var window = new Views.SelfCleanupWindow { DataContext = new SelfCleanupViewModel(options.Portable) };
+        MainWindow = window;
+        window.Show();
     }
 
     private static void HandleArgs(MainViewModel vm, string[] args, bool activate = true)

@@ -6,6 +6,17 @@ public static class AppPaths
     public const string ProductName = "Evict Uninstaller";
     public const string ShortName = "Evict";
 
+    /// <summary>%LocalAppData%\Evict without creating it (self-cleanup must not recreate the folder it removes).</summary>
+    public static string DataRootPath
+    {
+        get
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrEmpty(local)) local = Path.GetTempPath();
+            return Path.Combine(local, ShortName);
+        }
+    }
+
     public static string DataRoot
     {
         get

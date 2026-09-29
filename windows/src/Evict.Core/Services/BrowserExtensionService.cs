@@ -27,6 +27,9 @@ public sealed class BrowserExtensionService
         yield return new(BrowserKind.Opera, Path.Combine(roaming, "Opera Software", "Opera GX Stable"), new[] { "opera" }, ProfilesInSubfolders: false);
     }
 
+    /// <summary>Browser data folders in which Evict may have left "*.evict-backup" copies of preference files.</summary>
+    public static IEnumerable<string> BackupSearchRoots() => ChromiumRoots().Select(r => r.UserDataDir).Append(FirefoxRoot);
+
     private static string FirefoxRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Mozilla", "Firefox");
 
     public static readonly IReadOnlyDictionary<BrowserKind, string[]> ProcessNames = new Dictionary<BrowserKind, string[]>

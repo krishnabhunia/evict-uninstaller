@@ -1,0 +1,74 @@
+<Window x:Class="Evict.App.Views.RegistryReviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:Evict.App.ViewModels"
+        xmlns:views="clr-namespace:Evict.App.Views"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:RegistryReviewViewModel}"
+        Style="{StaticResource Window.Dialog}"
+        Title="{Binding Title}" Width="920" Height="640" MinWidth="720" MinHeight="480"
+        Icon="pack://application:,,,/Assets/app.ico">
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Text="{Binding Title}" Style="{StaticResource Text.Title}" />
+            <TextBlock Text="{Binding Subtitle}" Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <!-- Review -->
+        <views:LeftoverReviewView Grid.Row="1" DataContext="{Binding Review}"
+                                  Visibility="{Binding DataContext.Step, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource EqualsToVis}, ConverterParameter=Review}" />
+
+        <!-- Cleaning -->
+        <StackPanel Grid.Row="1" VerticalAlignment="Center" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Cleaning}">
+            <TextBlock Text="Backing up and removing registry entries…" Style="{StaticResource Text.Section}" HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Caption}" HorizontalAlignment="Center" Margin="0,8,0,12" TextTrimming="CharacterEllipsis" MaxWidth="700" />
+            <ProgressBar Value="{Binding Progress, Mode=OneWay}" Maximum="100" Width="420" />
+        </StackPanel>
+
+        <!-- Done -->
+        <Border Grid.Row="1" Style="{StaticResource Card}" VerticalAlignment="Top" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Done}">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                    <TextBlock Text="&#xE73E;" Style="{StaticResource Icon}" FontSize="22" Foreground="{DynamicResource Brush.Success}" VerticalAlignment="Center" />
+                    <TextBlock Text="Done" Style="{StaticResource Text.Section}" Margin="10,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0" Visibility="{Binding BackupFile, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="Everything removed was saved to a .reg backup first." Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
+                    <Button Style="{StaticResource Button.Secondary}" Content="Undo" Command="{Binding UndoCommand}" Margin="12,0,0,0" Padding="14,5" ToolTip="{Binding BackupFile}" />
+                </StackPanel>
+                <ItemsControl ItemsSource="{Binding Errors}" Margin="0,10,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" Style="{StaticResource Text.Caption}" Foreground="{DynamicResource Brush.Danger}" TextWrapping="Wrap" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
+        <!-- Footer -->
+        <Grid Grid.Row="2" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="{Binding Review.SelectedSummary}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center"
+                       Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Review}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Style="{StaticResource Button.Secondary}" Content="Close" Command="{Binding CloseCommand}" MinWidth="100" Margin="0,0,10,0" IsCancel="True" />
+                <Button Style="{StaticResource Button.Danger}" Content="Back up &amp; remove selected" Command="{Binding RemoveCommand}" MinWidth="200"
+                        Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Review}" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

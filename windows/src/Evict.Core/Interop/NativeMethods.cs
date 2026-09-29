@@ -42,6 +42,29 @@ internal static class NativeMethods
         }
     }
 
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int RegQueryValueExW(SafeRegistryHandle hKey, string lpValueName, IntPtr lpReserved, out uint lpType, byte[]? lpData, ref uint lpcbData);
+
+    private const int ERROR_MORE_DATA = 234;
+
+    /// <summary>A value's raw registry type and bytes (exactly as stored), or null when it does not exist.</summary>
+    public static (uint Type, byte[] Data)? ReadRawRegistryValue(RegistryKey key, string name)
+    {
+        uint size = 0;
+        int rc = RegQueryValueExW(key.Handle, name, IntPtr.Zero, out var type, null, ref size);
+        if (rc != 0 && rc != ERROR_MORE_DATA) return null;
+        for (int attempt = 0; attempt < 4; attempt++)
+        {
+            var data = new byte[size];
+            uint got = size;
+            rc = RegQueryValueExW(key.Handle, name, IntPtr.Zero, out type, data, ref got);
+            if (rc == 0) return (type, got == size ? data : data[..(int)got]);
+            if (rc != ERROR_MORE_DATA) return null;
+            size = got; // the value grew between the two calls
+        }
+        return null;
+    }
+
     // ───────────────────────────── Shell file operations (Recycle Bin) ─────────────────────────────
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 8)]

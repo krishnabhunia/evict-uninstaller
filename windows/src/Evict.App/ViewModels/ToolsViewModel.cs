@@ -33,6 +33,7 @@ public sealed partial class ToolsViewModel : ObservableObject
             new() { Key = "force", Glyph = "", Title = "Force Uninstall", Description = "Remove a program whose uninstaller is broken or missing – pick it from the list or point at its folder." },
             new() { Key = "widget", Glyph = "", Title = "Easy Uninstall widget", Description = "A small floating target: drag it onto any program window (or drop a shortcut on it) to uninstall that program." },
             new() { Key = "residual", Glyph = "", Title = "Residual Cleaner", Description = "Find files, folders and registry keys left behind by programs that were uninstalled earlier – by any uninstaller." },
+            new() { Key = "registry", Glyph = "\uE90F", Title = "Registry Cleaner", Description = "Remove registry entries that point to programs and files which no longer exist – every change is backed up and can be restored." },
             new() { Key = "cleanup", Glyph = "", Title = "System Cleanup", Description = "Orphaned installer packages, removed Store apps' data, update caches, temp files and crash dumps.", RequiresAdmin = true },
             new() { Key = "startup", Glyph = "", Title = "Startup Apps", Description = "See everything that launches at sign-in; switch entries off or remove them." },
             new() { Key = "shred", Glyph = "", Title = "File Shredder", Description = "Permanently destroy files and folders by overwriting them so they cannot be recovered." },
@@ -69,6 +70,9 @@ public sealed partial class ToolsViewModel : ObservableObject
             case "residual":
                 OpenResidualCleaner();
                 break;
+            case "registry":
+                OpenRegistryCleaner();
+                break;
             case "cleanup":
                 OpenSystemCleanup();
                 break;
@@ -100,6 +104,13 @@ public sealed partial class ToolsViewModel : ObservableObject
     {
         var vm = new SystemCleanupViewModel(_services);
         new SystemCleanupWindow { DataContext = vm, Owner = System.Windows.Application.Current.MainWindow }.ShowDialog();
+        if (vm.AnythingChanged) _main.GetPage<HistoryViewModel>(PageKey.History).Reload();
+    }
+
+    public void OpenRegistryCleaner()
+    {
+        var vm = new RegistryCleanerViewModel(_services);
+        new RegistryCleanerWindow { DataContext = vm, Owner = System.Windows.Application.Current.MainWindow }.ShowDialog();
         if (vm.AnythingChanged) _main.GetPage<HistoryViewModel>(PageKey.History).Reload();
     }
 

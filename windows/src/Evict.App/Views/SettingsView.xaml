@@ -159,6 +159,8 @@
                         <Button Style="{StaticResource Button.Secondary}" Content="Open data folder" Command="{Binding OpenDataFolderCommand}" />
                         <Button Style="{StaticResource Button.Secondary}" Content="Open log file" Command="{Binding OpenLogFileCommand}" Margin="8,0,0,0" />
                         <Button Style="{StaticResource Button.Ghost}" Content="Reset to defaults" Command="{Binding ResetDefaultsCommand}" Margin="8,0,0,0" />
+                        <Button Style="{StaticResource Button.Ghost}" Content="Remove Evict from this PC…" Command="{Binding RemoveEvictCommand}" Margin="8,0,0,0"
+                                ToolTip="Installed copy: opens Programs and Features. Portable copy: closes Evict and removes its settings, registry entries and other leftovers you choose." />
                     </StackPanel>
                 </StackPanel>
             </Border>

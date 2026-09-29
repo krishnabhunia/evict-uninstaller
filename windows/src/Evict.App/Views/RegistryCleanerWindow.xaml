@@ -1,0 +1,253 @@
+<Window x:Class="Evict.App.Views.RegistryCleanerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:Evict.App.ViewModels"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:RegistryCleanerViewModel}"
+        Style="{StaticResource Window.Dialog}"
+        Title="Registry Cleaner" Width="1000" Height="720" MinWidth="820" MinHeight="560"
+        Icon="pack://application:,,,/Assets/app.ico">
+
+    <Window.Resources>
+        <DataTemplate x:Key="BackupRow" DataType="{x:Type vm:RegistryBackupViewModel}">
+            <Grid Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Label}" Style="{StaticResource Text.Body}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Style="{StaticResource Text.Caption}">
+                        <Run Text="{Binding DateText, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding SizeText, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding ScopeText, Mode=OneWay}" />
+                    </TextBlock>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource Pill}" Background="{DynamicResource Brush.Warning.Subtle}" Margin="0,0,10,0" Visibility="{Binding NeedsElevation, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource Pill.Text}" Foreground="{DynamicResource Brush.Warning}" Text="administrator" />
+                    </Border>
+                    <Button Style="{StaticResource Button.Secondary}" Content="Restore" Padding="12,5" Margin="0,0,6,0"
+                            Command="{Binding DataContext.RestoreBackupCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" />
+                    <Button Style="{StaticResource Button.Ghost}" Padding="8,5" ToolTip="Delete this backup"
+                            Command="{Binding DataContext.DeleteBackupCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
+                        <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="12" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="Registry Cleaner" Style="{StaticResource Text.Title}" />
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Text="Finds registry entries that point to programs, files and folders which no longer exist. An entry is listed only when its file is provably gone from a fixed drive – nothing on USB sticks or network drives. Every removal is backed up to a .reg file first and can be restored." />
+            </StackPanel>
+            <Border Grid.Column="1" Style="{StaticResource Pill}" Background="{DynamicResource Brush.Warning.Subtle}" VerticalAlignment="Top" Margin="16,4,0,0"
+                    Visibility="{Binding IsElevated, Converter={StaticResource InvBoolToVis}}">
+                <TextBlock Style="{StaticResource Pill.Text}" Foreground="{DynamicResource Brush.Warning}" Text="Not administrator – machine-wide entries are listed but not ticked" />
+            </Border>
+        </Grid>
+
+        <!-- Idle -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Idle}">
+            <StackPanel>
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="What is checked" Style="{StaticResource Text.Section}" Margin="0,0,0,10" />
+                        <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold" Margin="0,0,0,6" Text="Ticked when found" />
+                        <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,4" Text="•  Broken uninstall entries · App Paths, startup entries and &quot;Open with&quot; entries of missing programs" />
+                        <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,4" Text="•  Shared DLL records and the program-name cache (MuiCache) for files that are gone · empty software keys" />
+                        <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold" Margin="0,10,0,6" Text="Listed for review (not ticked)" />
+                        <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,4" Text="•  Settings keys of removed programs · file-type commands of missing programs" />
+                        <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,4" Text="•  Advanced: COM / ActiveX objects and type libraries with missing files · Windows Installer folder records" />
+                        <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,14" Text="•  Privacy: recent documents, Run history, typed paths, search history, Open/Save dialog history, program usage statistics" />
+                        <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Caption}" Margin="0,0,0,10" />
+                        <Button Style="{StaticResource Button.Primary}" Content="Scan the registry" Command="{Binding ScanCommand}" HorizontalAlignment="Left" MinWidth="170" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,6">
+                            <TextBlock Text="Registry backups" Style="{StaticResource Text.Section}" />
+                            <Button Style="{StaticResource Button.Link}" Content="Open backup folder" Command="{Binding OpenBackupFolderCommand}" HorizontalAlignment="Right" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
+                                   Text="Written automatically before Evict deletes registry entries – here, in the uninstall wizard, Force Uninstall, Residual Cleaner and Install Monitor." />
+                        <TextBlock Style="{StaticResource Text.Caption}" Text="No backups yet." Visibility="{Binding HasBackups, Converter={StaticResource InvBoolToVis}}" />
+                        <ItemsControl ItemsSource="{Binding Backups}" ItemTemplate="{StaticResource BackupRow}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Scanning / Cleaning -->
+        <StackPanel Grid.Row="1" VerticalAlignment="Center" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding BusyTitle}" Style="{StaticResource Text.Section}" HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Body}" HorizontalAlignment="Center" Margin="0,8,0,12" TextTrimming="CharacterEllipsis" MaxWidth="760" />
+            <ProgressBar Value="{Binding Progress, Mode=OneWay}" Maximum="100" Width="480" />
+        </StackPanel>
+
+        <!-- Review -->
+        <Grid Grid.Row="1" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Review}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="14,10" Margin="0,0,0,12">
+                <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap">
+                    <Run Text="Found " /><Run Text="{Binding TotalFoundText, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" entries. Safe categories are ticked; categories marked " /><Run Text="review" FontWeight="SemiBold" /><Run Text=" or " /><Run Text="advanced" FontWeight="SemiBold" /><Run Text=" are not – expand them and tick what you are sure about." />
+                </TextBlock>
+            </Border>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding Groups}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:RegistryGroupViewModel}">
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,10" Padding="14,10">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" IsThreeState="True" VerticalAlignment="Center" Margin="0,0,10,0" IsEnabled="{Binding HasItems}" />
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Title}" Style="{StaticResource Text.Body}" FontWeight="SemiBold" />
+                                                <Border Style="{StaticResource Pill}" Margin="8,0,0,0" Background="{DynamicResource Brush.Warning.Subtle}" Visibility="{Binding Advanced, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Style="{StaticResource Pill.Text}" Foreground="{DynamicResource Brush.Warning}" Text="advanced" />
+                                                </Border>
+                                                <Border Style="{StaticResource Pill}" Margin="8,0,0,0" Background="{DynamicResource Brush.Accent.Subtle}" Visibility="{Binding IsPrivacy, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Style="{StaticResource Pill.Text}" Foreground="{DynamicResource Brush.Accent}" Text="privacy" />
+                                                </Border>
+                                                <Border Style="{StaticResource Pill}" Margin="8,0,0,0" Background="{DynamicResource Brush.Warning.Subtle}" Visibility="{Binding NeedsElevation, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Style="{StaticResource Pill.Text}" Foreground="{DynamicResource Brush.Warning}" Text="administrator" />
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Description}" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                                            <TextBlock Text="{Binding Error}" Style="{StaticResource Text.Caption}" Foreground="{DynamicResource Brush.Danger}" TextWrapping="Wrap" Margin="0,3,0,0" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{Binding CountText}" Style="{StaticResource Text.Body}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="16,0,0,0" />
+                                        <Button Grid.Column="3" Style="{StaticResource Button.Ghost}" Padding="8,4" Margin="10,0,0,0" ToolTip="Show / hide entries" VerticalAlignment="Center"
+                                                Command="{Binding DataContext.ToggleExpandCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
+                                                Visibility="{Binding HasItems, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="&#xE70D;" Style="{StaticResource Icon}" FontSize="11" />
+                                        </Button>
+                                    </Grid>
+                                    <ListView Style="{StaticResource ListView.Flat}" ItemsSource="{Binding Items}" Margin="0,10,0,0" MaxHeight="320"
+                                              Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                        <ListView.View>
+                                            <GridView ColumnHeaderContainerStyle="{StaticResource GridViewHeader}">
+                                                <GridViewColumn Width="36">
+                                                    <GridViewColumn.CellTemplate>
+                                                        <DataTemplate DataType="{x:Type vm:RegistryIssueItemViewModel}">
+                                                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                                                        </DataTemplate>
+                                                    </GridViewColumn.CellTemplate>
+                                                </GridViewColumn>
+                                                <GridViewColumn Header="Entry" Width="560">
+                                                    <GridViewColumn.CellTemplate>
+                                                        <DataTemplate DataType="{x:Type vm:RegistryIssueItemViewModel}">
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding Detail}" Style="{StaticResource Cell.Primary}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" />
+                                                                <TextBlock Text="{Binding Path}" Style="{StaticResource Cell.Secondary}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" />
+                                                            </StackPanel>
+                                                        </DataTemplate>
+                                                    </GridViewColumn.CellTemplate>
+                                                </GridViewColumn>
+                                                <GridViewColumn Header="Type" Width="70">
+                                                    <GridViewColumn.CellTemplate><DataTemplate DataType="{x:Type vm:RegistryIssueItemViewModel}"><TextBlock Text="{Binding KindText}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                                </GridViewColumn>
+                                                <GridViewColumn Header="Confidence" Width="90">
+                                                    <GridViewColumn.CellTemplate><DataTemplate DataType="{x:Type vm:RegistryIssueItemViewModel}"><TextBlock Text="{Binding ConfidenceText}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></GridViewColumn.CellTemplate>
+                                                </GridViewColumn>
+                                                <GridViewColumn Width="70">
+                                                    <GridViewColumn.CellTemplate>
+                                                        <DataTemplate DataType="{x:Type vm:RegistryIssueItemViewModel}">
+                                                            <Button Style="{StaticResource Button.Link}" Content="Open" ToolTip="Show in Registry Editor" Command="{Binding DataContext.OpenItemCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" />
+                                                        </DataTemplate>
+                                                    </GridViewColumn.CellTemplate>
+                                                </GridViewColumn>
+                                            </GridView>
+                                        </ListView.View>
+                                    </ListView>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- Done -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Done}">
+            <StackPanel>
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <TextBlock Text="&#xE73E;" Style="{StaticResource Icon}" FontSize="22" Foreground="{DynamicResource Brush.Success}" VerticalAlignment="Center" />
+                            <TextBlock Text="Registry cleaned" Style="{StaticResource Text.Section}" Margin="10,0,0,0" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0" Visibility="{Binding LastBackupFile, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="Everything removed was saved to a .reg backup first." Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
+                            <Button Style="{StaticResource Button.Secondary}" Content="Undo – restore these entries" Command="{Binding UndoLastCommand}" Margin="12,0,0,0" Padding="12,5" />
+                        </StackPanel>
+                        <ItemsControl ItemsSource="{Binding Errors}" Margin="0,10,0,0" MaxHeight="220">
+                            <ItemsControl.Template>
+                                <ControlTemplate TargetType="ItemsControl">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsPresenter /></ScrollViewer>
+                                </ControlTemplate>
+                            </ItemsControl.Template>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" Style="{StaticResource Text.Caption}" Foreground="{DynamicResource Brush.Danger}" TextWrapping="Wrap" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,6">
+                            <TextBlock Text="Registry backups" Style="{StaticResource Text.Section}" />
+                            <Button Style="{StaticResource Button.Link}" Content="Open backup folder" Command="{Binding OpenBackupFolderCommand}" HorizontalAlignment="Right" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding Backups}" ItemTemplate="{StaticResource BackupRow}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Footer -->
+        <Grid Grid.Row="2" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="{Binding SelectionText}" Style="{StaticResource Text.Body}" VerticalAlignment="Center"
+                       Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Review}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
+                <Button Style="{StaticResource Button.Secondary}" Content="Scan again" Command="{Binding RescanCommand}" MinWidth="110" Margin="0,0,10,0"
+                        Visibility="{Binding Step, Converter={StaticResource NotEqualsToVis}, ConverterParameter=Idle}" IsEnabled="{Binding IsBusy, Converter={StaticResource InvBool}}" />
+                <Button Style="{StaticResource Button.Secondary}" Content="Close" Command="{Binding CancelCommand}" MinWidth="100" Margin="0,0,10,0" IsCancel="True" />
+                <Button Style="{StaticResource Button.Danger}" Content="Back up &amp; remove selected" Command="{Binding CleanCommand}" MinWidth="200" IsEnabled="{Binding CanClean}"
+                        Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Review}" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
