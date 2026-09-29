@@ -70,6 +70,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             new() { Key = "extensions", Title = "Extensions with broad permissions", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 8 },
             new() { Key = "unused", Title = "Large programs not used recently", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 8 },
             new() { Key = "bloat", Title = "Pre-installed Store apps flagged as bloatware", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 10 },
+            new() { Key = "notifications", Title = "Disturbing notifications", Glyph = "\uE7ED", ActionText = "Review", Weight = 1, MaxPenalty = 5 },
             new() { Key = "startup", Title = "Programs starting at sign-in", Glyph = "", ActionText = "Manage", Weight = 0, MaxPenalty = 0 },
         };
     }
@@ -190,6 +191,17 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
+        var notifyTask = RunTile("notifications", async () =>
+        {
+            var items = await Task.Run(() => new NotificationService().Load());
+            int noisy = items.Count(i => i.RecommendOff && i.IsOn);
+            int allowed = items.Count(i => i.IsOn && i.Data.TryGetValue("type", out var t) && t == "sender");
+            Tile("notifications").Set(noisy, noisy == 0
+                ? $"{allowed} apps may show notifications; no promotional ones or Windows tips are switched on."
+                : $"{noisy} promotional sender(s) or Windows tip prompts are on; {allowed} apps may show notifications.");
+            return true;
+        });
+
         var startupTask = RunTile("startup", async () =>
         {
             var items = await Task.Run(() => _services.Startup.GetItems());
@@ -199,7 +211,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
-        await Task.WhenAll(programsTask, residualTask, junkTask, extTask, updTask, appxTask, startupTask);
+        await Task.WhenAll(programsTask, residualTask, junkTask, extTask, updTask, appxTask, notifyTask, startupTask);
 
         int penalty = Tiles.Where(t => t.State == TileState.Attention).Sum(t => t.Penalty);
         Score = Math.Clamp(100 - penalty, 0, 100);
@@ -230,6 +242,13 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         }
     }
 
+    private void OpenToggleList(IToggleProvider provider)
+    {
+        var vm = new ToggleListViewModel(provider);
+        new ToggleListWindow { DataContext = vm, Owner = Application.Current.MainWindow }.ShowDialog();
+        if (vm.AnythingChanged) _ = ScanAsync();
+    }
+
     [RelayCommand]
     private void Act(HealthTileViewModel? tile)
     {
@@ -245,6 +264,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             case "unused": _main.GetPage<ProgramsViewModel>(PageKey.Programs).SelectedTab = ProgramTab.Infrequent; _main.Navigate(PageKey.Programs); break;
             case "extensions": _main.Navigate(PageKey.BrowserExtensions); break;
             case "bloat": _main.GetPage<WindowsAppsViewModel>(PageKey.WindowsApps).OnlyBloatware = true; _main.Navigate(PageKey.WindowsApps); break;
+            case "notifications": OpenToggleList(new NotificationService()); break;
             case "startup":
                 new StartupWindow { DataContext = new StartupViewModel(_services), Owner = Application.Current.MainWindow }.ShowDialog();
                 break;

@@ -143,3 +143,42 @@ public class UninstallIssueRulesTests
         Assert.False(UninstallIssueRules.FailedBefore(p, new[] { old, ok }));
     }
 }
+
+public class NotificationRulesTests
+{
+    private static readonly string[] Bloat = { "king.com.CandyCrush", "Microsoft.BingWeather" };
+
+    [Theory]
+    [InlineData("Windows.SystemToast.SecurityAndMaintenance", Evict.Core.Services.NotificationSenderKind.Essential)]
+    [InlineData("Windows.Defender.SecurityCenter", Evict.Core.Services.NotificationSenderKind.Essential)]
+    [InlineData("Windows.SystemToast.Suggested", Evict.Core.Services.NotificationSenderKind.Promotional)]
+    [InlineData("Microsoft.Getstarted_8wekyb3d8bbwe!App", Evict.Core.Services.NotificationSenderKind.Promotional)]
+    [InlineData("king.com.CandyCrushSaga_kgqvnymyfvs32!App", Evict.Core.Services.NotificationSenderKind.Promotional)]
+    [InlineData("Microsoft.BingWeather_8wekyb3d8bbwe!App", Evict.Core.Services.NotificationSenderKind.Promotional)]
+    [InlineData("MSEdge", Evict.Core.Services.NotificationSenderKind.Normal)]
+    [InlineData(@"{6D809377-6AF0-444B-8957-A3773F02200E}\Zoom\bin\Zoom.exe", Evict.Core.Services.NotificationSenderKind.Normal)]
+    public void Classify(string id, Evict.Core.Services.NotificationSenderKind expected)
+    {
+        Assert.Equal(expected, Evict.Core.Services.NotificationRules.Classify(id, Bloat));
+    }
+
+    [Theory]
+    [InlineData("Microsoft.WindowsStore_8wekyb3d8bbwe!App", "Microsoft.WindowsStore")]
+    [InlineData("Windows.SystemToast.SecurityAndMaintenance", "Windows – Security And Maintenance")]
+    [InlineData(@"{6D809377-6AF0-444B-8957-A3773F02200E}\Zoom\bin\Zoom.exe", "Zoom")]
+    [InlineData("Chrome", "Chrome")]
+    public void DisplayName(string id, string expected)
+    {
+        Assert.Equal(expected, Evict.Core.Services.NotificationRules.DisplayName(id));
+    }
+
+    [Fact]
+    public void ResolvePath_MapsKnownFolders()
+    {
+        string Folder(Environment.SpecialFolder f) => f == Environment.SpecialFolder.ProgramFiles ? @"C:\Program Files" : "";
+        Assert.Equal(Path.Combine(@"C:\Program Files", @"Zoom\bin\Zoom.exe"),
+            Evict.Core.Services.NotificationRules.ResolvePath(@"{6D809377-6AF0-444B-8957-A3773F02200E}\Zoom\bin\Zoom.exe", Folder));
+        Assert.Null(Evict.Core.Services.NotificationRules.ResolvePath("MSEdge", Folder));
+        Assert.Equal(@"C:\Tools\x.exe", Evict.Core.Services.NotificationRules.ResolvePath(@"C:\Tools\x.exe", Folder));
+    }
+}
