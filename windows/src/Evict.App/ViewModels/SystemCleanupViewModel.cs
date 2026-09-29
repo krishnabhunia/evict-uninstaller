@@ -98,10 +98,21 @@ public sealed partial class SystemCleanupViewModel : ObservableObject
     private readonly AppServices _services;
     private CancellationTokenSource? _cts;
 
-    public SystemCleanupViewModel(AppServices services)
+    private readonly IReadOnlyList<InstalledProgram>? _programs;
+    private readonly IReadOnlyCollection<CleanupCategory>? _only;
+
+    /// <param name="programs">Installed programs if already loaded (saves a registry read).</param>
+    /// <param name="only">Show just these categories (opened from a Software Health tile); the scan starts at once.</param>
+    public SystemCleanupViewModel(AppServices services, IReadOnlyList<InstalledProgram>? programs = null, IReadOnlyCollection<CleanupCategory>? only = null, string? title = null)
     {
         _services = services;
+        _programs = programs;
+        _only = only;
+        WindowTitle = title ?? "System Cleanup";
     }
+
+    public string WindowTitle { get; }
+    public bool IsScoped => _only is { Count: > 0 };
 
     public ObservableCollection<CleanupGroupViewModel> Groups { get; } = new();
     public ObservableCollection<string> Errors { get; } = new();
@@ -143,6 +154,7 @@ public sealed partial class SystemCleanupViewModel : ObservableObject
         {
             StatusText = "Reading installed Store apps…";
             IReadOnlyCollection<string>? families = null;
+            if (!IsScoped || _only!.Contains(CleanupCategory.StoreAppData))
             try
             {
                 var (packages, _) = await _services.Appx.GetPackagesAsync(allUsers: false, null, _cts.Token);
@@ -150,7 +162,7 @@ public sealed partial class SystemCleanupViewModel : ObservableObject
             }
             catch (Exception ex) { Log.Warn("Appx list for cleanup failed: " + ex.Message); }
 
-            var groups = await _services.Cleanup.ScanAsync(families, progress, _cts.Token);
+            var groups = await _services.Cleanup.ScanAsync(families, progress, _cts.Token, _programs, _only);
             foreach (var g in groups)
             {
                 var vm = new CleanupGroupViewModel(g);

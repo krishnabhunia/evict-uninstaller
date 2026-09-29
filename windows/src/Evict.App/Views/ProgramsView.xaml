@@ -85,7 +85,7 @@
                     <StackPanel Orientation="Horizontal"><TextBlock Text="Bundleware" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding CountBundleware}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
                 </RadioButton>
                 <RadioButton Style="{StaticResource Button.Tab}" GroupName="ProgTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Broken, Mode=TwoWay}">
-                    <StackPanel Orientation="Horizontal"><TextBlock Text="Broken Entries" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding CountBroken}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Uninstall issues" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding CountBroken}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
                 </RadioButton>
             </StackPanel>
         </Border>
@@ -152,7 +152,7 @@
                                             <TextBlock Grid.Column="2" Text="{Binding StatusGlyph}" Style="{StaticResource Icon}" FontSize="13" Margin="8,0,4,0" ToolTip="{Binding StatusTooltip}"
                                                        Visibility="{Binding StatusGlyph, Converter={StaticResource BoolToVis}}">
                                                 <TextBlock.Foreground>
-                                                    <Binding Path="IsBroken" Converter="{StaticResource BoolToBrush}" ConverterParameter="Brush.Warning|Brush.Accent" />
+                                                    <Binding Path="HasUninstallIssue" Converter="{StaticResource BoolToBrush}" ConverterParameter="Brush.Warning|Brush.Accent" />
                                                 </TextBlock.Foreground>
                                             </TextBlock>
                                         </Grid>
@@ -245,6 +245,11 @@
 
                             <Border Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="6" Padding="10,8" Margin="0,14,0,0" Visibility="{Binding IsBroken, Converter={StaticResource BoolToVis}}">
                                 <TextBlock Text="Broken entry – the install folder and uninstaller are gone. Use 'Remove entry' or 'Force Uninstall'." Style="{StaticResource Text.Caption}" Foreground="{DynamicResource Brush.Text.Primary}" />
+                            </Border>
+                            <Border Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="6" Padding="10,8" Margin="0,14,0,0" Visibility="{Binding HasOtherUninstallIssue, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Style="{StaticResource Text.Caption}" Foreground="{DynamicResource Brush.Text.Primary}" TextWrapping="Wrap">
+                                    <Run Text="{Binding UninstallIssueText, Mode=OneWay}" /><Run Text=". Use 'Force Uninstall' to remove the program and everything it left." />
+                                </TextBlock>
                             </Border>
                             <Border Background="{DynamicResource Brush.Info.Subtle}" CornerRadius="6" Padding="10,8" Margin="0,14,0,0" Visibility="{Binding IsBundleSuspect, Converter={StaticResource BoolToVis}}">
                                 <TextBlock Text="{Binding BundleNote}" Style="{StaticResource Text.Caption}" Foreground="{DynamicResource Brush.Text.Primary}" />

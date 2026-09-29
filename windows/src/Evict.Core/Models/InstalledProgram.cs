@@ -83,6 +83,8 @@ public sealed class InstalledProgram
 
     /// <summary>True when neither the install folder nor the uninstaller executable exist any more.</summary>
     public bool IsBrokenEntry { get; set; }
+    /// <summary>Broken / uninstaller missing / no uninstaller (set when reading); FailedBefore is added from History by the UI.</summary>
+    public Util.UninstallIssue UninstallIssue { get; set; }
 
     public bool HasUninstaller => !string.IsNullOrWhiteSpace(UninstallString) || !string.IsNullOrWhiteSpace(QuietUninstallString) || IsMsi;
 

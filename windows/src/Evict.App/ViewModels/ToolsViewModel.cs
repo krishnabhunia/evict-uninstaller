@@ -100,9 +100,11 @@ public sealed partial class ToolsViewModel : ObservableObject
         }
     }
 
-    public void OpenSystemCleanup()
+    public void OpenSystemCleanup(IReadOnlyCollection<CleanupCategory>? only = null, string? title = null)
     {
-        var vm = new SystemCleanupViewModel(_services);
+        var programs = _main.GetPage<ProgramsViewModel>(PageKey.Programs).Items.Select(i => i.Program).ToList();
+        var vm = new SystemCleanupViewModel(_services, programs.Count > 0 ? programs : null, only, title);
+        if (vm.IsScoped) _ = vm.ScanAsync();
         new SystemCleanupWindow { DataContext = vm, Owner = System.Windows.Application.Current.MainWindow }.ShowDialog();
         if (vm.AnythingChanged) _main.GetPage<HistoryViewModel>(PageKey.History).Reload();
     }

@@ -22,14 +22,23 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="Software Health" Style="{StaticResource Text.Title}" />
-                    <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="One place to see outdated software, leftovers, bundleware, risky extensions and unused programs – each with a one-click way to deal with it." />
+                    <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Outdated software, leftovers, setup files and caches, uninstall problems, notifications, permissions, background updaters and security – tick what to fix and press Fix selected, or open a category to review it." TextWrapping="Wrap" />
                 </StackPanel>
-                <Button Grid.Column="1" Style="{StaticResource Button.Primary}" Command="{Binding ScanCommand}" IsEnabled="{Binding IsScanning, Converter={StaticResource InvBool}}" Padding="14,8" VerticalAlignment="Top">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
-                        <TextBlock Text="Scan now" Margin="8,0,0,0" />
-                    </StackPanel>
-                </Button>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button Style="{StaticResource Button.Secondary}" Command="{Binding FixSelectedCommand}" IsEnabled="{Binding CanFix}" Padding="14,8" Margin="0,0,10,0"
+                            ToolTip="Apply the safe fix of every ticked category below">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE90F;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}" />
+                            <TextBlock Text="Fix selected" Margin="8,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource Button.Primary}" Command="{Binding ScanCommand}" IsEnabled="{Binding IsScanning, Converter={StaticResource InvBool}}" Padding="14,8">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
+                            <TextBlock Text="Scan now" Margin="8,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
             </Grid>
 
             <!-- Score card -->
@@ -80,6 +89,7 @@
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
@@ -124,8 +134,12 @@
                                         </TextBlock.Style>
                                     </TextBlock>
                                 </Grid>
-                                <TextBlock Grid.Row="1" Text="{Binding Detail}" Style="{StaticResource Text.Caption}" Margin="0,12,0,12" TextWrapping="Wrap" />
-                                <Grid Grid.Row="2">
+                                <CheckBox Grid.Row="1" IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,10,0,0" Visibility="{Binding ShowSelection, Converter={StaticResource BoolToVis}}"
+                                          ToolTip="Include in &quot;Fix selected&quot;">
+                                    <TextBlock Text="{Binding SelectionText}" Style="{StaticResource Text.Caption}" />
+                                </CheckBox>
+                                <TextBlock Grid.Row="2" Text="{Binding Detail}" Style="{StaticResource Text.Caption}" Margin="0,10,0,12" TextWrapping="Wrap" />
+                                <Grid Grid.Row="3">
                                     <ProgressBar IsIndeterminate="True" HorizontalAlignment="Left" Width="120" VerticalAlignment="Center" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
                                     <Button Style="{StaticResource Button.Secondary}" Content="{Binding ActionText}" HorizontalAlignment="Right" MinWidth="96" Padding="12,5" MinHeight="30"
                                             Command="{Binding DataContext.ActCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
