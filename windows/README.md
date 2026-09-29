@@ -83,10 +83,18 @@ Requirements: .NET 8 SDK (Windows, Linux or macOS — the project sets `EnableWi
 
 ```bash
 dotnet test tests/Evict.Core.Tests            # 410 unit tests for the pure logic
-dotnet publish src/Evict.App -c Release -o publish   # → publish/Evict.exe (single file, win-x64)
+dotnet publish src/Evict.App -c Release -o Portable # → Portable/Evict.exe (single file, win-x64)
 ```
 
 or run `build/publish.ps1` (Windows) / `build/publish.sh` (Linux/macOS).
+
+| SrNo. | Output folder | Contains | Made by |
+|---|---|---|---|
+| 1 | `windows/Portable/` | `Evict.exe` + `.sha256` – the stand-alone edition, runs from anywhere | `dotnet publish` (the build scripts) |
+| 2 | `windows/Installed/` | `Evict-Setup-x.y.z.exe` + `.sha256` – the installer, which packs `Portable/Evict.exe` | Inno Setup (`installer/Evict.iss`) |
+
+Both folders are build results (ignored by git). The CI download contains the same two folders; a GitHub Release lists
+the four files side by side.
 
 ## Command line
 
@@ -108,11 +116,11 @@ If Evict is already running, a second launch hands its arguments to the open win
 ## Continuous integration
 
 `.github/workflows/windows.yml` (repository root) builds on `windows-latest` for every push that touches `windows/`: unit tests → XAML checks → single-file publish →
-(optional signing) → Inno Setup installer → SHA-256 files → artifact `Evict-<version>-<sha>` containing `Evict.exe`,
-`Evict-Setup-<version>.exe` and their `.sha256`. Pushing a tag `win-v1.3.4` (`v1.x` before the repositories were merged) additionally creates a GitHub Release with the
+(optional signing) → Inno Setup installer → SHA-256 files → artifact `Evict-<version>-<sha>` with the folders `Portable/` (`Evict.exe`)
+and `Installed/` (`Evict-Setup-<version>.exe`), each with its `.sha256`. Pushing a tag `win-vX.Y.Z` (`v1.x` before the repositories were merged) additionally creates a GitHub Release with the
 same four files attached (auto-generated notes) — that release is what the in-app update check reads.
 
-The installer script is `installer/Evict.iss` (Inno Setup 6.3+). Locally: `ISCC.exe /DMyAppVersion=1.2.0 /DSourceDir=..\publish installer\Evict.iss`.
+The installer script is `installer/Evict.iss` (Inno Setup 6.3+). Locally: `ISCC.exe /DMyAppVersion=1.6.0 /DSourceDir=..\Portable installer\Evict.iss` → `Installed\Evict-Setup-1.6.0.exe`.
 
 ## Code signing
 

@@ -1,6 +1,8 @@
 bin/
 obj/
 publish/
+Portable/
+Installed/
 *.user
 *.suo
 .vs/

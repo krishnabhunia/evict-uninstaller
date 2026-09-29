@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.5.0 — Software Health: 14 categories and Fix selected (29 Sep 2026)
+## 1.6.0 — Software Health: 14 categories and Fix selected (29 Sep 2026)
+
+First public release since 1.3.3 – versions 1.3.4, 1.4.0 and 1.5.0 were built and tested but never published, so their
+changes (listed below and under their own headings) all arrive with 1.6.0.
+
+- Build output folders are now **`Portable`** (the stand-alone `Evict.exe`) and **`Installed`** (`Evict-Setup-x.y.z.exe`),
+  in local builds and in the CI download; the files attached to a GitHub Release keep their names.
 
 - **Installation files**: setup packages in Downloads and on the Desktop; ticked when the program is already installed or
   the file is older than 30 days; removed files go to the Recycle Bin. Also a System Cleanup category.
@@ -25,7 +31,7 @@
 - The version number is shown in the title bar next to the name (and in the window / taskbar title); before, it was only
   a small line at the bottom of the sidebar that scrolled out of view at larger text sizes.
 
-## 1.4.0 — registry cleaning + clean self-removal (29 Sep 2026)
+## 1.4.0 (not published) — registry cleaning + clean self-removal (29 Sep 2026)
 
 - **Registry Cleaner** (Tools): a separate module that finds registry entries pointing to programs, files and folders that
   no longer exist – broken uninstall entries, App Paths, Run / RunOnce, "Open with" applications, SharedDLLs, MuiCache,
@@ -48,7 +54,7 @@
   own records of Evict.exe. Silent uninstalls remove only the integration. Portable copies: *Settings → Remove Evict from
   this PC…*.
 
-## 1.3.4 — one repository for Windows and macOS (29 Sep 2026)
+## 1.3.4 (not published) — one repository for Windows and macOS (29 Sep 2026)
 
 - The project moved to **github.com/krishnabhunia/evict-uninstaller** (renamed from `evict`; the old address redirects),
   with the Windows app in `windows/` and the macOS app in `macos/`.

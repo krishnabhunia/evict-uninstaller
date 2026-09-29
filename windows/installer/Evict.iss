@@ -1,16 +1,16 @@
 ; Inno Setup 6 script for Evict Uninstaller
-; Compile: ISCC.exe /DMyAppVersion=1.2.0 /DSourceDir=..\publish Evict.iss
+; Compile: ISCC.exe /DMyAppVersion=1.6.0 /DSourceDir=..\Portable Evict.iss   (output: ..\Installed\Evict-Setup-<version>.exe)
 ; (GitHub Actions does this automatically – see .github/workflows/windows.yml)
 
 #define MyAppName "Evict Uninstaller"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.5.0"
+  #define MyAppVersion "1.6.0"
 #endif
 #define MyAppPublisher "Krishna Bhunia"
 #define MyAppURL "https://github.com/krishnabhunia/evict-uninstaller"
 #define MyAppExeName "Evict.exe"
 #ifndef SourceDir
-  #define SourceDir "..\publish"
+  #define SourceDir "..\Portable"
 #endif
 
 [Setup]
@@ -29,7 +29,7 @@ DisableProgramGroupPage=yes
 ; Per-user by default (no UAC); the user may choose "all users" in the dialog.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-OutputDir=Output
+OutputDir=..\Installed
 OutputBaseFilename=Evict-Setup-{#MyAppVersion}
 SetupIconFile=..\src\Evict.App\Assets\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
