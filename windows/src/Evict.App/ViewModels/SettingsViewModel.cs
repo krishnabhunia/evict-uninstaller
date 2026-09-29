@@ -188,6 +188,31 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void Save() => _services.Settings.Save();
 
     [RelayCommand] private void OpenDataFolder() => Dialogs.OpenFolder(AppPaths.DataRoot);
+
+    /// <summary>
+    /// Installed copies are removed by their uninstaller (which asks about leftovers). A portable copy closes and
+    /// restarts itself in "--self-cleanup" mode, which removes its data once this process has exited.
+    /// </summary>
+    [RelayCommand]
+    private void RemoveEvict()
+    {
+        if (UpdateService.IsInstalledMode())
+        {
+            if (Dialogs.Confirm("Evict was installed with Setup. Uninstall it from Programs and Features (or Settings → Apps) – the uninstaller then asks which of Evict's settings, history and backups to remove.\n\nOpen Programs and Features now?"))
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("control.exe", "appwiz.cpl") { UseShellExecute = true }); } catch { /* ignore */ }
+            }
+            return;
+        }
+        if (!Dialogs.Confirm("Evict will close and then let you choose which of its files and registry entries to remove from this PC (settings, history, registry backups, browser-settings backups, Windows' records of Evict).\n\nEvict.exe itself is not deleted – remove it afterwards.\n\nContinue?", destructive: true))
+            return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(UpdateService.ExePath, $"--self-cleanup ask --portable --wait-pid {Environment.ProcessId}") { UseShellExecute = false });
+        }
+        catch (Exception ex) { Dialogs.Error("Could not start the clean-up: " + ex.Message); return; }
+        App.Quit();
+    }
     [RelayCommand] private void OpenLogFile() => Dialogs.OpenFolder(AppPaths.LogFile);
 
     [RelayCommand]

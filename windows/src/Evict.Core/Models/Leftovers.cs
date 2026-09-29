@@ -84,5 +84,7 @@ public sealed class CleanupResult
     public long BytesReclaimed { get; set; }
     /// <summary>Registry keys/values deleted and confirmed absent afterwards.</summary>
     public int RegistryVerified { get; set; }
+    /// <summary>.reg file holding everything that was deleted from the registry (null when nothing was).</summary>
+    public string? RegistryBackupFile { get; set; }
     public List<(LeftoverItem Item, string Error)> Errors { get; } = new();
 }

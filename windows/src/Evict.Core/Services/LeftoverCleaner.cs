@@ -11,6 +11,10 @@ public sealed class CleanupOptions
     public bool SendToRecycleBin { get; set; } = true;
     /// <summary>When a file is locked, schedule its deletion for the next reboot (requires admin).</summary>
     public bool ScheduleLockedForReboot { get; set; } = true;
+    /// <summary>Export every registry key/value to a .reg file before deleting it (items that cannot be exported are kept).</summary>
+    public bool BackupRegistry { get; set; } = true;
+    /// <summary>Label in the backup's file name, e.g. "Uninstall Foo".</summary>
+    public string BackupLabel { get; set; } = "Evict cleanup";
 }
 
 /// <summary>Deletes the items a <see cref="LeftoverScanner"/> found. Each item is independent; failures are collected.</summary>
@@ -37,13 +41,34 @@ public sealed class LeftoverCleaner
             .ThenByDescending(i => i.Kind == LeftoverKind.Folder ? PathUtil.Depth(i.Path) : 0)
             .ToList();
 
+        // Registry: back up first. Anything that cannot be backed up is not deleted.
+        var notBackedUp = new Dictionary<LeftoverItem, string>();
+        var registryItems = list.Where(i => i.IsRegistry).ToList();
+        if (options.BackupRegistry && registryItems.Count > 0)
+        {
+            progress?.Report(new ProgressReport("Backing up registry entries…", 0));
+            try
+            {
+                var backup = RegistryBackupService.Backup(registryItems, options.BackupLabel);
+                result.RegistryBackupFile = backup.FilePath;
+                foreach (var (item, error) in backup.Failed) notBackedUp[item] = error;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Registry backup failed: " + ex.Message);
+                foreach (var item in registryItems) notBackedUp[item] = ex.Message;
+            }
+        }
+
         int n = 0;
         foreach (var item in list)
         {
             ct.ThrowIfCancellationRequested();
             n++;
             progress?.Report(new ProgressReport($"Removing {item.Path}", 100.0 * n / Math.Max(1, list.Count)));
-            string? error = item.Kind switch
+            string? error = notBackedUp.TryGetValue(item, out var backupError)
+                ? "Not deleted – it could not be backed up first: " + backupError
+                : item.Kind switch
             {
                 LeftoverKind.Folder => DeletePath(item.Path, isDirectory: true, options),
                 LeftoverKind.File or LeftoverKind.Shortcut => DeletePath(item.Path, isDirectory: false, options),

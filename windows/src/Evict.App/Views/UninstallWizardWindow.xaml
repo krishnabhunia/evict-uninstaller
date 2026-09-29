@@ -130,6 +130,24 @@
             <views:LeftoverReviewView Grid.Row="1" DataContext="{Binding Review}" />
         </Grid>
 
+        <!-- ═══ Step 3b: Review leftover registry entries ═══ -->
+        <Grid Grid.Row="1" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=RegistryReview}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="14,10" Margin="0,0,0,12">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE90F;" Style="{StaticResource Icon}" Foreground="{DynamicResource Brush.Accent}" Margin="0,0,10,0" VerticalAlignment="Top" />
+                    <TextBlock Style="{StaticResource Text.Body}" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="820">
+                        <Run Text="Registry clean-up: " FontWeight="SemiBold" /><Run Text="{Binding RegistryReview.TotalCount, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" registry key(s) / value(s) left behind." />
+                        <Run Text="Everything you remove here is first saved to a .reg backup, so it can be restored with one click on the next page." Foreground="{DynamicResource Brush.Text.Secondary}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+            <views:LeftoverReviewView Grid.Row="1" DataContext="{Binding RegistryReview}" />
+        </Grid>
+
         <!-- ═══ Step 4: Cleaning ═══ -->
         <StackPanel Grid.Row="1" VerticalAlignment="Center" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Cleaning}">
             <TextBlock Text="Removing leftovers…" Style="{StaticResource Text.Section}" HorizontalAlignment="Center" />
@@ -160,7 +178,15 @@
 
             <StackPanel Grid.Row="1">
                 <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="14,10" Margin="0,0,0,10" Visibility="{Binding RegistrySummary, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Text="{Binding RegistrySummary}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Text="{Binding RegistrySummary}" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Style="{StaticResource Button.Secondary}" Content="Undo registry changes" Command="{Binding UndoRegistryCommand}" Padding="12,5" Margin="12,0,0,0"
+                                ToolTip="{Binding RegistryBackupFile}" Visibility="{Binding RegistryBackupFile, Converter={StaticResource BoolToVis}}" />
+                    </Grid>
                 </Border>
                 <Border Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="8" Padding="14,10" Margin="0,0,0,10" Visibility="{Binding RebootRecommended, Converter={StaticResource BoolToVis}}">
                     <TextBlock Style="{StaticResource Text.Body}" Text="A restart is recommended to finish removing files that were in use." />
@@ -225,6 +251,8 @@
             </Grid.ColumnDefinitions>
             <TextBlock Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Text="{Binding Review.SelectedSummary}"
                        Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Review}" />
+            <TextBlock Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Text="{Binding RegistryReview.SelectedSummary}"
+                       Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=RegistryReview}" />
             <StackPanel Grid.Column="1" Orientation="Horizontal">
                 <!-- Confirm -->
                 <StackPanel Orientation="Horizontal" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Confirm}">
@@ -242,10 +270,31 @@
                 <!-- Review -->
                 <StackPanel Orientation="Horizontal" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Review}">
                     <Button Style="{StaticResource Button.Secondary}" Content="Skip cleanup" Command="{Binding SkipCleanupCommand}" MinWidth="120" Margin="0,0,10,0" />
-                    <Button Style="{StaticResource Button.Danger}" Command="{Binding RemoveSelectedLeftoversCommand}" MinWidth="180">
+                    <Button Style="{StaticResource Button.Danger}" Command="{Binding RemoveSelectedLeftoversCommand}" MinWidth="180"
+                            Visibility="{Binding HasRegistryLeftovers, Converter={StaticResource InvBoolToVis}}">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
                             <TextBlock Text="Delete selected leftovers" Margin="8,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource Button.Primary}" Command="{Binding NextToRegistryCommand}" MinWidth="180"
+                            Visibility="{Binding HasRegistryLeftovers, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding NextToRegistryText}" />
+                            <TextBlock Text="&#xE72A;" Style="{StaticResource Icon}" FontSize="12" Foreground="White" Margin="8,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+                <!-- Registry review -->
+                <StackPanel Orientation="Horizontal" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=RegistryReview}">
+                    <Button Style="{StaticResource Button.Ghost}" Content="Back" Command="{Binding BackToFilesCommand}" MinWidth="80" Margin="0,0,10,0"
+                            Visibility="{Binding HasFileLeftovers, Converter={StaticResource BoolToVis}}" />
+                    <Button Style="{StaticResource Button.Secondary}" Content="Skip registry" Command="{Binding SkipRegistryCommand}" MinWidth="120" Margin="0,0,10,0"
+                            ToolTip="Remove only the selected files and folders; leave the registry untouched" />
+                    <Button Style="{StaticResource Button.Danger}" Command="{Binding RemoveSelectedLeftoversCommand}" MinWidth="200">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
+                            <TextBlock Text="Back up &amp; remove selected" Margin="8,0,0,0" />
                         </StackPanel>
                     </Button>
                 </StackPanel>

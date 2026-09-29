@@ -8,15 +8,17 @@ delivered as a single portable `Evict.exe` **or** an `Evict-Setup-x.y.z.exe` ins
 | Module | What it does | Status |
 |---|---|---|
 | **Programs** | All installed programs (64-bit, 32-bit, per-user) with icons, size, install date, last-used; tabs for *All / Recently Installed / Large / Infrequently Used / Bundleware / Broken Entries*; search, sort, multi-select | ✅ |
-| **Uninstall wizard** | Optional System Restore point → runs the program's own uninstaller (interactive or silent) → **Powerful Scan** for leftovers → review with confidence rating → delete (Recycle Bin optional) → summary | ✅ |
+| **Uninstall wizard** | Optional System Restore point → runs the program's own uninstaller (interactive or silent) → **Powerful Scan** for leftovers → review files & folders → **separate Registry step** → delete (Recycle Bin optional; registry backed up to .reg first) → summary with **Undo registry changes** | ✅ / 1.4 |
 | **Powerful Scan** | Finds leftover folders/files (Program Files, ProgramData, AppData of every user), Start-menu / desktop shortcuts, registry keys & values (vendor keys, App Paths, Run entries, AppCompat, MuiCache…), services and scheduled tasks | ✅ |
 | **Batch uninstall** | Queue several programs; one review step for all leftovers | ✅ |
 | **Force Uninstall** | For broken/missing uninstallers: pick a program or point at a folder/exe, kill its processes, remove everything it owns | ✅ |
 | **Windows Apps** | Store / UWP / MSIX packages incl. pre-installed bloatware; remove per user or all users, de-provision | ✅ |
 | **Browser Extensions** | Chrome, Edge, Brave, Vivaldi, Opera (all profiles) + Firefox; flags broad permissions; removes with browser closed | ✅ |
 | **Software Updater** | Outdated programs via `winget upgrade`; one-click update with live output; **updates run in parallel** (1–6 at a time, MSI conflicts retried) | ✅ / Build 4 |
-| **Install Monitor** | Records files, folders and registry keys created by an installer (FileSystemWatcher + registry snapshot diff); later "Uninstall using this log" | ✅ |
+| **Install Monitor** | Records files, folders and registry keys created by an installer (FileSystemWatcher + registry snapshot diff); later "Uninstall using this log", or **"Clean registry…"** – only the keys that installation created that still exist (after a failed install, or when the program was removed another way) | ✅ / 1.4 |
 | **Tools** | File Shredder (1 / 3 / 7 passes), Windows Updates uninstall (wusa), Create Restore Point, shortcuts to Windows tools | ✅ |
+| **Registry Cleaner** | Separate module (Tools). Ticked when found: broken uninstall entries, App Paths / startup / "Open with" entries of missing programs, SharedDLLs and MuiCache records of missing files, empty software keys. For review (unticked): settings keys of removed programs, file-type commands. Advanced (unticked): COM / ActiveX, type libraries, Windows Installer folder records. Privacy (unticked): recent documents, Run / typed-path / search history, Open/Save dialog history, UserAssist. An entry is listed only when its file is provably gone from a fixed drive (USB and network drives never count; System32 ↔ SysWOW64 both checked). | ✅ 1.4 |
+| **Registry backups** | Every registry deletion anywhere in Evict (wizard, Force Uninstall, Residual Cleaner, Install Monitor, Registry Cleaner) is first exported to a regedit-compatible `.reg` file in `%LocalAppData%\Evict\registry-backups`; entries that cannot be backed up are not deleted. Restore / delete backups in the Registry Cleaner (`reg import`). | ✅ 1.4 |
 | **History** | Every operation with leftovers found/removed and bytes reclaimed; CSV export; rescan leftovers | ✅ |
 | **Settings** | Light/Dark theme, defaults for the wizard, thresholds for the tabs | ✅ |
 | **Software Health** (home page) | Score + tiles for outdated programs, leftovers, broken entries, bundleware, risky extensions, unused programs, bloatware, startup items – each with a one-click action | ✅ Build 2 |
@@ -27,6 +29,7 @@ delivered as a single portable `Evict.exe` **or** an `Evict-Setup-x.y.z.exe` ins
 | **Known-bundleware list** | Name database on top of the timing heuristic; user-extensible via `%LocalAppData%\Evict\bundleware.json` | ✅ Build 2 |
 | **Text size / zoom**, dark-theme polish | 80–300 %, default 120 % (Ctrl + / − / 0); the window scrolls at large sizes; themed ComboBox, ScrollBar, TabControl, menus, RadioButton, Expander | ✅ Build 2 / 4 |
 | **Installer** | `Evict-Setup-x.y.z.exe` (Inno Setup): per-user (no UAC) or all-users, Start-menu shortcuts, optional desktop icon / Explorer context menu / *Send to*, clean uninstall | ✅ Build 3 |
+| **Removing Evict itself** | The uninstaller runs `Evict.exe --self-cleanup ask`: always removes Evict's registry keys, autostart, scheduled scan, context / Send-to menus, `Evict.old.exe` and the unpacked libraries in `%TEMP%\.net\Evict`; a checklist offers settings & log (ticked), history + install logs + registry backups (unticked), the System Cleanup installer-package backup in `ProgramData\Evict` (unticked), `*.evict-backup` browser files (ticked) and Windows' records of Evict.exe (ticked). Portable copies: *Settings → Remove Evict from this PC…* | ✅ 1.4 |
 | **Update check** | Start-up check against GitHub Releases (can be turned off); banner + dialog with release notes; verified download; installed copies run the new Setup silently, portable copies replace `Evict.exe` in place and restart | ✅ Build 3 |
 | **Code signing** | Optional Authenticode signing of both files in CI when a certificate secret is present | ✅ Build 3 |
 | **Notification-area icon** | Tray menu (open, scan, widget, record, exit); close/minimize to tray; start with Windows (`--tray`) | ✅ Build 4 |
@@ -72,7 +75,7 @@ answers 404 and the status reads "no published release".
 Requirements: .NET 8 SDK (Windows, Linux or macOS — the project sets `EnableWindowsTargeting`).
 
 ```bash
-dotnet test tests/Evict.Core.Tests            # 195 unit tests for the pure logic
+dotnet test tests/Evict.Core.Tests            # 313 unit tests for the pure logic
 dotnet publish src/Evict.App -c Release -o publish   # → publish/Evict.exe (single file, win-x64)
 ```
 
@@ -89,6 +92,9 @@ Evict.exe --page tools                                       # health|programs|a
 Evict.exe --updated                                          # (internal) first start after a self-update
 Evict.exe --tray                                             # start hidden in the notification area (used by "Start with Windows")
 Evict.exe --scheduled-scan                                   # run the Health scan silently and notify (used by Task Scheduler)
+Evict.exe --self-cleanup ask                                 # "remove Evict's leftovers" checklist (used by the uninstaller)
+Evict.exe --self-cleanup settings,history                    # silent: integration + the named parts (all | settings | history |
+                                                             #   installercache | browser | traces | integration = nothing optional)
 ```
 If Evict is already running, a second launch hands its arguments to the open window.
 

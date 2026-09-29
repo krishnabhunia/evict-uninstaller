@@ -103,6 +103,8 @@ public sealed partial class InstallMonitorViewModel : ObservableObject, IActivat
             LastResult = Logs.FirstOrDefault(l => l.Log.Id == log.Id);
             SelectedLog = LastResult;
             StatusText = $"Recorded {log.CreatedDirectories.Count} folders, {log.CreatedFiles.Count} files and {log.CreatedRegistryKeys.Count} registry keys.";
+            if (log.InstallerExitCode is { } code && code != 0 && log.CreatedRegistryKeys.Count > 0)
+                StatusText += $" The installer ended with exit code {code} – if the installation failed, use \"Clean registry…\" to remove the keys it left behind.";
         }
         catch (Exception ex)
         {
@@ -162,6 +164,42 @@ public sealed partial class InstallMonitorViewModel : ObservableObject, IActivat
             Reload();
             _main.GetPage<HistoryViewModel>(PageKey.History).Reload();
         }
+    }
+
+    /// <summary>
+    /// Registry clean-up for one recorded installation: only the keys it created that still exist, backed up first.
+    /// Meant for after the program was removed another way, or after a failed/cancelled installation.
+    /// </summary>
+    [RelayCommand]
+    private async Task CleanRegistryWithLogAsync(InstallLogItemViewModel? item)
+    {
+        var target = item ?? SelectedLog;
+        if (target is null) return;
+        var log = target.Log;
+        var keys = await Task.Run(() => InstallMonitorService.ToLeftovers(log).Where(i => i.IsRegistry && LeftoverCleaner.RegistryItemExists(i)).ToList());
+        if (keys.Count == 0)
+        {
+            Dialogs.Info($"None of the {log.CreatedRegistryKeys.Count} registry key(s) this installation created exist any more – nothing to clean.");
+            return;
+        }
+
+        // Still installed? Removing its keys would break it – say so first.
+        if (!log.Uninstalled && log.NewUninstallEntries.Count > 0)
+        {
+            bool stillRegistered = await Task.Run(() => log.NewUninstallEntries.Any(e =>
+            {
+                var (hive, view, sub) = InstallMonitorService.ParseSnapshotKey(e);
+                return LeftoverCleaner.RegistryItemExists(new LeftoverItem { Kind = LeftoverKind.RegistryKey, Path = sub, Hive = hive, RegView = view, SubKey = sub });
+            }));
+            if (stillRegistered && !Dialogs.Confirm($"\"{log.Title}\" still appears in Programs & Features. Removing the registry keys of an installed program usually breaks it.\n\nUse \"Uninstall using this log\" instead, or continue only if you know the program is gone.\n\nContinue anyway?", destructive: true))
+                return;
+        }
+
+        var vm = new RegistryReviewViewModel(_services, $"Clean registry – {log.Title}",
+            $"{keys.Count} of the {log.CreatedRegistryKeys.Count} registry key(s) created on {target.DateText} still exist. Everything you remove is backed up to a .reg file first.",
+            keys, $"Install Monitor {log.Title}");
+        new RegistryReviewWindow { DataContext = vm, Owner = System.Windows.Application.Current.MainWindow }.ShowDialog();
+        if (vm.AnythingChanged) _main.GetPage<HistoryViewModel>(PageKey.History).Reload();
     }
 
     [RelayCommand]

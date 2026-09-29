@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.0 — registry cleaning + clean self-removal (29 Sep 2026)
+
+- **Registry Cleaner** (Tools): a separate module that finds registry entries pointing to programs, files and folders that
+  no longer exist – broken uninstall entries, App Paths, Run / RunOnce, "Open with" applications, SharedDLLs, MuiCache,
+  empty software keys (ticked); settings keys of removed programs and file-type commands (review); COM / ActiveX objects,
+  type libraries and Windows Installer folder records (advanced); history lists such as recent documents, Run / search /
+  typed-path / Open-Save history and UserAssist (privacy). Only entries whose target is provably gone from a fixed drive
+  are listed – files on USB sticks or network drives never count, and System32 / SysWOW64 are both checked.
+- **Registry backups everywhere**: before *any* registry key or value is deleted (wizard, Force Uninstall, Residual
+  Cleaner, Install Monitor, Registry Cleaner) it is exported to a regedit-compatible `.reg` file; an entry that cannot be
+  backed up is not deleted. Backups can be restored or deleted in the Registry Cleaner.
+- **Uninstall wizard – separate Registry step**: leftover files & folders and leftover registry entries are reviewed on
+  two pages; the summary offers **Undo registry changes**.
+- **Install Monitor – "Clean registry…"**: removes only the registry keys a recorded installation created that still
+  exist (for failed installs, or programs removed another way); warns if the program still looks installed.
+- **Removing Evict itself leaves nothing behind**: the uninstaller now runs `Evict.exe --self-cleanup ask` – it always
+  removes Evict's registry keys (HKCU and HKLM), autostart value, scheduled scan, context-menu entries registered from
+  Settings, Send-to shortcut, `Evict.old.exe` files and the ~25 MB of native libraries .NET unpacks to `%TEMP%\.net\Evict`
+  per version; a checklist offers settings/log, history + registry backups, the System Cleanup installer-package backup in
+  `ProgramData\Evict` (which was never removed before), `*.evict-backup` browser files (never removed before) and Windows'
+  own records of Evict.exe. Silent uninstalls remove only the integration. Portable copies: *Settings → Remove Evict from
+  this PC…*.
+
 ## 1.3.4 — one repository for Windows and macOS (29 Sep 2026)
 
 - The project moved to **github.com/krishnabhunia/evict-uninstaller** (renamed from `evict`; the old address redirects),

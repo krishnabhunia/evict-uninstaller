@@ -7,6 +7,9 @@ public static class Log
 {
     private static readonly object Gate = new();
 
+    /// <summary>Off while Evict removes its own data (writing the log would recreate %LocalAppData%\Evict).</summary>
+    public static bool Enabled { get; set; } = true;
+
     public static void Info(string message) => Write("INFO ", message);
     public static void Warn(string message) => Write("WARN ", message);
     public static void Error(string message, Exception? ex = null) => Write("ERROR", ex is null ? message : $"{message}: {ex}");
@@ -15,6 +18,7 @@ public static class Log
     {
         var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}";
         Debug.WriteLine(line);
+        if (!Enabled) return;
         lock (Gate)
         {
             try

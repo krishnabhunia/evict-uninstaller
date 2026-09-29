@@ -4,7 +4,7 @@
 
 #define MyAppName "Evict Uninstaller"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.4"
+  #define MyAppVersion "1.4.0"
 #endif
 #define MyAppPublisher "Krishna Bhunia"
 #define MyAppURL "https://github.com/krishnabhunia/evict-uninstaller"
@@ -86,18 +86,44 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--updated"; Flags: nowait skipifnotsilent; Check: IsSelfUpdate
 
 [UninstallRun]
-; Make sure the widget / tray instance is not holding the exe, and drop the scheduled scan + autostart entries.
+; Safety net if Evict.exe could not run its own clean-up (see [Code]): release the exe, drop the scheduled scan + autostart entry.
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F"; Flags: runhidden; RunOnceId: "KillEvict"
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /F /TN ""Evict Software Health scan"""; Flags: runhidden; RunOnceId: "DelTask"
 Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Evict /f"; Flags: runhidden; RunOnceId: "DelRun"
 
 [Code]
-// Offer to remove settings, history and install logs when uninstalling.
+var
+  SelfCleanupHandled: Boolean;
+
+// Before the files are removed, Evict.exe itself removes its registry entries, scheduled task and menus, and asks
+// (checkbox dialog) which of its data to delete: settings, history + registry backups, the installer-package backup,
+// browser-settings backups and Windows' records of Evict.exe. A silent uninstall removes only the integration.
+// If Evict.exe cannot run, the old Yes/No question about the data folder is the fallback.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+  ExePath, Params: String;
 begin
+  if CurUninstallStep = usUninstall then
+  begin
+    SelfCleanupHandled := False;
+    // A running Evict (tray / widget) would hold its files and could rewrite its settings while they are removed.
+    Exec(ExpandConstant('{cmd}'), '/C taskkill /IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    ExePath := ExpandConstant('{app}\{#MyAppExeName}');
+    if UninstallSilent() then
+      Params := '--self-cleanup integration'
+    else
+      Params := '--self-cleanup ask';
+    if FileExists(ExePath) then
+      if Exec(ExePath, Params, ExpandConstant('{app}'), SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
+        SelfCleanupHandled := (ResultCode = 0);
+  end;
+
   if CurUninstallStep = usPostUninstall then
   begin
-    if DirExists(ExpandConstant('{localappdata}\Evict')) then
+    // Native libraries the single-file Evict.exe unpacked (a cache – safe to remove once Evict is gone).
+    DelTree(AddBackslash(GetEnv('TEMP')) + '.net\Evict', True, True, True);
+    if (not SelfCleanupHandled) and (not UninstallSilent()) and DirExists(ExpandConstant('{localappdata}\Evict')) then
       if MsgBox('Also remove Evict''s settings, uninstall history and install-monitor logs?' + #13#10 +
                 '(Folder: ' + ExpandConstant('{localappdata}\Evict') + ')', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
         DelTree(ExpandConstant('{localappdata}\Evict'), True, True, True);

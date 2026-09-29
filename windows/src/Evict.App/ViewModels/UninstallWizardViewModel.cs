@@ -8,7 +8,8 @@ using Evict.Core.Util;
 
 namespace Evict.App.ViewModels;
 
-public enum WizardStep { Confirm, Running, Review, Cleaning, Done }
+/// <summary>Review = leftover files, folders, services…; RegistryReview = leftover registry entries (own step, backed up before removal).</summary>
+public enum WizardStep { Confirm, Running, Review, RegistryReview, Cleaning, Done }
 
 public sealed partial class UninstallJobViewModel : ObservableObject
 {
@@ -65,10 +66,12 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
         _sendToRecycleBin = s.SendToRecycleBin;
         _scanLeftovers = true;
         Review = new LeftoverReviewViewModel();
+        RegistryReview = new LeftoverReviewViewModel();
     }
 
     public ObservableCollection<UninstallJobViewModel> Jobs { get; }
     public LeftoverReviewViewModel Review { get; }
+    public LeftoverReviewViewModel RegistryReview { get; }
     public ObservableCollection<string> LogLines { get; } = new();
 
     [ObservableProperty] private WizardStep _step = WizardStep.Confirm;
@@ -90,6 +93,8 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
     [ObservableProperty] private int _leftoversFailed;
     /// <summary>"Registry: 7 of 8 keys/values removed and verified gone · 1 needs administrator rights" (null when no registry items).</summary>
     [ObservableProperty] private string? _registrySummary;
+    /// <summary>.reg file with every registry entry this run removed (enables "Undo registry changes").</summary>
+    [ObservableProperty] private string? _registryBackupFile;
     [ObservableProperty] private long _bytesReclaimed;
     [ObservableProperty] private bool _rebootRecommended;
     public ObservableCollection<string> Errors { get; } = new();
@@ -182,14 +187,18 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
                 return;
             }
 
-            Review.Load(leftovers, selectLowConfidence: false);
+            Review.Load(leftovers.Where(i => !i.IsRegistry), selectLowConfidence: false);
+            RegistryReview.Load(leftovers.Where(i => i.IsRegistry), selectLowConfidence: false);
+            OnPropertyChanged(nameof(HasFileLeftovers));
+            OnPropertyChanged(nameof(HasRegistryLeftovers));
+            OnPropertyChanged(nameof(NextToRegistryText));
             if (AutoClean)
             {
-                await CleanAsync(Review.Items.Where(i => !i.IsLow).Select(i => i.Item).ToList());
+                await CleanAsync(Review.Items.Concat(RegistryReview.Items).Where(i => !i.IsLow).Select(i => i.Item).ToList());
             }
             else
             {
-                Step = WizardStep.Review;
+                Step = Review.HasItems ? WizardStep.Review : WizardStep.RegistryReview;
             }
         }
         catch (OperationCanceledException)
@@ -206,12 +215,40 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
         }
     }
 
+    public bool HasFileLeftovers => Review.HasItems;
+    public bool HasRegistryLeftovers => RegistryReview.HasItems;
+    public string NextToRegistryText => $"Next: registry ({RegistryReview.TotalCount})";
+
+    /// <summary>Files step → registry step (nothing is removed yet; both selections are applied together).</summary>
     [RelayCommand]
-    private async Task RemoveSelectedLeftoversAsync()
+    private void NextToRegistry()
     {
-        var selected = Review.SelectedLeftovers;
+        if (RegistryReview.HasItems) Step = WizardStep.RegistryReview;
+    }
+
+    [RelayCommand]
+    private void BackToFiles()
+    {
+        if (Review.HasItems) Step = WizardStep.Review;
+    }
+
+    [RelayCommand]
+    private async Task RemoveSelectedLeftoversAsync() => await RemoveAsync(includeRegistry: true);
+
+    /// <summary>Registry step: remove only the selected files/folders and leave the registry as it is.</summary>
+    [RelayCommand]
+    private async Task SkipRegistryAsync() => await RemoveAsync(includeRegistry: false);
+
+    private async Task RemoveAsync(bool includeRegistry)
+    {
+        var files = Review.SelectedLeftovers;
+        var registry = includeRegistry ? RegistryReview.SelectedLeftovers : Array.Empty<LeftoverItem>();
+        var selected = files.Concat(registry).ToList();
         if (selected.Count == 0) { FinishWithoutCleanup(); return; }
-        if (!Dialogs.Confirm($"Permanently remove {selected.Count} leftover item(s)?" + (SendToRecycleBin ? "\n\nFiles and folders go to the Recycle Bin; registry entries are deleted." : "\n\nFiles are deleted permanently (not sent to the Recycle Bin)."), destructive: true))
+        var parts = new List<string>();
+        if (files.Count > 0) parts.Add(SendToRecycleBin ? $"{files.Count} file/folder item(s) go to the Recycle Bin." : $"{files.Count} file/folder item(s) are deleted permanently (not sent to the Recycle Bin).");
+        if (registry.Count > 0) parts.Add($"{registry.Count} registry entr{(registry.Count == 1 ? "y is" : "ies are")} backed up to a .reg file, then deleted – \"Undo registry changes\" on the last page puts them back.");
+        if (!Dialogs.Confirm($"Remove {selected.Count} leftover item(s)?\n\n" + string.Join("\n", parts), destructive: true))
             return;
         await CleanAsync(selected);
     }
@@ -222,7 +259,10 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
         ProgressIndeterminate = false;
         Progress = 0;
         var progress = new Progress<ProgressReport>(r => { StatusText = r.Message; if (r.Percent is { } p) Progress = p; });
-        var result = await _services.Cleaner.CleanAsync(items, new CleanupOptions { SendToRecycleBin = SendToRecycleBin }, progress, CancellationToken.None);
+        var label = "Uninstall " + (IsSingle ? Jobs[0].Name : $"{Jobs.Count} programs");
+        var result = await _services.Cleaner.CleanAsync(items, new CleanupOptions { SendToRecycleBin = SendToRecycleBin, BackupLabel = label }, progress, CancellationToken.None);
+        RegistryBackupFile = result.RegistryBackupFile;
+        if (result.RegistryBackupFile != null) Log("Registry backup: " + result.RegistryBackupFile);
         LeftoversRemoved = result.Removed;
         LeftoversFailed = result.Failed;
         BytesReclaimed = result.BytesReclaimed;
@@ -243,6 +283,17 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
 
     [RelayCommand]
     private void SkipCleanup() => FinishWithoutCleanup();
+
+    [RelayCommand]
+    private async Task UndoRegistryAsync()
+    {
+        if (RegistryBackupFile is null) return;
+        if (!Dialogs.Confirm("Put back every registry entry this uninstall removed?")) return;
+        var (ok, message) = await RegistryBackupService.RestoreAsync(RegistryBackupFile);
+        Log("Undo registry changes: " + message);
+        if (ok) { RegistrySummary = "Registry: the removed entries were restored from the backup."; Dialogs.Info(message); }
+        else Dialogs.Error(message);
+    }
 
     private void FinishWithoutCleanup() => Finish(0);
 

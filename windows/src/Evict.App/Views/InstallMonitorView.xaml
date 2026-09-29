@@ -115,6 +115,8 @@
                                 <TextBlock Text="Uninstall using this log" Margin="8,0,0,0" />
                             </StackPanel>
                         </Button>
+                        <Button Style="{StaticResource Button.Secondary}" Content="Clean registry…" Margin="8,0,0,0" Command="{Binding DataContext.CleanRegistryWithLogCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}"
+                                ToolTip="Remove only the registry keys this installation created that still exist (backed up first) – after the program was removed another way, or when the installation failed" />
                         <Button Style="{StaticResource Button.Secondary}" Content="Export…" Margin="8,0,0,0" Command="{Binding DataContext.ExportLogCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" />
                         <Button Style="{StaticResource Button.Ghost}" Content="Delete log" Margin="8,0,0,0" Command="{Binding DataContext.DeleteLogCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" />
                     </StackPanel>
