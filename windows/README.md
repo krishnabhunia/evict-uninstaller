@@ -53,8 +53,18 @@ Two editions come out of every build — pick one:
 | Portable | `Evict.exe` (~66 MB, self-contained, no .NET install needed) | Put it anywhere (e.g. `C:\Tools\Evict\`) and double-click. Updates replace the file in place. |
 | Installed | `Evict-Setup-x.y.z.exe` | Installs to `%LocalAppData%\Programs\Evict` for the current user (no UAC) or, if you choose *all users*, to `Program Files`. Adds Start-menu shortcuts, an *Apps & features* entry and, optionally, the Explorer context menu. Updates run the new Setup silently. |
 
-Both start **without** a UAC prompt; use *Restart as administrator* (sidebar or the yellow banner) to unlock
+Both **start as administrator** by default (since 1.7.0): Windows shows a UAC prompt when the window opens, which unlocks
 machine-wide operations (Program Files leftovers, services, restore points, all-user Store apps, Windows updates).
+
+| SrNo. | Situation | What happens |
+|---|---|---|
+| 1 | *Settings → Administrator rights → Start Evict as administrator* on (default), administrator account | UAC prompt at every start; Evict relaunches itself elevated with the same arguments |
+| 2 | UAC prompt declined | Evict runs with your own rights; *Restart as administrator* (sidebar or yellow banner) asks again |
+| 3 | Setting off | No prompt; *Restart as administrator* when needed |
+| 4 | Standard (non-administrator) account | No prompt – elevating would run Evict under the administrator's account and profile |
+| 5 | Hidden starts (`--tray` at sign-in, `--scheduled-scan`) | No prompt; the prompt comes when you open the window from the notification area (not while an installation is being recorded) |
+| 6 | Drag and drop from Explorer | Blocked by Windows while Evict runs as administrator – use the Browse buttons |
+| 7 | `--no-elevate` | Starts once without the prompt |
 The first launch of an unsigned build shows Windows SmartScreen — *More info → Run anyway* (see *Code signing*).
 
 Settings, history, install logs, downloaded updates and the diagnostic log live in `%LocalAppData%\Evict`.

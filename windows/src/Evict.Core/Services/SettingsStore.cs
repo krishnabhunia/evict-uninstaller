@@ -10,6 +10,11 @@ public sealed class AppSettings
     public int SettingsVersion { get; set; } = 0;
 
     public string Theme { get; set; } = "Light";                 // Light | Dark
+    /// <summary>
+    /// Ask Windows for administrator rights (UAC) whenever the Evict window opens. Starts hidden in the notification area
+    /// (sign-in, scheduled scan) wait until the window is opened. Only for administrator accounts – see StartupElevation.
+    /// </summary>
+    public bool StartAsAdministrator { get; set; } = true;
     public bool CreateRestorePoint { get; set; } = true;
     public bool QuietUninstall { get; set; } = false;
     public bool AutoCleanLeftovers { get; set; } = false;        // false → show review step

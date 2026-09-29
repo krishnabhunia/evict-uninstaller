@@ -14,6 +14,10 @@ namespace Evict.Core.Util;
 ///                                                       parts ("integration", "settings,history", "all") run silently
 ///   --wait-pid N                                        (with --self-cleanup) wait for process N to exit first
 ///   --portable                                          (with --self-cleanup) started from a portable copy's Settings
+///   --exit                                              ask a running Evict to close (Setup, when Evict runs as administrator)
+///   --no-elevate                                        do not ask for administrator rights at this start ("Start as administrator")
+///   --wait-pid N                                        (without --self-cleanup) wait for process N to exit before starting –
+///                                                       used by the elevated copy that replaces a non-elevated one
 /// Pure logic – unit tested.
 /// </summary>
 public sealed class CommandLineOptions
@@ -30,10 +34,12 @@ public sealed class CommandLineOptions
     public string? SelfCleanup { get; init; }
     public int? WaitPid { get; init; }
     public bool Portable { get; init; }
+    public bool Exit { get; init; }
+    public bool NoElevate { get; init; }
     public bool SelfCleanupAsk => string.Equals(SelfCleanup, "ask", StringComparison.OrdinalIgnoreCase);
     public List<string> Unknown { get; } = new();
 
-    public bool IsEmpty => UninstallFile is null && UninstallName is null && !Scan && !Widget && Page is null && !Updated && !Tray && !ScheduledScan && SelfCleanup is null;
+    public bool IsEmpty => UninstallFile is null && UninstallName is null && !Scan && !Widget && Page is null && !Updated && !Tray && !ScheduledScan && SelfCleanup is null && !Exit;
     /// <summary>True when the process should start without showing the main window.</summary>
     public bool Headless => Tray || ScheduledScan;
 
@@ -41,7 +47,7 @@ public sealed class CommandLineOptions
     {
         string? file = null, name = null, page = null, selfCleanup = null;
         int? waitPid = null;
-        bool scan = false, widget = false, updated = false, tray = false, scheduled = false, portable = false;
+        bool scan = false, widget = false, updated = false, tray = false, scheduled = false, portable = false, exit = false, noElevate = false;
         var unknown = new List<string>();
 
         for (int i = 0; i < args.Count; i++)
@@ -70,6 +76,8 @@ public sealed class CommandLineOptions
                     if (int.TryParse(Next(), out var pid) && pid > 0) waitPid = pid;
                     break;
                 case "portable": portable = true; break;
+                case "exit" or "quit": exit = true; break;
+                case "no-elevate" or "noelevate": noElevate = true; break;
                 default:
                     // A bare path (drag & drop onto the exe, or "Open with") means --uninstall-file.
                     if (!a.StartsWith('-') && !a.StartsWith('/') && (a.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || a.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)))
@@ -78,9 +86,31 @@ public sealed class CommandLineOptions
                     break;
             }
         }
-        var opts = new CommandLineOptions { UninstallFile = file, UninstallName = name, Scan = scan, Widget = widget, Page = page, Updated = updated, Tray = tray, ScheduledScan = scheduled, SelfCleanup = selfCleanup, WaitPid = waitPid, Portable = portable };
+        var opts = new CommandLineOptions { UninstallFile = file, UninstallName = name, Scan = scan, Widget = widget, Page = page, Updated = updated, Tray = tray, ScheduledScan = scheduled, SelfCleanup = selfCleanup, WaitPid = waitPid, Portable = portable, Exit = exit, NoElevate = noElevate };
         opts.Unknown.AddRange(unknown);
         return opts;
+    }
+
+    /// <summary>
+    /// Builds a command line that CommandLineToArgvW splits back into exactly these arguments: arguments with spaces,
+    /// tabs or quotes are quoted, embedded quotes escaped and backslashes doubled where they precede a quote.
+    /// </summary>
+    public static string JoinArguments(IEnumerable<string> args) => string.Join(" ", args.Select(QuoteArgument));
+
+    public static string QuoteArgument(string arg)
+    {
+        if (arg.Length > 0 && arg.IndexOfAny(new[] { ' ', '\t', '"' }) < 0) return arg;
+        var sb = new System.Text.StringBuilder("\"");
+        int backslashes = 0;
+        foreach (var c in arg)
+        {
+            if (c == '\\') { backslashes++; continue; }
+            if (c == '"') sb.Append('\\', backslashes * 2 + 1).Append('"');
+            else sb.Append('\\', backslashes).Append(c);
+            backslashes = 0;
+        }
+        sb.Append('\\', backslashes * 2).Append('"');
+        return sb.ToString();
     }
 
     /// <summary>Serialises for the single-instance pipe: one argument per line.</summary>

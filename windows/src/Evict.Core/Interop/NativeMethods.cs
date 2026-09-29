@@ -106,6 +106,28 @@ internal static class NativeMethods
         return rc;
     }
 
+    // ───────────────────────────── Token ─────────────────────────────
+
+    private const int TokenElevationTypeClass = 18;
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, out int tokenInformation, int tokenInformationLength, out int returnLength);
+
+    /// <summary>TOKEN_ELEVATION_TYPE of this process: 1 = default (no split token), 2 = full (elevated), 3 = limited (UAC-filtered administrator); 0 on failure.</summary>
+    public static int GetTokenElevationType()
+    {
+        try
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return GetTokenInformation(identity.Token, TokenElevationTypeClass, out var type, sizeof(int), out _) ? type : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
     // ───────────────────────────── Processes ─────────────────────────────
 
     private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;

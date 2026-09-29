@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.0 — start as administrator (29 Sep 2026)
+
+- **Evict starts as administrator by default.** New *Settings → Administrator rights → Start Evict as administrator*
+  (on): Windows asks for permission when the window opens and Evict relaunches itself elevated, keeping its arguments
+  (so *Uninstall with Evict* from Explorer still opens the right program). Declining the prompt keeps Evict running with
+  your own rights. Standard (non-administrator) accounts are never prompted, because the prompt would run Evict under a
+  different account. Starts hidden in the notification area (sign-in, scheduled scan) ask only when you open the window,
+  and not while an installation is being recorded. `--no-elevate` skips the prompt once.
+- A copy without administrator rights now reaches an Evict running as administrator: Explorer's *Uninstall with Evict*
+  and a second start hand over to it instead of opening a second window.
+- Setup and the uninstaller can close an Evict that runs as administrator (new `--exit` option), which they could not
+  force-close before.
+
 ## 1.6.0 — Software Health: 14 categories and Fix selected (29 Sep 2026)
 
 First public release since 1.3.3 – versions 1.3.4, 1.4.0 and 1.5.0 were built and tested but never published, so their
