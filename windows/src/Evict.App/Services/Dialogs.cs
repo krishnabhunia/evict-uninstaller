@@ -32,6 +32,62 @@ public static class Dialogs
         else MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
+    /// <summary>
+    /// A question with several answers, one button per answer (stacked, so longer labels fit). The first answer is the
+    /// highlighted default. Returns the chosen index; closing the window counts as <paramref name="cancelIndex"/>
+    /// (the last answer when not given).
+    /// </summary>
+    public static int Choose(string heading, string message, IReadOnlyList<string> options, int cancelIndex = -1, string title = AppPaths.ProductName)
+    {
+        if (options.Count == 0) return -1;
+        if (cancelIndex < 0 || cancelIndex >= options.Count) cancelIndex = options.Count - 1;
+        int chosen = cancelIndex;
+
+        var window = new Window
+        {
+            Title = title,
+            Width = 560,
+            SizeToContent = SizeToContent.Height,
+            ResizeMode = ResizeMode.NoResize,
+            Owner = Owner,
+            Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/Assets/app.ico")),
+        };
+        if (Application.Current?.TryFindResource("Window.Dialog") is Style style) window.Style = style;
+
+        var panel = new System.Windows.Controls.StackPanel { Margin = new Thickness(24) };
+        panel.Children.Add(Text(heading, "Text.Section", new Thickness(0, 0, 0, 10)));
+        panel.Children.Add(Text(message, "Text.Body", new Thickness(0, 0, 0, 16)));
+        for (int i = 0; i < options.Count; i++)
+        {
+            int index = i;
+            var button = new System.Windows.Controls.Button
+            {
+                Content = new System.Windows.Controls.TextBlock { Text = options[i], TextWrapping = TextWrapping.Wrap },
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 0, 0, 8),
+                Padding = new Thickness(14, 8, 14, 8),
+                IsDefault = i == 0,
+                IsCancel = i == cancelIndex,
+            };
+            if (Application.Current?.TryFindResource(i == 0 ? "Button.Primary" : "Button.Secondary") is Style bs) button.Style = bs;
+            button.Click += (_, _) => { chosen = index; window.Close(); };
+            panel.Children.Add(button);
+        }
+        window.Content = panel;
+        App.UiState.ApplyToDialog(window);
+        if (window.Owner == null) window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        window.ShowDialog();
+        return chosen;
+
+        static System.Windows.Controls.TextBlock Text(string text, string styleKey, Thickness margin)
+        {
+            var tb = new System.Windows.Controls.TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, Margin = margin };
+            if (Application.Current?.TryFindResource(styleKey) is Style st) tb.Style = st;
+            return tb;
+        }
+    }
+
     public static void OpenFolder(string? path)
     {
         if (string.IsNullOrEmpty(path)) return;

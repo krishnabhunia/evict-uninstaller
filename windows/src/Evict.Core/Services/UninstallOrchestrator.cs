@@ -1,4 +1,5 @@
 using Evict.Core.Models;
+using Evict.Core.Util;
 
 namespace Evict.Core.Services;
 
@@ -9,6 +10,14 @@ public sealed class UninstallJob
     public required InstalledProgram Program { get; init; }
     public ProgramFingerprint? Fingerprint { get; set; }
     public UninstallRunResult? RunResult { get; set; }
+    /// <summary>How the last uninstaller run ended (null: none ran – no uninstaller registered, or skipped before).</summary>
+    public UninstallOutcome? Outcome { get; set; }
+    /// <summary>The command of the last run (used for "Try again").</summary>
+    public UninstallCommand? LastCommand { get; set; }
+    /// <summary>Every command that was tried, in order (shown in the log).</summary>
+    public List<string> Attempts { get; } = new();
+    /// <summary>The user chose Force uninstall after the uninstaller failed: leftovers are scanned although the program is still installed.</summary>
+    public bool ForceRemoval { get; set; }
     public LeftoverScanResult? Scan { get; set; }
     public JobStatus Status { get; set; } = JobStatus.Pending;
     public string Message { get; set; } = "";
@@ -22,7 +31,10 @@ public sealed class UninstallBatchOptions
     public LeftoverScanOptions ScanOptions { get; set; } = new();
 }
 
-/// <summary>Runs one uninstall job end to end: capture fingerprint → run uninstaller → scan for leftovers.</summary>
+/// <summary>
+/// The steps of one uninstall job: capture the fingerprint → run the uninstaller (again, or another way, when it failed)
+/// → scan for leftovers. The wizard decides between the steps what happens after a failure.
+/// </summary>
 public sealed class UninstallOrchestrator
 {
     private readonly UninstallRunner _runner = new();
@@ -36,60 +48,56 @@ public sealed class UninstallOrchestrator
         return _restore.CreateAsync(desc, ct);
     }
 
-    public async Task RunAsync(UninstallJob job, UninstallBatchOptions options, IProgress<ProgressReport>? progress, CancellationToken ct)
+    /// <summary>
+    /// Runs the uninstaller – <paramref name="command"/> when given (retry / alternative), otherwise the best command for
+    /// the program – and records the outcome. Throws <see cref="OperationCanceledException"/> when Evict's Cancel was used.
+    /// </summary>
+    public async Task<UninstallOutcome> RunUninstallerAsync(UninstallJob job, UninstallCommand? command, bool quiet, IProgress<ProgressReport>? progress, CancellationToken ct)
     {
-        try
-        {
-            // 1. Fingerprint before the entry disappears.
-            job.Fingerprint = LeftoverScanner.Fingerprint(job.Program);
+        // The fingerprint must be taken before the first run removes the registry entry it is built from.
+        job.Fingerprint ??= LeftoverScanner.Fingerprint(job.Program);
+        job.Status = JobStatus.Uninstalling;
+        job.Message = "Running the program's uninstaller…";
 
-            // 2. Run the program's own uninstaller (or skip for broken entries with no command).
-            job.Status = JobStatus.Uninstalling;
-            job.Message = "Running the program's uninstaller…";
-            if (job.Program.HasUninstaller)
-            {
-                job.RunResult = await _runner.RunAsync(job.Program, options.Quiet, progress, ct).ConfigureAwait(false);
-                if (job.RunResult.Cancelled) { job.Status = JobStatus.Cancelled; job.Message = "Cancelled."; return; }
-                if (!job.RunResult.Launched)
-                {
-                    job.Message = job.RunResult.Error ?? "The uninstaller could not be started.";
-                    // Still scan – the user may want to clean up manually.
-                }
-                else
-                {
-                    job.Message = job.RunResult.LikelySucceeded
-                        ? "Uninstaller finished."
-                        : $"Uninstaller exited with code {job.RunResult.ExitCode}." + (job.RunResult.Note is { } n ? " " + n : "");
-                }
-            }
-            else
-            {
-                job.RunResult = new UninstallRunResult { Note = "No uninstaller registered – only leftovers can be removed." };
-                job.Message = "No uninstaller registered.";
-            }
-
-            // 3. Powerful scan.
-            if (options.ScanLeftovers)
-            {
-                job.Status = JobStatus.Scanning;
-                job.Scan = await _scanner.ScanAsync(job.Fingerprint, options.ScanOptions, progress, ct).ConfigureAwait(false);
-                job.Message += $" Found {job.Scan.Items.Count} leftover item(s).";
-            }
-
-            bool ok = job.RunResult.LikelySucceeded || !job.Program.HasUninstaller;
-            job.Status = ok ? JobStatus.Completed : JobStatus.CompletedWithWarnings;
-        }
-        catch (OperationCanceledException)
+        command ??= UninstallCommandParser.Resolve(job.Program, quiet, UninstallRunner.ReadHeadPublic);
+        UninstallRunResult result;
+        if (command is null)
+            result = new UninstallRunResult { Error = "This entry has no uninstall command." };
+        else
         {
-            job.Status = JobStatus.Cancelled;
-            job.Message = "Cancelled.";
-            throw;
+            job.LastCommand = command;
+            job.Attempts.Add(command.Display);
+            result = await _runner.RunAsync(job.Program, command, progress, ct).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        job.RunResult = result;
+        if (result.Cancelled) throw new OperationCanceledException(ct);
+
+        var outcome = UninstallRecoveryRules.Evaluate(result, stillInstalled: UninstallRunner.StillInstalled(job.Program));
+        job.Outcome = outcome;
+        job.Message = outcome switch
         {
-            job.Status = JobStatus.Failed;
-            job.Message = ex.Message;
-            Log.Error($"Uninstall job failed for {job.Program.DisplayName}", ex);
-        }
+            UninstallOutcome.Succeeded => "Uninstaller finished." + (result.Note is { } n && result.ExitCode is 1605 ? " " + n : ""),
+            UninstallOutcome.RebootRequired => "Uninstaller finished – a restart is needed to complete it.",
+            _ => char.ToUpperInvariant(UninstallRecoveryRules.Describe(outcome, result, job.Program.DisplayName)[0])
+                 + UninstallRecoveryRules.Describe(outcome, result, job.Program.DisplayName)[1..] + ".",
+        };
+        Log.Info($"Uninstall {job.Program.DisplayName}: {outcome} (exit {result.ExitCode?.ToString() ?? "–"}, entry removed: {result.RegistryEntryRemoved})");
+        return outcome;
+    }
+
+    /// <summary>Powerful Scan for the job's leftovers.</summary>
+    public async Task ScanAsync(UninstallJob job, UninstallBatchOptions options, IProgress<ProgressReport>? progress, CancellationToken ct)
+    {
+        job.Fingerprint ??= LeftoverScanner.Fingerprint(job.Program);
+        job.Status = JobStatus.Scanning;
+        job.Scan = await _scanner.ScanAsync(job.Fingerprint, options.ScanOptions, progress, ct).ConfigureAwait(false);
+        job.Message += $" Found {job.Scan.Items.Count} leftover item(s).";
+    }
+
+    /// <summary>Final status: uninstalled cleanly, or with warnings (forced, no uninstaller, reboot pending).</summary>
+    public static void Complete(UninstallJob job)
+    {
+        bool clean = job.Outcome is UninstallOutcome.Succeeded && !job.ForceRemoval;
+        job.Status = clean || (job.Outcome is null && !job.Program.HasUninstaller) ? JobStatus.Completed : JobStatus.CompletedWithWarnings;
     }
 }

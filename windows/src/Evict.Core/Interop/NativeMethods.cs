@@ -106,6 +106,43 @@ internal static class NativeMethods
         return rc;
     }
 
+    // ───────────────────────────── Windows ─────────────────────────────
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private const uint WM_CLOSE = 0x0010;
+
+    /// <summary>
+    /// Posts WM_CLOSE to every top-level window of the process – visible or hidden (notification-area programs keep a
+    /// hidden one) – which is what "taskkill" without /F does. Returns how many windows were asked.
+    /// </summary>
+    public static int PostCloseToProcessWindows(int pid)
+    {
+        int count = 0;
+        try
+        {
+            EnumWindows((hWnd, _) =>
+            {
+                GetWindowThreadProcessId(hWnd, out var owner);
+                if (owner == (uint)pid && PostMessageW(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero)) count++;
+                return true;
+            }, IntPtr.Zero);
+        }
+        catch { /* not on Windows / window gone */ }
+        return count;
+    }
+
     // ───────────────────────────── Token ─────────────────────────────
 
     private const int TokenElevationTypeClass = 18;

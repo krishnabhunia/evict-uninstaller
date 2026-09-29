@@ -56,6 +56,13 @@
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding AutoCleanLeftovers}" Content="Remove leftovers automatically after the uninstaller finishes (skip the review step)" />
                     <TextBlock Style="{StaticResource Hint}" Text="Only 'Safe' and 'Likely' items are removed automatically – 'Review' items are always left for you to decide." />
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding SendToRecycleBin}" Content="Send leftover files and folders to the Recycle Bin instead of deleting permanently" />
+                    <TextBlock Style="{StaticResource Hint}" Text="Files in the Recycle Bin can be put back with 'Undo leftover removal' at the end of the uninstall." />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                        <TextBlock Text="When the program is still running" Style="{StaticResource Text.Body}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <ComboBox ItemsSource="{Binding RunningProgramOptions}" DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding RunningProgramAction, Mode=TwoWay}" Width="380" />
+                    </StackPanel>
+                    <TextBlock Style="{StaticResource Text.Caption}" Margin="0,0,0,12" TextWrapping="Wrap"
+                               Text="An uninstaller cannot remove files that are in use. Evict first asks the program to close (like clicking ×, so it can offer to save your work) and only force-closes it after that." />
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding ScanAllUserProfiles}" Content="Scan every user account's AppData for leftovers (needs administrator)" />
                 </StackPanel>
             </Border>

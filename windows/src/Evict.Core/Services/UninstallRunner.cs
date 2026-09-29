@@ -14,17 +14,19 @@ public sealed class UninstallRunner
 {
     public static readonly TimeSpan PostExitGrace = TimeSpan.FromSeconds(90);
 
-    public async Task<UninstallRunResult> RunAsync(InstalledProgram program, bool quiet, IProgress<ProgressReport>? progress, CancellationToken ct)
+    public Task<UninstallRunResult> RunAsync(InstalledProgram program, bool quiet, IProgress<ProgressReport>? progress, CancellationToken ct)
+    {
+        var cmd = UninstallCommandParser.Resolve(program, quiet, ReadHead);
+        if (cmd is null)
+            return Task.FromResult(new UninstallRunResult { Error = "This entry has no uninstall command. Use Force Uninstall instead." });
+        return RunAsync(program, cmd, progress, ct);
+    }
+
+    /// <summary>Runs a specific uninstall command (the fallback commands of <see cref="UninstallRecoveryRules.Alternatives"/>).</summary>
+    public async Task<UninstallRunResult> RunAsync(InstalledProgram program, UninstallCommand cmd, IProgress<ProgressReport>? progress, CancellationToken ct)
     {
         var result = new UninstallRunResult();
         var sw = Stopwatch.StartNew();
-
-        var cmd = UninstallCommandParser.Resolve(program, quiet, ReadHead);
-        if (cmd is null)
-        {
-            result.Error = "This entry has no uninstall command. Use Force Uninstall instead.";
-            return result;
-        }
         result.Command = cmd.Display;
 
         // Validate the executable exists (msiexec / rundll32 live in System32 and may be given without a path).
@@ -143,6 +145,28 @@ public sealed class UninstallRunner
         catch { /* ignore */ }
         return false;
     }
+
+    /// <summary>
+    /// The program still looks installed: its Programs &amp; Features entry exists and so does its main executable (or, when
+    /// none is known, an .exe in its install folder). An entry without files is only an orphan.
+    /// </summary>
+    public static bool StillInstalled(InstalledProgram program)
+    {
+        if (!RegistryEntryExists(program)) return false;
+        try
+        {
+            var exe = program.PrimaryExecutable?.Trim().Trim('"');
+            if (!string.IsNullOrEmpty(exe) && File.Exists(exe)) return true;
+            var folder = program.InstallLocation?.Trim().Trim('"');
+            if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder))
+                return Directory.EnumerateFiles(folder, "*.exe", new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true, MaxRecursionDepth = 2 }).Any();
+            // Nothing to look at (no folder recorded): trust the entry.
+            return string.IsNullOrEmpty(exe) && string.IsNullOrEmpty(folder);
+        }
+        catch { return true; }
+    }
+
+    public static byte[]? ReadHeadPublic(string path) => ReadHead(path);
 
     public static bool RegistryEntryExists(InstalledProgram program)
     {

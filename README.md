@@ -5,7 +5,7 @@ Uninstaller and leftover cleaner for **Windows** and **macOS**. The two apps are
 
 | SrNo. | Platform | Folder | Stack | Current version | Release tags | Docs |
 |---|---|---|---|---|---|---|
-| 1 | Windows 10/11 | [`windows/`](windows/) | C# / .NET 8 / WPF, Inno Setup | 1.7.0 | `win-vX.Y.Z` (`vX.Y.Z` up to 1.3.3) | [windows/README.md](windows/README.md) |
+| 1 | Windows 10/11 | [`windows/`](windows/) | C# / .NET 8 / WPF, Inno Setup | 1.8.0 | `win-vX.Y.Z` (`vX.Y.Z` up to 1.3.3) | [windows/README.md](windows/README.md) |
 | 2 | macOS 13+ | [`macos/`](macos/) | Swift 5.9 / SwiftUI, SwiftPM | 0.1.0 | `mac-vX.Y.Z` | [macos/README.md](macos/README.md) |
 
 ## Downloads

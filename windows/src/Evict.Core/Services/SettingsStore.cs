@@ -27,6 +27,8 @@ public sealed class AppSettings
     public int RecentlyInstalledDays { get; set; } = 30;
     public int InfrequentlyUsedDays { get; set; } = 60;
     public bool ConfirmBeforeUninstall { get; set; } = true;
+    /// <summary>Ask | Close | Ignore – what to do when the program being uninstalled is still running.</summary>
+    public string RunningProgramAction { get; set; } = "Ask";
     public bool HideFrameworkAppx { get; set; } = true;
     public bool ShowSystemAppx { get; set; } = false;
     public string ShredMethod { get; set; } = "Dod3Pass";

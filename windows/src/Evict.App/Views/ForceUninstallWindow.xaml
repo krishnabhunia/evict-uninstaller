@@ -164,6 +164,8 @@
                         </StackPanel>
                     </Button>
                 </StackPanel>
+                <Button Style="{StaticResource Button.Secondary}" Content="Undo" Command="{Binding UndoCommand}" MinWidth="100" Margin="0,0,10,0" Visibility="{Binding CanUndo, Converter={StaticResource BoolToVis}}"
+                        ToolTip="Put back the removed files (from the Recycle Bin) and registry entries (from their backup)" />
                 <Button Style="{StaticResource Button.Primary}" Content="Close" Command="{Binding CloseCommand}" MinWidth="120" Visibility="{Binding Step, Converter={StaticResource EqualsToVis}, ConverterParameter=Done}" />
             </StackPanel>
         </Grid>
