@@ -13,6 +13,11 @@ on:
 permissions:
   contents: write
 
+# Continuous delivery: a push to main whose Version.swift has no mac-v tag yet builds, tags and publishes that version.
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-14
@@ -21,6 +26,23 @@ jobs:
         working-directory: macos
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags, to tell whether this version is already released
+
+      - name: Read version / release needed?
+        id: rel
+        run: |
+          v="$(grep -m1 'public static let current' Sources/EvictKit/Version.swift | sed 's/.*"\(.*\)".*/\1/')"
+          tag="mac-v$v"
+          publish=false
+          if [ "$GITHUB_REF" = "refs/tags/$tag" ]; then publish=true
+          elif [[ "$GITHUB_REF" == refs/tags/mac-v* ]]; then echo "Tag $GITHUB_REF does not match Version.swift ($v)"; exit 1
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then publish=true
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Release $tag : $publish"
 
       - name: Show toolchain
         run: |
@@ -49,10 +71,23 @@ jobs:
             macos/build/Evict-*.zip.sha256
           if-no-files-found: error
 
+      - name: Release notes from CHANGELOG.md
+        if: steps.rel.outputs.publish == 'true'
+        run: |
+          awk -v v="${{ steps.rel.outputs.version }}" '
+            /^## / { if (inside) exit; inside = (index($0, "## " v " ") == 1); next }
+            inside' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          test -s "$RUNNER_TEMP/notes.md" || { echo "CHANGELOG.md has no '## ${{ steps.rel.outputs.version }}' section"; exit 1; }
+
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/mac-v')
+        if: steps.rel.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          # Creates the tag on this commit when it does not exist yet (push to main).
+          tag_name: ${{ steps.rel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Evict ${{ steps.rel.outputs.version }} for macOS
+          body_path: ${{ runner.temp }}/notes.md
           files: |
             macos/build/Evict-*.zip
             macos/build/Evict-*.zip.sha256

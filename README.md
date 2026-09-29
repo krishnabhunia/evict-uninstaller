@@ -47,14 +47,27 @@ release must use a higher number than that build, or that PC is never offered th
 | 2 | Set the version | `windows/Directory.Build.props` → `<Version>`; `windows/installer/Evict.iss` default `MyAppVersion`; the table at the top of this file | `macos/Sources/EvictKit/Version.swift`; the table at the top of this file |
 | 3 | Changelog | `windows/CHANGELOG.md`: new `## X.Y.Z — title (date)` heading | `macos/CHANGELOG.md` |
 | 4 | Pull request → CI green → merge | `.github/workflows/windows.yml` | `.github/workflows/macos.yml` |
-| 5 | Publish | Releases → *Draft a new release* → new tag `win-vX.Y.Z` on `main` → *Publish*, or `git tag win-vX.Y.Z && git push origin win-vX.Y.Z` | same with `mac-vX.Y.Z` |
-| 6 | CI attaches the files | `Evict.exe`, `Evict-Setup-X.Y.Z.exe` + `.sha256` (marked **Latest**) | `Evict-X.Y.Z.zip` + `.sha256` (never "Latest") |
+| 5 | **Automatic** (continuous delivery) | The merge to `main` runs the workflow; it sees there is no `win-vX.Y.Z` tag for the new `<Version>` yet, builds, tests, **creates the tag and the release** | same with `mac-vX.Y.Z` from `Version.swift` |
+| 6 | CI attaches the files | `Evict.exe`, `Evict-Setup-X.Y.Z.exe` + `.sha256` (marked **Latest**); release notes = the version's `CHANGELOG.md` section (+ any "not published" sections below it) | `Evict-X.Y.Z.zip` + `.sha256` (never "Latest") |
 | 7 | Check | Installed copies show "Evict X.Y.Z is available" at their next start | – |
+
+**Continuous delivery rules**
+
+| SrNo. | Rule | Why |
+|---|---|---|
+| 1 | A merge publishes **only when the version number changed** (its tag does not exist yet) | Ordinary merges (fixes collected for the next release) publish nothing |
+| 2 | Bumping `<Version>` / `Version.swift` in a pull request **is** the decision to release | The PR review is the release gate |
+| 3 | The version's `## X.Y.Z` heading must exist in the changelog | The release fails instead of shipping without notes |
+| 4 | Pushing a tag by hand still works, but it must equal the version in the code | Otherwise the build fails (no mismatched file names) |
+| 5 | Existing tags are never moved or re-published | A PC that has X.Y.Z never takes a different X.Y.Z |
+
+Releases are listed at **github.com/krishnabhunia/evict-uninstaller → Releases** (right-hand column of the repository
+page, or the *Code* tab → *Releases*); each workflow run is under the *Actions* tab.
 
 **Asking Claude Code for a release:** say what should ship (for example *"prepare a Windows release with the fixes on
 main"*). It lists the changes since the last published tag, picks the bump with the table above (fixes only → PATCH,
 any feature → MINOR, anything breaking → MAJOR – and above any installed test build), does steps 2–4 in a pull
-request, and after you merge and publish the tag (step 5) verifies the release (steps 6–7).
+request, and after you merge verifies the release CI publishes (steps 5–7).
 
 ## Build output
 

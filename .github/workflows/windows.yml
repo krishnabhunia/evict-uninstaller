@@ -13,6 +13,12 @@ on:
 permissions:
   contents: write
 
+# Continuous delivery: a push to main whose <Version> has no win-v tag yet builds, tags and publishes that version.
+# One release at a time, so two quick merges cannot both create the same tag.
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: windows-latest
@@ -26,6 +32,8 @@ jobs:
       SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags, to tell whether this version is already released
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
@@ -39,6 +47,24 @@ jobs:
           $v = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Version $v"
+
+      - name: Release needed?
+        id: rel
+        shell: pwsh
+        run: |
+          $tag = "win-v${{ steps.ver.outputs.version }}"
+          $ref = "${{ github.ref }}"
+          if ($ref -eq "refs/tags/$tag") { $publish = "true" }
+          elseif ($ref.StartsWith("refs/tags/win-v")) { throw "Tag $ref does not match <Version> ${{ steps.ver.outputs.version }} in Directory.Build.props" }
+          elseif ("${{ github.event_name }}" -eq "push" -and $ref -eq "refs/heads/main") {
+            git rev-parse -q --verify "refs/tags/$tag" | Out-Null
+            $publish = if ($LASTEXITCODE -eq 0) { "false" } else { "true" }
+          }
+          else { $publish = "false" }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "publish=$publish" >> $env:GITHUB_OUTPUT
+          Write-Host "Release $tag : $publish"
+          $global:LASTEXITCODE = 0
 
       - name: Restore
         run: dotnet restore Evict.sln
@@ -98,10 +124,32 @@ jobs:
             windows/Installed/*.exe
             windows/Installed/*.sha256
 
-      - name: GitHub Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/win-v')
+      - name: Release notes from CHANGELOG.md
+        if: steps.rel.outputs.publish == 'true'
+        shell: pwsh
+        run: |
+          $v = [regex]::Escape("${{ steps.ver.outputs.version }}")
+          $out = @(); $in = $false
+          foreach ($line in Get-Content CHANGELOG.md -Encoding utf8) {
+            # Unpublished versions ride along with the next published one, so their sections are included too.
+            if ($line -match '^## ') {
+              if ($in) { if ($line -match '\(not published\)') { $out += '', $line; continue } else { break } }
+              $in = $line -match "^## $v\b"; continue
+            }
+            if ($in) { $out += $line }
+          }
+          if (-not $out) { throw "CHANGELOG.md has no '## ${{ steps.ver.outputs.version }}' section" }
+          ($out -join "`n").Trim() | Out-File "$env:RUNNER_TEMP\notes.md" -Encoding utf8
+
+      - name: GitHub Release
+        if: steps.rel.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          # Creates the tag on this commit when it does not exist yet (push to main).
+          tag_name: ${{ steps.rel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Evict ${{ steps.ver.outputs.version }} for Windows
+          body_path: ${{ runner.temp }}/notes.md
           files: |
             windows/Portable/Evict.exe
             windows/Portable/Evict.exe.sha256
