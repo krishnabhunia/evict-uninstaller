@@ -19,6 +19,9 @@
   extensions from outside the web stores or forced by a policy, and unsigned startup programs in user folders.
 - **Fix selected**: tick categories on the Software Health page and fix them in one go; each tile shows
   "N selected to fix, total M". Permissions and hibernation are opt-in.
+- Setup detects a running Evict (installed or portable, in the notification area, or started as administrator) through
+  its single-instance lock, offers to close it and waits until it has exited; silent installs and self-updates close it
+  without asking (a self-update first gives the old version 10 s to exit on its own). The uninstaller asks the same.
 - The version number is shown in the title bar next to the name (and in the window / taskbar title); before, it was only
   a small line at the bottom of the sidebar that scrolled out of view at larger text sizes.
 

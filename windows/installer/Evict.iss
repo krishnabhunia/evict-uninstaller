@@ -137,7 +137,82 @@ begin
   Result := ExpandConstant('{param:EVICTUPDATE|0}') = '1';
 end;
 
+const
+  // Held by every running Evict (Program.cs: Local\EvictUninstaller.SingleInstance) – installed, portable, tray or elevated.
+  EvictMutex = 'EvictUninstaller.SingleInstance';
+
+// True while any Evict.exe process exists (tasklist | find returns 0 when it finds the name).
+function EvictProcessRunning(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /NH /FI "IMAGENAME eq {#MyAppExeName}" | find /I "{#MyAppExeName}" >nul',
+                 '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
+// Force-closes every Evict.exe and waits up to ~8 s for the single-instance lock to go away.
+// Returns False while an Evict is still running (e.g. started as administrator while Setup is not elevated).
+function CloseRunningEvict(): Boolean;
+var
+  ResultCode, Waited: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Waited := 0;
+  while CheckForMutexes(EvictMutex) and (Waited < 8000) do
+  begin
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+  // The process can outlive its lock by a moment while it exits; give Windows time to release Evict.exe.
+  Sleep(500);
+  Result := not CheckForMutexes(EvictMutex);
+end;
+
+// Before anything is installed: if an Evict is running (any copy, any version) ask to close it – Setup cannot replace
+// Evict.exe while it runs. Silent installs and Evict's own self-update close it without asking.
 function InitializeSetup(): Boolean;
+var
+  Waited: Integer;
 begin
   Result := True;
+  if IsSelfUpdate() then
+  begin
+    // The updating Evict released its lock and is exiting (saving its settings): give it up to 10 s, then make sure.
+    Waited := 0;
+    while EvictProcessRunning() and (Waited < 10000) do
+    begin
+      Sleep(500);
+      Waited := Waited + 500;
+    end;
+    if EvictProcessRunning() then CloseRunningEvict();
+    exit;
+  end;
+  while CheckForMutexes(EvictMutex) do
+  begin
+    if WizardSilent() then
+    begin
+      if not CloseRunningEvict() then Log('Evict is still running; the file replacement may need a restart.');
+      exit;
+    end;
+    if MsgBox('Evict Uninstaller is running (possibly minimized to the notification area).' + #13#10 + #13#10 +
+              'Setup needs to close it before installing. Close Evict now?', mbConfirmation, MB_OKCANCEL) = IDCANCEL then
+    begin
+      Result := False; // user cancelled – leave everything as it is
+      exit;
+    end;
+    if not CloseRunningEvict() then
+      MsgBox('Evict could not be closed – it may be running as administrator.' + #13#10 +
+             'Exit it from its notification-area icon (right-click → Exit), then click OK to try again.', mbError, MB_OK);
+  end;
+end;
+
+// The uninstaller gets the same check (its own [Code] also force-closes Evict, but a prompt is friendlier).
+function InitializeUninstall(): Boolean;
+begin
+  Result := True;
+  if UninstallSilent() or not CheckForMutexes(EvictMutex) then exit;
+  if MsgBox('Evict Uninstaller is running. Close it and continue uninstalling?', mbConfirmation, MB_OKCANCEL) = IDCANCEL then
+    Result := False
+  else
+    CloseRunningEvict();
 end;
