@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Evict</string>
+    <key>CFBundleDisplayName</key>
+    <string>Evict</string>
+    <key>CFBundleExecutable</key>
+    <string>Evict</string>
+    <key>CFBundleIdentifier</key>
+    <string>app.evict.mac</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@BUILD@</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Krishna Bhunia</string>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Evict never removes anything from your Desktop – this is only requested so dropped apps can be read.</string>
+</dict>
+</plist>
