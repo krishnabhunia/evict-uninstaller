@@ -21,7 +21,14 @@ delivered as a single portable `Evict.exe` **or** an `Evict-Setup-x.y.z.exe` ins
 | **Registry backups** | Every registry deletion anywhere in Evict (wizard, Force Uninstall, Residual Cleaner, Install Monitor, Registry Cleaner) is first exported to a regedit-compatible `.reg` file in `%LocalAppData%\Evict\registry-backups`; entries that cannot be backed up are not deleted. Restore / delete backups in the Registry Cleaner (`reg import`). | ✅ 1.4 |
 | **History** | Every operation with leftovers found/removed and bytes reclaimed; CSV export; rescan leftovers | ✅ |
 | **Settings** | Light/Dark theme, defaults for the wizard, thresholds for the tabs | ✅ |
-| **Software Health** (home page) | Score + tiles for outdated programs, leftovers, broken entries, bundleware, risky extensions, unused programs, bloatware, startup items – each with a one-click action | ✅ Build 2 |
+| **Software Health** (home page) | Score + 14 categories, each with a one-click action; tick categories and press **Fix selected** for the safe fixes (setup files to the Recycle Bin, caches, leftovers and broken entries with registry backup, promotional notifications off; permissions and hibernation opt-in) | ✅ Build 2 / 1.5 |
+| **Health: Installation files** | Setup packages (.msi/.msix/setup .exe/setup archives) in Downloads and on the Desktop – ticked when the program is installed or the file is > 30 days old; to the Recycle Bin | ✅ 1.5 |
+| **Health: Software redundant files** | Cache, log, crash-report and temp folders of installed programs (AppData, LocalLow, ProgramData as admin); log folders holding anything but log files are review-only | ✅ 1.5 |
+| **Health: Programs with uninstall issues** | Broken entry, uninstaller missing (files present), no uninstall command, or an earlier uninstall that failed – Programs tab *Uninstall issues* | ✅ 1.5 |
+| **Health: Disturbing notifications** | Every app allowed to show notifications plus Windows' tips / welcome / "finish setting up" / Settings suggestions; security senders locked on, promotional ones recommended off | ✅ 1.5 |
+| **Health: Software permissions** | Camera, microphone, location, contacts … per Store app (Allow/Deny) and per desktop program (last use; Windows' single desktop switch); sensitive permissions never used are recommended off | ✅ 1.5 |
+| **Health: Software hibernation** | Third-party background services and scheduled tasks can sleep (demand start + stop / task disabled) and be woken; security, driver, VPN, audio, backup and sync components locked awake; updaters recommended | ✅ 1.5 |
+| **Health: Malicious software & extensions** | Microsoft Defender status, definitions age, last quick scan and active threats (other antivirus recognised), quick scan on request; extensions from outside the web stores or forced by policy; unsigned programs starting from user-writable folders | ✅ 1.5 |
 | **Easy Uninstall widget** | Floating always-on-top target: drag it onto any program window, or drop a shortcut/.exe on it | ✅ Build 2 |
 | **Explorer context menu + command line** | "Uninstall with Evict" on .exe / .lnk files; `--uninstall-file`, `--uninstall`, `--scan`, `--widget`, `--page`; second launches forward to the running window | ✅ Build 2 |
 | **Startup Apps** | Run/RunOnce keys + Startup folders with the Task-Manager enable/disable switch | ✅ Build 2 |
@@ -75,7 +82,7 @@ answers 404 and the status reads "no published release".
 Requirements: .NET 8 SDK (Windows, Linux or macOS — the project sets `EnableWindowsTargeting`).
 
 ```bash
-dotnet test tests/Evict.Core.Tests            # 313 unit tests for the pure logic
+dotnet test tests/Evict.Core.Tests            # 410 unit tests for the pure logic
 dotnet publish src/Evict.App -c Release -o publish   # → publish/Evict.exe (single file, win-x64)
 ```
 

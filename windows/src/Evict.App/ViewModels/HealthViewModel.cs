@@ -21,6 +21,20 @@ public sealed partial class HealthTileViewModel : ObservableObject
     /// <summary>Penalty per finding for the health score.</summary>
     public int Weight { get; init; } = 2;
     public int MaxPenalty { get; init; } = 25;
+    /// <summary>"Fix selected" can handle this category without a review window.</summary>
+    public bool CanAutoFix { get; init; }
+    /// <summary>Ticked for "Fix selected" after a scan (safe fixes only).</summary>
+    public bool SelectedByDefault { get; init; }
+
+    [ObservableProperty] private bool _isSelected;
+    /// <summary>How many findings "Fix selected" would handle / how many were found in total.</summary>
+    [ObservableProperty] private int _fixCount;
+    [ObservableProperty] private int _total;
+    public bool ShowSelection => CanAutoFix && HasResult;
+    public string SelectionText => $"{(IsSelected ? FixCount : 0):N0} selected to fix, total {Total:N0}";
+    partial void OnIsSelectedChanged(bool value) => OnPropertyChanged(nameof(SelectionText));
+    partial void OnFixCountChanged(int value) => OnPropertyChanged(nameof(SelectionText));
+    partial void OnTotalChanged(int value) => OnPropertyChanged(nameof(SelectionText));
 
     [ObservableProperty] private int _count;
     [ObservableProperty] private string _detail = "Not scanned yet";
@@ -36,14 +50,16 @@ public sealed partial class HealthTileViewModel : ObservableObject
     partial void OnStateChanged(TileState value)
     {
         OnPropertyChanged(nameof(IsBusy)); OnPropertyChanged(nameof(IsGood)); OnPropertyChanged(nameof(IsAttention));
-        OnPropertyChanged(nameof(HasResult)); OnPropertyChanged(nameof(CountText));
+        OnPropertyChanged(nameof(HasResult)); OnPropertyChanged(nameof(CountText)); OnPropertyChanged(nameof(ShowSelection));
     }
     partial void OnCountChanged(int value) => OnPropertyChanged(nameof(CountText));
 
-    public void Set(int count, string detail, bool unavailable = false)
+    public void Set(int count, string detail, bool unavailable = false, int? total = null, int? fix = null)
     {
         Count = count;
         Detail = detail;
+        Total = total ?? count;
+        FixCount = unavailable ? 0 : fix ?? count;
         State = unavailable ? TileState.Unavailable : count == 0 ? TileState.Good : TileState.Attention;
     }
 }
@@ -56,6 +72,16 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
     private bool _scannedOnce;
     private List<SecurityFinding> _securityFindings = new();
 
+    // Last scan's findings, kept for "Fix selected".
+    private List<InstalledProgram> _programs = new();
+    private CleanupGroup? _setups, _redundant;
+    private List<LeftoverItem> _residual = new();
+    private List<ToggleItem> _notifyItems = new(), _permItems = new(), _hibernateItems = new();
+    [ObservableProperty] private bool _isFixing;
+    public bool CanFix => !IsScanning && !IsFixing && Tiles.Any(t => t.CanAutoFix && t.IsSelected && t.FixCount > 0);
+    partial void OnIsScanningChanged(bool value) => OnPropertyChanged(nameof(CanFix));
+    partial void OnIsFixingChanged(bool value) => OnPropertyChanged(nameof(CanFix));
+
     public HealthViewModel(AppServices services, MainViewModel main)
     {
         _services = services;
@@ -63,20 +89,25 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         Tiles = new ObservableCollection<HealthTileViewModel>
         {
             new() { Key = "outdated", Title = "Outdated programs", Glyph = "", ActionText = "Update", Weight = 3, MaxPenalty = 12 },
-            new() { Key = "installfiles", Title = "Installation files", Glyph = "\uE896", ActionText = "Review", Weight = 1, MaxPenalty = 6 },
-            new() { Key = "redundant", Title = "Software redundant files", Glyph = "\uE74D", ActionText = "Clean up", Weight = 0, MaxPenalty = 0 },
-            new() { Key = "residual", Title = "Leftovers from earlier uninstalls", Glyph = "", ActionText = "Clean up", Weight = 1, MaxPenalty = 5 },
-            new() { Key = "broken", Title = "Programs with uninstall issues", Glyph = "", ActionText = "Review", Weight = 3, MaxPenalty = 10 },
+            new() { Key = "installfiles", CanAutoFix = true, SelectedByDefault = true, Title = "Installation files", Glyph = "\uE896", ActionText = "Review", Weight = 1, MaxPenalty = 6 },
+            new() { Key = "redundant", CanAutoFix = true, SelectedByDefault = true, Title = "Software redundant files", Glyph = "\uE74D", ActionText = "Clean up", Weight = 0, MaxPenalty = 0 },
+            new() { Key = "residual", CanAutoFix = true, SelectedByDefault = true, Title = "Leftovers from earlier uninstalls", Glyph = "", ActionText = "Clean up", Weight = 1, MaxPenalty = 5 },
+            new() { Key = "broken", CanAutoFix = true, SelectedByDefault = true, Title = "Programs with uninstall issues", Glyph = "", ActionText = "Review", Weight = 3, MaxPenalty = 10 },
             new() { Key = "bundleware", Title = "Possible bundleware", Glyph = "", ActionText = "Review", Weight = 2, MaxPenalty = 12 },
             new() { Key = "malicious", Title = "Malicious software & extensions", Glyph = "\uE83D", ActionText = "Review", Weight = 4, MaxPenalty = 20 },
             new() { Key = "extensions", Title = "Extensions with broad permissions", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 8 },
             new() { Key = "unused", Title = "Large programs not used recently", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 8 },
             new() { Key = "bloat", Title = "Pre-installed Store apps flagged as bloatware", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 10 },
-            new() { Key = "notifications", Title = "Disturbing notifications", Glyph = "\uE7ED", ActionText = "Review", Weight = 1, MaxPenalty = 5 },
-            new() { Key = "permissions", Title = "Software permissions", Glyph = "\uE72E", ActionText = "Review", Weight = 1, MaxPenalty = 5 },
-            new() { Key = "hibernation", Title = "Software hibernation", Glyph = "\uE708", ActionText = "Manage", Weight = 0, MaxPenalty = 0 },
+            new() { Key = "notifications", CanAutoFix = true, SelectedByDefault = true, Title = "Disturbing notifications", Glyph = "\uE7ED", ActionText = "Review", Weight = 1, MaxPenalty = 5 },
+            new() { Key = "permissions", CanAutoFix = true, SelectedByDefault = false, Title = "Software permissions", Glyph = "\uE72E", ActionText = "Review", Weight = 1, MaxPenalty = 5 },
+            new() { Key = "hibernation", CanAutoFix = true, SelectedByDefault = false, Title = "Software hibernation", Glyph = "\uE708", ActionText = "Manage", Weight = 0, MaxPenalty = 0 },
             new() { Key = "startup", Title = "Programs starting at sign-in", Glyph = "", ActionText = "Manage", Weight = 0, MaxPenalty = 0 },
         };
+        foreach (var t in Tiles)
+        {
+            t.IsSelected = t.CanAutoFix && t.SelectedByDefault;
+            t.PropertyChanged += (_, e) => { if (e.PropertyName is nameof(HealthTileViewModel.IsSelected) or nameof(HealthTileViewModel.FixCount)) OnPropertyChanged(nameof(CanFix)); };
+        }
     }
 
     public ObservableCollection<HealthTileViewModel> Tiles { get; }
@@ -138,7 +169,9 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             if (CountOf(UninstallIssue.UninstallerMissing) > 0) issueParts.Add($"{CountOf(UninstallIssue.UninstallerMissing)} missing uninstaller");
             if (CountOf(UninstallIssue.NoUninstaller) > 0) issueParts.Add($"{CountOf(UninstallIssue.NoUninstaller)} without uninstall command");
             if (CountOf(UninstallIssue.FailedBefore) > 0) issueParts.Add($"{CountOf(UninstallIssue.FailedBefore)} failed before");
-            Tile("broken").Set(issues.Values.Sum(), issueParts.Count == 0 ? "Every program has a working uninstaller." : string.Join(", ", issueParts) + " – Force Uninstall removes them.");
+            _programs = list;
+            Tile("broken").Set(issues.Values.Sum(), issueParts.Count == 0 ? "Every program has a working uninstaller." : string.Join(", ", issueParts) + " – Force Uninstall removes them.",
+                fix: CountOf(UninstallIssue.Broken));
             Tile("bundleware").Set(list.Count(p => p.IsBundleSuspect), list.Any(p => p.IsKnownBundleware)
                 ? $"{list.Count(p => p.IsKnownBundleware)} match the known-bundleware list; the rest were installed alongside other software."
                 : "Programs installed within minutes of another vendor's program.");
@@ -152,7 +185,9 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             var list = await programsTask;
             var result = await _services.Residual.ScanAsync(list ?? new List<InstalledProgram>(), _services.History.Entries,
                 new ResidualScanOptions { FromHistory = true, BrokenEntries = true, UnmatchedFolders = false, ScanAllUserProfiles = s.ScanAllUserProfiles }, null, CancellationToken.None);
-            Tile("residual").Set(result.Items.Count, result.Items.Count == 0 ? "Nothing left behind by the uninstalls Evict knows about." : $"{SizeFormatter.Format(result.TotalBytes)} of files and {result.RegistryCount} registry entries from programs removed earlier.");
+            _residual = result.Items;
+            Tile("residual").Set(result.Items.Count, result.Items.Count == 0 ? "Nothing left behind by the uninstalls Evict knows about." : $"{SizeFormatter.Format(result.TotalBytes)} of files and {result.RegistryCount} registry entries from programs removed earlier.",
+                fix: result.Items.Count(i => i.Confidence != LeftoverConfidence.Low));
             return true;
         });
 
@@ -160,12 +195,18 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         {
             var list = await programsTask ?? new List<InstalledProgram>();
             var setups = await Task.Run(() => _services.Cleanup.ScanInstallationFiles(list, CancellationToken.None));
+            _setups = setups;
             int ticked = setups.Items.Count(i => i.Confidence != LeftoverConfidence.Low);
             Tile("installfiles").Set(ticked, setups.Items.Count == 0 ? "No setup packages in Downloads or on the Desktop."
-                : $"{setups.Items.Count} setup file(s), {SizeFormatter.Format(setups.TotalSize)}; {ticked} for installed programs or older than 30 days.");
+                : $"{setups.Items.Count} setup file(s), {SizeFormatter.Format(setups.TotalSize)}; {ticked} for installed programs or older than 30 days.",
+                total: setups.Items.Count);
             var redundant = await Task.Run(() => _services.Cleanup.ScanRedundantFiles(list, CancellationToken.None));
+            _redundant = redundant;
+            int redundantFix = redundant.Items.Count(i => i.Confidence != LeftoverConfidence.Low);
             Tile("redundant").Set(redundant.Items.Count, redundant.Items.Count == 0 ? "No large caches or logs kept by installed programs."
-                : $"{SizeFormatter.Format(redundant.TotalSize)} of caches, logs and crash reports in {redundant.Items.Count} folder(s).");
+                : $"{SizeFormatter.Format(redundant.TotalSize)} of caches, logs and crash reports in {redundant.Items.Count} folder(s)."
+                  + (redundantFix < redundant.Items.Count ? $" {redundant.Items.Count - redundantFix} log folder(s) hold other files – review those." : ""),
+                fix: redundantFix);
             return true;
         }, "redundant");
 
@@ -198,22 +239,26 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         var notifyTask = RunTile("notifications", async () =>
         {
             var items = await Task.Run(() => new NotificationService().Load());
+            _notifyItems = items;
             int noisy = items.Count(i => i.RecommendOff && i.IsOn);
             int allowed = items.Count(i => i.IsOn && i.Data.TryGetValue("type", out var t) && t == "sender");
             Tile("notifications").Set(noisy, noisy == 0
                 ? $"{allowed} apps may show notifications; no promotional ones or Windows tips are switched on."
-                : $"{noisy} promotional sender(s) or Windows tip prompts are on; {allowed} apps may show notifications.");
+                : $"{noisy} promotional sender(s) or Windows tip prompts are on; {allowed} apps may show notifications.",
+                total: items.Count(i => i.IsOn));
             return true;
         });
 
         var permTask = RunTile("permissions", async () =>
         {
             var items = await Task.Run(() => new PermissionService().Load());
+            _permItems = items;
             int unused = items.Count(i => i.RecommendOff && i.IsOn);
             int granted = items.Count(i => i.IsOn && !i.Id.EndsWith("\\NonPackaged", StringComparison.Ordinal));
             Tile("permissions").Set(unused, unused == 0
                 ? $"{granted} app permissions granted; none are sensitive permissions an app has never used."
-                : $"{unused} app(s) hold a camera, microphone, location or similar permission they have never used.");
+                : $"{unused} app(s) hold a camera, microphone, location or similar permission they have never used.",
+                total: granted);
             return true;
         });
 
@@ -230,9 +275,12 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         var hibernateTask = RunTile("hibernation", async () =>
         {
             var items = await Task.Run(() => new HibernationService().Load());
+            _hibernateItems = items;
             int awakeUpdaters = items.Count(i => i.RecommendOff && i.IsOn);
             int asleep = items.Count(i => !i.IsOn);
-            Tile("hibernation").Set(awakeUpdaters, $"{items.Count} background services and tasks of your programs; {awakeUpdaters} updater(s) could sleep" + (asleep > 0 ? $", {asleep} asleep." : "."));
+            Tile("hibernation").Set(awakeUpdaters, $"{items.Count} background services and tasks of your programs; {awakeUpdaters} updater(s) could sleep" + (asleep > 0 ? $", {asleep} asleep." : ".")
+                + (ElevationHelper.IsElevated ? "" : " Restart as administrator to put services to sleep."),
+                total: items.Count, fix: items.Count(i => i.RecommendOff && i.IsOn && !i.Locked));
             return true;
         });
 
@@ -275,6 +323,86 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return default;
         }
     }
+
+    /// <summary>
+    /// "Fix selected": applies the safe fix of every ticked category from the last scan – files to the Recycle Bin or
+    /// deleted, registry backed up first, recommended switches off – then scans again.
+    /// </summary>
+    [RelayCommand]
+    private async Task FixSelectedAsync()
+    {
+        var chosen = Tiles.Where(t => t.CanAutoFix && t.IsSelected && t.FixCount > 0).ToList();
+        if (chosen.Count == 0) return;
+        if (!Dialogs.Confirm("Fix these now?\n\n" + string.Join("\n", chosen.Select(t => $"•  {t.Title}: {t.FixCount:N0}")) +
+                             "\n\nSetup files go to the Recycle Bin, registry entries are backed up first, and every switch can be turned back on.", destructive: true))
+            return;
+        IsFixing = true;
+        var report = new List<string>();
+        var s = _services.Settings.Current;
+        try
+        {
+            foreach (var t in chosen)
+            {
+                Summary = $"Fixing: {t.Title}…";
+                try { report.Add(await FixAsync(t.Key, s)); }
+                catch (Exception ex) { report.Add($"{t.Title}: failed – {ex.Message}"); Log.Warn($"Fix {t.Key}: {ex}"); }
+            }
+            _services.History.Add(new UninstallHistoryEntry
+            {
+                ProgramName = "Software Health – Fix selected", Method = UninstallMethod.Force, Succeeded = !report.Any(r => r.Contains("failed")),
+                Notes = string.Join(" | ", report),
+            });
+            _main.GetPage<HistoryViewModel>(PageKey.History).Reload();
+            Dialogs.Info("Done.\n\n" + string.Join("\n", report));
+        }
+        finally { IsFixing = false; }
+        await ScanAsync();
+    }
+
+    private async Task<string> FixAsync(string key, AppSettings s)
+    {
+        switch (key)
+        {
+            case "installfiles" when _setups != null:
+            case "redundant" when _redundant != null:
+            {
+                var group = key == "installfiles" ? _setups! : _redundant!;
+                var sel = group.Items.Where(i => i.Confidence != LeftoverConfidence.Low).Select(i => (group, i)).ToList();
+                var r = await _services.Cleanup.CleanAsync(sel, moveInstallerCacheToBackup: false, null, CancellationToken.None);
+                return $"{group.Title}: {r.Removed} removed ({SizeFormatter.Format(r.BytesFreed)}){(r.Failed > 0 ? $", {r.Failed} failed" : "")}";
+            }
+            case "residual":
+            case "broken":
+            {
+                var items = key == "residual"
+                    ? _residual.Where(i => i.Confidence != LeftoverConfidence.Low).ToList()
+                    : _programs.Where(p => p.UninstallIssue == UninstallIssue.Broken).Select(p => new LeftoverItem
+                    {
+                        Kind = LeftoverKind.RegistryKey, Path = p.RegistryPath, Hive = p.Hive, RegView = p.View,
+                        SubKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" + p.KeyName, Confidence = LeftoverConfidence.High, ProgramName = p.DisplayName,
+                    }).ToList();
+                var r = await _services.Cleaner.CleanAsync(items, new CleanupOptions { SendToRecycleBin = s.SendToRecycleBin, BackupLabel = "Software Health" }, null, CancellationToken.None);
+                var title = key == "residual" ? "Leftovers" : "Broken uninstall entries";
+                return $"{title}: {r.Removed} removed{(r.Failed > 0 ? $", {r.Failed} failed (e.g. {r.Errors[0].Error})" : "")}";
+            }
+            case "notifications": return await SwitchOffAsync("Notifications", new NotificationService(), _notifyItems);
+            case "permissions": return await SwitchOffAsync("Permissions", new PermissionService(), _permItems);
+            case "hibernation": return await SwitchOffAsync("Hibernation", new HibernationService(), _hibernateItems);
+        }
+        return $"{key}: nothing to do";
+    }
+
+    private static Task<string> SwitchOffAsync(string title, IToggleProvider provider, List<ToggleItem> items) => Task.Run(() =>
+    {
+        int ok = 0, failed = 0;
+        string? firstError = null;
+        foreach (var i in items.Where(i => i.RecommendOff && i.IsOn && !i.Locked))
+        {
+            var err = provider.Set(i, false);
+            if (err is null) ok++; else { failed++; firstError ??= err; }
+        }
+        return $"{title}: {ok} switched off{(failed > 0 ? $", {failed} failed ({firstError})" : "")}";
+    });
 
     private void OpenToggleList(IToggleProvider provider)
     {

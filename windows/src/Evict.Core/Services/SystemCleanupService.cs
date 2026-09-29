@@ -296,8 +296,17 @@ public sealed class SystemCleanupService
             if (owner is null) continue; // not an installed program's folder – Residual Cleaner's business
             long size = DirectorySizeCalculator.Measure(sub) ?? 0;
             if (size < MinRedundantBytes) continue;
-            g.Items.Add(new CleanupItem { Path = sub, IsDirectory = true, Size = size, Confidence = LeftoverConfidence.High, Detail = $"{owner} · {kind}" });
+            var confidence = LeftoverConfidence.High;
+            if (kind == "logs" && !RedundantFileRules.OnlyLogFiles(SampleFiles(sub))) confidence = LeftoverConfidence.Low; // may hold chat history, exports…
+            g.Items.Add(new CleanupItem { Path = sub, IsDirectory = true, Size = size, Confidence = confidence,
+                Detail = $"{owner} · {kind}" + (confidence == LeftoverConfidence.Low ? " (not only log files – review)" : "") });
         }
+    }
+
+    private static IEnumerable<string> SampleFiles(string dir)
+    {
+        try { return Directory.EnumerateFiles(dir, "*", new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 3, IgnoreInaccessible = true }).Take(2000).ToList(); }
+        catch { return new[] { "unreadable" }; }
     }
 
     private static IEnumerable<string> SafeDirs(string dir)

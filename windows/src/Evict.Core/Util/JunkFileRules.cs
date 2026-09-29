@@ -95,6 +95,30 @@ public static class RedundantFileRules
     /// inner folders (Cache, Logs…) are removed here – so Google\Chrome's or Mozilla\Firefox's caches are found.</remarks>
     public static bool IsSkippedRoot(string topFolderName) => SkippedRoots.Contains(topFolderName);
 
+    private static readonly HashSet<string> LogExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".log", ".etl", ".old", ".tmp", ".dmp", ".trace", ".jsonl", ".lck", ".lock",
+    };
+
+    /// <summary>
+    /// A "Logs" folder is safe to empty only when it holds nothing but log files – some programs keep chat history or
+    /// exports in a folder called Logs. Rotated logs ("app.log.1", "app.1.log") count as logs.
+    /// </summary>
+    public static bool OnlyLogFiles(IEnumerable<string> fileNames)
+    {
+        bool any = false;
+        foreach (var f in fileNames)
+        {
+            any = true;
+            var name = PathUtil.LeafName(f);
+            var ext = Path.GetExtension(name);
+            if (LogExtensions.Contains(ext)) continue;
+            if (ext.Length > 1 && ext[1..].All(char.IsDigit) && name.Contains(".log", StringComparison.OrdinalIgnoreCase)) continue; // app.log.3
+            return false;
+        }
+        return any;
+    }
+
     /// <summary>
     /// The installed program that owns a folder, judged from its first two path segments below AppData / ProgramData
     /// ("Google\Chrome\User Data\…" → Google Chrome). Exact name-key matches win over partial ones, and the most

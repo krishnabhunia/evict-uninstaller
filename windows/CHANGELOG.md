@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.5.0 — Software Health: 14 categories and Fix selected (29 Sep 2026)
+
+- **Installation files**: setup packages in Downloads and on the Desktop; ticked when the program is already installed or
+  the file is older than 30 days; removed files go to the Recycle Bin. Also a System Cleanup category.
+- **Software redundant files**: caches, logs, crash reports and temp folders that installed programs keep in AppData,
+  LocalLow and (as administrator) ProgramData. A "Logs" folder that holds anything other than log files is listed for
+  review only. Also a System Cleanup category.
+- **Programs with uninstall issues** (was "Broken uninstall entries"): also programs whose uninstaller is missing, that
+  have no uninstall command, or whose earlier uninstall failed. The Programs tab is now *Uninstall issues*.
+- **Disturbing notifications**: every notification sender plus Windows' tip and suggestion prompts, with on/off switches;
+  security and update senders stay on, promotional / bundled senders are recommended off.
+- **Software permissions**: camera, microphone, location, contacts and more per app, with last use; Store apps switch one
+  by one, desktop programs through Windows' single per-permission switch.
+- **Software hibernation**: put third-party background services and scheduled tasks (mostly updaters) to sleep and wake
+  them again; security, driver, VPN, audio, backup and sync components are never touched.
+- **Malicious software & extensions**: Microsoft Defender protection, definitions and threats (quick scan on request),
+  extensions from outside the web stores or forced by a policy, and unsigned startup programs in user folders.
+- **Fix selected**: tick categories on the Software Health page and fix them in one go; each tile shows
+  "N selected to fix, total M". Permissions and hibernation are opt-in.
+
 ## 1.4.0 — registry cleaning + clean self-removal (29 Sep 2026)
 
 - **Registry Cleaner** (Tools): a separate module that finds registry entries pointing to programs, files and folders that

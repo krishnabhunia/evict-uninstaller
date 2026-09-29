@@ -332,3 +332,15 @@ public class HibernationRulesTests
         Assert.Empty(Evict.Core.Services.HibernationRules.ParseTasks("garbage"));
     }
 }
+
+public class LogFolderRulesTests
+{
+    [Fact]
+    public void OnlyLogFiles()
+    {
+        Assert.True(RedundantFileRules.OnlyLogFiles(new[] { @"C:\a\app.log", @"C:\a\app.log.1", @"C:\a\trace.etl", @"C:\a\x.old" }));
+        Assert.False(RedundantFileRules.OnlyLogFiles(new[] { @"C:\a\app.log", @"C:\a\chat-with-alice.txt" }));
+        Assert.False(RedundantFileRules.OnlyLogFiles(new[] { @"C:\a\export.html" }));
+        Assert.False(RedundantFileRules.OnlyLogFiles(Array.Empty<string>()));
+    }
+}
