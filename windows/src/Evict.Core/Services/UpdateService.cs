@@ -35,11 +35,19 @@ public sealed record UpdateCheckResult(UpdateStatus Status, Version CurrentVersi
 public static class UpdateChecker
 {
     public const string RepoOwner = "krishnabhunia";
-    public const string RepoName = "evict";
+    /// <summary>Renamed from "evict" when the macOS app moved into the same repository (GitHub redirects the old name).</summary>
+    public const string RepoName = "evict-uninstaller";
     public static string RepoUrl => $"https://github.com/{RepoOwner}/{RepoName}";
     public static string ReleasesUrl => RepoUrl + "/releases";
     public static string LatestApiUrl => $"https://api.github.com/repos/{RepoOwner}/{RepoName}/releases/latest";
     public static string LatestRedirectUrl => ReleasesUrl + "/latest";
+
+    /// <summary>
+    /// The repository also publishes the macOS app under "mac-vX.Y.Z" tags. Windows releases use "win-vX.Y.Z"
+    /// (and "vX.Y.Z" before the merge); anything tagged for macOS is never offered as a Windows update.
+    /// </summary>
+    public static bool IsWindowsTag(string? tag) =>
+        !string.IsNullOrWhiteSpace(tag) && !tag.TrimStart().StartsWith("mac", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>"v1.2.0", "1.2", "release-1.2.3", "v1.2.0-beta.1" → 1.2.0 (always three parts). Null when there is no version.</summary>
     public static Version? ParseVersion(string? tag)
@@ -87,7 +95,7 @@ public static class UpdateChecker
         if (root.ValueKind != JsonValueKind.Object) return null;
         var tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() : null;
         var version = ParseVersion(tag);
-        if (version is null || tag is null) return null;
+        if (version is null || tag is null || !IsWindowsTag(tag)) return null;
         bool draft = root.TryGetProperty("draft", out var d) && d.ValueKind == JsonValueKind.True;
         if (draft) return null;
 
@@ -135,7 +143,7 @@ public static class UpdateChecker
     public static ReleaseInfo? ReleaseFromTag(string tag)
     {
         var v = ParseVersion(tag);
-        if (v is null) return null;
+        if (v is null || !IsWindowsTag(tag)) return null;
         string Dl(string name) => $"{RepoUrl}/releases/download/{Uri.EscapeDataString(tag)}/{name}";
         var assets = new List<ReleaseAsset>
         {
@@ -230,7 +238,7 @@ public sealed class UpdateService
             {
                 var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 release = UpdateChecker.ParseRelease(json);
-                if (release is null) failure = "The latest release has no version tag.";
+                if (release is null) failure = "The latest release has no Windows version tag.";
             }
             else if (resp.StatusCode == HttpStatusCode.NotFound)
             {
@@ -258,7 +266,7 @@ public sealed class UpdateService
         return new UpdateCheckResult(UpdateStatus.UpToDate, current, release, $"You have the latest version ({current.ToString(3)}).");
     }
 
-    /// <summary>Fallback without the API: /releases/latest redirects to /releases/tag/vX.Y.Z.</summary>
+    /// <summary>Fallback without the API: /releases/latest redirects to /releases/tag/win-vX.Y.Z.</summary>
     private static async Task<ReleaseInfo?> CheckViaRedirectAsync(CancellationToken ct)
     {
         using var handler = new HttpClientHandler { AllowAutoRedirect = false };

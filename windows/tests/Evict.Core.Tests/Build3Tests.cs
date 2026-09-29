@@ -64,7 +64,7 @@ public class Build3Tests
           "published_at": "2026-10-01T10:15:00Z",
           "body": "## What's Changed\n* Faster scans\n* Bug fixes",
           "assets": [
-            { "name": "Evict.exe", "browser_download_url": "https://github.com/krishnabhunia/evict/releases/download/v1.3.0/Evict.exe", "size": 69000000 },
+            { "name": "Evict.exe", "browser_download_url": "https://github.com/krishnabhunia/evict-uninstaller/releases/download/win-v1.3.0/Evict.exe", "size": 69000000 },
             { "name": "Evict.exe.sha256", "browser_download_url": "https://github.com/krishnabhunia/evict/releases/download/v1.3.0/Evict.exe.sha256", "size": 66 },
             { "name": "Evict-Setup-1.3.0.exe", "browser_download_url": "https://github.com/krishnabhunia/evict/releases/download/v1.3.0/Evict-Setup-1.3.0.exe", "size": 40000000 },
             { "name": "Evict-Setup-1.3.0.exe.sha256", "browser_download_url": "https://github.com/krishnabhunia/evict/releases/download/v1.3.0/Evict-Setup-1.3.0.exe.sha256", "size": 66 }
@@ -94,6 +94,43 @@ public class Build3Tests
         Assert.Null(UpdateChecker.ParseRelease(SampleRelease.Replace("\"tag_name\": \"v1.3.0\"", "\"tag_name\": \"nightly\"")));
         Assert.Null(UpdateChecker.ParseRelease("[]"));
         Assert.Null(UpdateChecker.ParseRelease(""));
+    }
+
+    [Theory]
+    [InlineData("win-v1.4.0", true)]
+    [InlineData("v1.3.3", true)]
+    [InlineData("1.4.0", true)]
+    [InlineData("mac-v0.2.0", false)]
+    [InlineData("macos-v0.2.0", false)]
+    [InlineData("MAC-v2.0.0", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsWindowsTag_RejectsMacReleases(string? tag, bool expected)
+    {
+        Assert.Equal(expected, UpdateChecker.IsWindowsTag(tag));
+    }
+
+    [Fact]
+    public void ParseRelease_PrefixedWindowsTag()
+    {
+        var r = UpdateChecker.ParseRelease("""{ "tag_name": "win-v1.4.0" }""");
+        Assert.NotNull(r);
+        Assert.Equal(new Version(1, 4, 0), r!.Version);
+    }
+
+    [Fact]
+    public void MacReleaseIsNeverAWindowsUpdate()
+    {
+        Assert.Null(UpdateChecker.ParseRelease("""{ "tag_name": "mac-v9.0.0", "assets": [ { "name": "Evict-9.0.0.zip", "browser_download_url": "https://x/z", "size": 1 } ] }"""));
+        Assert.Null(UpdateChecker.ReleaseFromTag("mac-v9.0.0"));
+        Assert.NotNull(UpdateChecker.ReleaseFromTag("win-v9.0.0"));
+    }
+
+    [Fact]
+    public void RepoIsTheMergedRepository()
+    {
+        Assert.Equal("https://github.com/krishnabhunia/evict-uninstaller/releases", UpdateChecker.ReleasesUrl);
+        Assert.EndsWith("/repos/krishnabhunia/evict-uninstaller/releases/latest", UpdateChecker.LatestApiUrl);
     }
 
     [Fact]
@@ -134,6 +171,7 @@ public class Build3Tests
     [Theory]
     [InlineData("https://github.com/krishnabhunia/evict/releases/tag/v1.3.0", "v1.3.0")]
     [InlineData("/krishnabhunia/evict/releases/tag/v1.3.0?x=1", "v1.3.0")]
+    [InlineData("https://github.com/krishnabhunia/evict-uninstaller/releases/tag/win-v1.4.0", "win-v1.4.0")]
     [InlineData("https://github.com/o/r/releases/tag/release-2.0", "release-2.0")]
     [InlineData("https://github.com/o/r/releases", null)]
     [InlineData("", null)]
@@ -145,11 +183,11 @@ public class Build3Tests
     [Fact]
     public void ReleaseFromTag_BuildsGitHubDownloadUrls()
     {
-        var r = UpdateChecker.ReleaseFromTag("v1.3.0");
+        var r = UpdateChecker.ReleaseFromTag("win-v1.3.0");
         Assert.NotNull(r);
         Assert.Equal(new Version(1, 3, 0), r!.Version);
         var exe = UpdateChecker.PickAsset(r, false)!;
-        Assert.Equal("https://github.com/krishnabhunia/evict/releases/download/v1.3.0/Evict.exe", exe.DownloadUrl);
+        Assert.Equal("https://github.com/krishnabhunia/evict-uninstaller/releases/download/win-v1.3.0/Evict.exe", exe.DownloadUrl);
         Assert.Equal("Evict-Setup-1.3.0.exe", UpdateChecker.PickAsset(r, true)!.Name);
         Assert.Null(UpdateChecker.ReleaseFromTag("nightly"));
     }

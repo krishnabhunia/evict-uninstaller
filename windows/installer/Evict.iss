@@ -1,13 +1,13 @@
 ; Inno Setup 6 script for Evict Uninstaller
 ; Compile: ISCC.exe /DMyAppVersion=1.2.0 /DSourceDir=..\publish Evict.iss
-; (GitHub Actions does this automatically – see .github/workflows/build.yml)
+; (GitHub Actions does this automatically – see .github/workflows/windows.yml)
 
 #define MyAppName "Evict Uninstaller"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.3"
+  #define MyAppVersion "1.3.4"
 #endif
 #define MyAppPublisher "Krishna Bhunia"
-#define MyAppURL "https://github.com/krishnabhunia/evict"
+#define MyAppURL "https://github.com/krishnabhunia/evict-uninstaller"
 #define MyAppExeName "Evict.exe"
 #ifndef SourceDir
   #define SourceDir "..\publish"

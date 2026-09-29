@@ -1,4 +1,6 @@
-# Evict Uninstaller
+# Evict Uninstaller — Windows
+
+> Part of [evict-uninstaller](../README.md). Everything below lives in the `windows/` folder; run the commands from there.
 
 A complete Windows uninstaller — written in C# / .NET 8 / WPF,
 delivered as a single portable `Evict.exe` **or** an `Evict-Setup-x.y.z.exe` installer (Inno Setup).
@@ -57,8 +59,8 @@ through Task Scheduler (task `Evict Software Health scan`, per user); the result
 
 ## Updates
 
-On start (Settings → *Updates*, on by default) Evict asks `api.github.com/repos/krishnabhunia/evict/releases/latest`
-for the newest tag; if the API is rate-limited it falls back to the `releases/latest` redirect. A newer version shows a
+On start (Settings → *Updates*, on by default) Evict asks `api.github.com/repos/krishnabhunia/evict-uninstaller/releases/latest`
+for the newest tag (only Windows releases are ever marked *latest*; `mac-v*` tags are ignored); if the API is rate-limited it falls back to the `releases/latest` redirect. A newer version shows a
 blue banner → *Update now* opens a dialog with the release notes. The download is verified against the `.sha256`
 asset published by CI. Installed copies start `Evict-Setup-x.y.z.exe /SILENT /CLOSEAPPLICATIONS /NORESTART /EVICTUPDATE=1`
 (which relaunches Evict); portable copies rename the running `Evict.exe` to `Evict.old.exe`, move the new file in and
@@ -92,9 +94,9 @@ If Evict is already running, a second launch hands its arguments to the open win
 
 ## Continuous integration
 
-`.github/workflows/build.yml` builds on `windows-latest` for every push: unit tests → XAML checks → single-file publish →
+`.github/workflows/windows.yml` (repository root) builds on `windows-latest` for every push that touches `windows/`: unit tests → XAML checks → single-file publish →
 (optional signing) → Inno Setup installer → SHA-256 files → artifact `Evict-<version>-<sha>` containing `Evict.exe`,
-`Evict-Setup-<version>.exe` and their `.sha256`. Pushing a tag `v1.2.0` additionally creates a GitHub Release with the
+`Evict-Setup-<version>.exe` and their `.sha256`. Pushing a tag `win-v1.3.4` (`v1.x` before the repositories were merged) additionally creates a GitHub Release with the
 same four files attached (auto-generated notes) — that release is what the in-app update check reads.
 
 The installer script is `installer/Evict.iss` (Inno Setup 6.3+). Locally: `ISCC.exe /DMyAppVersion=1.2.0 /DSourceDir=..\publish installer\Evict.iss`.
@@ -141,7 +143,7 @@ src/Evict.App/               WPF UI (net8.0-windows), MVVM with CommunityToolkit
 tests/Evict.Core.Tests/      xunit tests (run on any OS)
 build/                       publish scripts, xaml_check.py (static XAML sanity checks)
 installer/Evict.iss          Inno Setup script (compiled by CI into Evict-Setup-<version>.exe)
-.github/workflows/build.yml  CI: test → publish → sign (optional) → installer → artifact / release
+../.github/workflows/windows.yml  CI: test → publish → sign (optional) → installer → artifact / release
 ```
 
 ## Safety design

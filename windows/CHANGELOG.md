@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.4 — one repository for Windows and macOS (29 Sep 2026)
+
+- The project moved to **github.com/krishnabhunia/evict-uninstaller** (renamed from `evict`; the old address redirects),
+  with the Windows app in `windows/` and the macOS app in `macos/`.
+- Update check: reads releases from the new repository and never offers a macOS release (`mac-v*` tags) as a Windows
+  update. Windows releases are now tagged `win-vX.Y.Z`.
+- Installer: support/update links point to the new repository (the installer's AppId is unchanged, so 1.3.4 upgrades
+  existing installations in place).
+
 ## 1.3.3 — deeper registry cleanup, verified (17 Sep 2026)
 
 - **Registry leftovers after an uninstall – wider search.** Besides SOFTWARE\<Program>, SOFTWARE\<Publisher>\<Program>,

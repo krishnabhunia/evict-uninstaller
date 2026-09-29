@@ -1,7 +1,7 @@
 # Evict Uninstaller — Project Status & Spec
 
 **Goal:** a complete, independent Windows uninstaller owned by Krishna, delivered as a portable EXE and an installer.
-**Decisions (16 Sep 2026):** C# / .NET 8 / WPF · incremental builds · cloud-built, no local toolchain needed · portable + Inno Setup installer · code in GitHub `krishnabhunia/evict` (Actions CI, Releases) · name stays "Evict" · no references to other products/companies in the project.
+**Decisions (16 Sep 2026):** C# / .NET 8 / WPF · incremental builds · cloud-built, no local toolchain needed · portable + Inno Setup installer · code in GitHub `krishnabhunia/evict-uninstaller` under `windows/` (renamed from `krishnabhunia/evict` on 29 Sep 2026; Actions CI, Releases) · name stays "Evict" · no references to other products/companies in the project.
 
 ## Delivery — Build 4 (v1.3.0), 16 Sep 2026
 
@@ -21,7 +21,7 @@
 | UI | `src/Evict.App` (net8.0-windows, WPF + WinForms NotifyIcon, CommunityToolkit.Mvvm) | Fluent-style Light/Dark theme, sidebar nav, 9 pages, 10 dialog windows, tray icon, zoom 80–300 % (default 120 %) |
 | Tests | `tests/Evict.Core.Tests` (xunit, 209 tests) | Pure logic only (runs on Linux CI too) |
 | Installer | `installer/Evict.iss` (Inno Setup 6.3+) | per-user default / all-users; tasks: desktop icon, context menu, Send to, autostart; uninstall removes scheduled task + autostart |
-| CI | `.github/workflows/build.yml` | windows-latest: restore → tests → xaml_check → publish → sign (optional) → ISCC → sha256 → artifact; tag `v*` → Release |
+| CI | `.github/workflows/windows.yml` | windows-latest: restore → tests → xaml_check → publish → sign (optional) → ISCC → sha256 → artifact; tag `win-v*` → Release (`v*` before the merge) |
 
 ## Module status
 

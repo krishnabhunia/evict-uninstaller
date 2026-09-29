@@ -1,7 +1,9 @@
 # Evict for Mac
 
+> Part of [evict-uninstaller](../README.md). Everything below lives in the `macos/` folder; run the commands from there.
+
 An application uninstaller and leftover cleaner for macOS — the Mac counterpart of
-[Evict for Windows](https://github.com/krishnabhunia/evict).
+[Evict for Windows](../windows/README.md).
 
 Dragging an app to the Trash leaves its support files, preferences, caches, containers and launch
 agents behind. Evict finds them, shows you what it found and why, and moves the lot to the Trash —
