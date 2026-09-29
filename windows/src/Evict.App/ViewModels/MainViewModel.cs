@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Reflection;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -64,8 +63,10 @@ public sealed partial class MainViewModel : ObservableObject
     public bool ShowAdminBanner => !ElevationHelper.IsElevated && !_adminBannerDismissed;
     private bool _adminBannerDismissed;
 
-    public string WindowTitle => AppPaths.ProductName + (IsElevated ? "  (Administrator)" : "");
-    public string VersionText => "v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0");
+    /// <summary>"Evict Uninstaller 1.5.0" – also what the taskbar and Alt+Tab show.</summary>
+    public string WindowTitle => $"{AppPaths.ProductName} {_services.Updater.CurrentVersion.ToString(3)}" + (IsElevated ? "  (Administrator)" : "");
+    /// <summary>Same source as the update check, so the number shown is the one compared with GitHub Releases.</summary>
+    public string VersionText => "v" + _services.Updater.CurrentVersion.ToString(3);
 
     public void Navigate(PageKey key)
     {

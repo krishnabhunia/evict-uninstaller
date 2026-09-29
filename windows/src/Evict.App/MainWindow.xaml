@@ -30,7 +30,7 @@
         <Border Grid.Row="0" Background="{DynamicResource Brush.TitleBar.Background}" BorderBrush="{DynamicResource Brush.Sidebar.Border}" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="236" />
+                    <ColumnDefinition Width="Auto" MinWidth="236" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
@@ -39,6 +39,11 @@
                     <Image Source="pack://application:,,,/Assets/app-256.png" Width="22" Height="22" RenderOptions.BitmapScalingMode="HighQuality" />
                     <TextBlock Text="Evict" FontSize="16" FontWeight="Bold" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}" />
                     <TextBlock Text="Uninstaller" FontSize="16" FontWeight="Light" Margin="5,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                    <!-- Version in the title bar: always visible (the sidebar scrolls with the text-size zoom). -->
+                    <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="6,1" Margin="8,2,0,0" VerticalAlignment="Center"
+                            ToolTip="Installed version – Settings → Updates checks GitHub Releases for a newer one">
+                        <TextBlock Text="{Binding VersionText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Accent}" />
+                    </Border>
                 </StackPanel>
 
                 <TextBlock Grid.Column="1" Text="{Binding CurrentTitle}" VerticalAlignment="Center" Margin="24,0,0,0" FontSize="13" Foreground="{DynamicResource Brush.Text.Tertiary}" />
