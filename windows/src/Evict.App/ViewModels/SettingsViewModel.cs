@@ -75,6 +75,19 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
     }
 
+    public IReadOnlyList<KeyValuePair<string, string>> RunningProgramOptions { get; } = new[]
+    {
+        new KeyValuePair<string, string>("Ask", "Ask me to close it (recommended)"),
+        new KeyValuePair<string, string>("Close", "Close it automatically (force-close if it does not respond)"),
+        new KeyValuePair<string, string>("Ignore", "Leave it running"),
+    };
+
+    public string RunningProgramAction
+    {
+        get => S.RunningProgramAction;
+        set { S.RunningProgramAction = value is "Ask" or "Close" or "Ignore" ? value : "Ask"; Save(); OnPropertyChanged(); }
+    }
+
     public IReadOnlyList<KeyValuePair<string, string>> InstallerDetectionOptions { get; } = new[]
     {
         new KeyValuePair<string, string>("Off", "Off – never watch for installers"),

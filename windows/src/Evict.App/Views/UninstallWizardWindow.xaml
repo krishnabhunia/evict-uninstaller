@@ -60,7 +60,10 @@
                     <CheckBox IsChecked="{Binding QuietMode}" Content="Silent uninstall where the installer supports it (MSI, Inno Setup, NSIS…)" Margin="0,0,0,8" />
                     <CheckBox IsChecked="{Binding ScanLeftovers}" Content="Powerful Scan: search for leftover files, folders and registry entries afterwards" Margin="0,0,0,8" />
                     <CheckBox IsChecked="{Binding AutoClean}" IsEnabled="{Binding ScanLeftovers}" Content="Remove leftovers automatically (skip the review step; only 'Review' items are kept)" Margin="26,0,0,8" />
-                    <CheckBox IsChecked="{Binding SendToRecycleBin}" Content="Send leftover files to the Recycle Bin instead of deleting permanently" />
+                    <CheckBox IsChecked="{Binding SendToRecycleBin}" Content="Send leftover files to the Recycle Bin instead of deleting permanently (can be undone)" />
+                    <Border Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="8" Padding="12,8" Margin="0,10,0,0" Visibility="{Binding RunningNowText, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Text="{Binding RunningNowText}" />
+                    </Border>
                 </StackPanel>
             </Border>
         </Grid>
@@ -184,8 +187,29 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Text="{Binding RegistrySummary}" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Style="{StaticResource Button.Secondary}" Content="Undo registry changes" Command="{Binding UndoRegistryCommand}" Padding="12,5" Margin="12,0,0,0"
-                                ToolTip="{Binding RegistryBackupFile}" Visibility="{Binding RegistryBackupFile, Converter={StaticResource BoolToVis}}" />
+                    </Grid>
+                </Border>
+                <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="14,10" Margin="0,0,0,10" Visibility="{Binding CanUndoCleanup, Converter={StaticResource BoolToVis}}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" VerticalAlignment="Center"
+                                   Text="Changed your mind? Removed files come back from the Recycle Bin and registry entries from their backup." />
+                        <Button Grid.Column="1" Style="{StaticResource Button.Secondary}" Content="Undo leftover removal" Command="{Binding UndoCleanupCommand}" Padding="12,5" Margin="12,0,0,0"
+                                ToolTip="{Binding RegistryBackupFile}" />
+                    </Grid>
+                </Border>
+                <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="14,10" Margin="0,0,0,10" Visibility="{Binding RestorePointCreated, Converter={StaticResource BoolToVis}}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" VerticalAlignment="Center"
+                                   Text="A System Restore point was created before this uninstall. It can undo what the program's own uninstaller changed." />
+                        <Button Grid.Column="1" Style="{StaticResource Button.Secondary}" Content="Open System Restore" Command="{Binding OpenSystemRestoreCommand}" Padding="12,5" Margin="12,0,0,0" />
                     </Grid>
                 </Border>
                 <Border Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="8" Padding="14,10" Margin="0,0,0,10" Visibility="{Binding RebootRecommended, Converter={StaticResource BoolToVis}}">

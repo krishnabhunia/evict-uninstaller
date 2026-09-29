@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.8.0 — close running programs, fallback and rollback when an uninstall fails (29 Sep 2026)
+
+- **A running program is closed before it is uninstalled.** Its processes (install folder, main executable) are found;
+  Evict asks it to close like clicking × (so it can offer to save your work), then force-closes only if needed.
+  *Settings → Uninstalling → When the program is still running*: **Ask** (default: close / I closed it – check again /
+  uninstall anyway / skip), **Close automatically**, or **Leave running**. The first wizard page warns when a selected
+  program is running.
+- **When the uninstaller fails, Evict asks what to do** instead of carrying on: *Try again*, *another way* (the
+  uninstaller with its own window after a silent attempt, Windows Installer by product code, or the silent command),
+  *Force uninstall* (remove its files, folders and registry entries – always reviewed first), or *Skip* (nothing is
+  removed). In a batch, a skipped program asks whether to continue with the rest or stop.
+- **Fixed: a failed or cancelled uninstall was still followed by the leftover scan**, which listed the still-installed
+  program's own folder and entry as leftovers – with *Remove leftovers automatically* it could delete a program whose
+  uninstall you had just cancelled. Leftovers are now only scanned after a successful uninstall or a chosen force
+  uninstall; "exit code 0 but still installed" (a cancelled NSIS / Inno uninstaller) counts as a failure.
+- Windows Installer busy with another installation (1618): retried automatically three times, 15 s apart.
+- No restore point could be created: asks whether to continue without one or change nothing.
+- **Rollback:** leftover items that could not be removed → *Retry* (closes the program's processes first), *Undo*, or
+  keep. *Undo leftover removal* puts files and folders back from the Recycle Bin to their original place and registry
+  entries back from their backup; *Open System Restore* (when a restore point was created) undoes what the program's own
+  uninstaller changed. Force Uninstall has the same retry / undo.
+
 ## 1.7.0 — start as administrator (29 Sep 2026)
 
 - **Evict starts as administrator by default.** New *Settings → Administrator rights → Start Evict as administrator*
