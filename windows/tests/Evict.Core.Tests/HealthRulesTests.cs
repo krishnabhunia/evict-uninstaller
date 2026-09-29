@@ -107,3 +107,39 @@ public class RedundantFileRulesTests
         Assert.Null(RedundantFileRules.OwnerOf(new[] { "ab", "cd" }, Installed));
     }
 }
+
+public class UninstallIssueRulesTests
+{
+    private static Evict.Core.Models.InstalledProgram P(string? uninstall, string? folder, bool msi = false) => new()
+    {
+        Id = "Foo", DisplayName = "Foo", KeyName = "Foo", Scope = Evict.Core.Models.RegistryScope.User, RegistryPath = "HKCU", UninstallString = uninstall, InstallLocation = folder, IsMsi = msi,
+    };
+
+    private static readonly HashSet<string> Disk = new(StringComparer.OrdinalIgnoreCase) { @"C:\Foo", @"C:\Foo\unins000.exe", @"C:\Bar" };
+    private static UninstallIssue Classify(Evict.Core.Models.InstalledProgram p) => UninstallIssueRules.Classify(p, Disk.Contains, Disk.Contains);
+
+    [Fact] public void Healthy() => Assert.Equal(UninstallIssue.None, Classify(P(@"""C:\Foo\unins000.exe"" /SILENT", @"C:\Foo")));
+    [Fact] public void Broken() => Assert.Equal(UninstallIssue.Broken, Classify(P(@"C:\Gone\unins000.exe", @"C:\Gone")));
+    [Fact] public void BrokenWithoutFolderValue() => Assert.Equal(UninstallIssue.Broken, Classify(P(@"C:\Gone\unins000.exe", null)));
+    [Fact] public void UninstallerMissing() => Assert.Equal(UninstallIssue.UninstallerMissing, Classify(P(@"C:\Bar\uninstall.exe", @"C:\Bar")));
+    [Fact] public void NoUninstaller() => Assert.Equal(UninstallIssue.NoUninstaller, Classify(P(null, @"C:\Bar")));
+    [Fact] public void NoUninstallerAndNoFolder_IsBroken() => Assert.Equal(UninstallIssue.Broken, Classify(P(null, null)));
+    [Fact] public void MsiIsNeverAnIssue() => Assert.Equal(UninstallIssue.None, Classify(P(null, null, msi: true)));
+    [Fact] public void RundllAndMsiexecAreNotJudged()
+    {
+        Assert.Equal(UninstallIssue.None, Classify(P(@"C:\Windows\system32\rundll32.exe C:\Gone\x.dll,Uninstall", @"C:\Bar")));
+        Assert.Equal(UninstallIssue.None, Classify(P(@"MsiExec.exe /X{12345678-1234-1234-1234-123456789012}", null)));
+    }
+
+    [Fact]
+    public void FailedBefore_OnlyNewerFailuresOfTheSameProgram()
+    {
+        var p = P(@"C:\Foo\unins000.exe", @"C:\Foo");
+        p.InstallDate = new DateTime(2026, 1, 1);
+        var failed = new Evict.Core.Models.UninstallHistoryEntry { ProgramName = "foo", Succeeded = false, Timestamp = new DateTime(2026, 2, 1) };
+        var old = new Evict.Core.Models.UninstallHistoryEntry { ProgramName = "Foo", Succeeded = false, Timestamp = new DateTime(2025, 12, 1) };
+        var ok = new Evict.Core.Models.UninstallHistoryEntry { ProgramName = "Foo", Succeeded = true, Timestamp = new DateTime(2026, 3, 1) };
+        Assert.True(UninstallIssueRules.FailedBefore(p, new[] { failed }));
+        Assert.False(UninstallIssueRules.FailedBefore(p, new[] { old, ok }));
+    }
+}

@@ -69,7 +69,8 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
     public int CountLarge => Items.Count(i => InstalledProgramsService.IsLarge(i.Program, Settings.LargeProgramThresholdMb));
     public int CountInfrequent => Items.Count(i => InstalledProgramsService.IsInfrequentlyUsed(i.Program, Settings.InfrequentlyUsedDays));
     public int CountBundleware => Items.Count(i => i.Program.IsBundleSuspect);
-    public int CountBroken => Items.Count(i => i.Program.IsBrokenEntry);
+    /// <summary>Programs with any uninstall problem (broken entry, missing / no uninstaller, failed before).</summary>
+    public int CountBroken => Items.Count(i => i.HasUninstallIssue);
     public int VisibleCount => ProgramsView.Cast<object>().Count();
 
     public string TabDescription => SelectedTab switch
@@ -78,7 +79,7 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
         ProgramTab.Large => $"Programs using {Settings.LargeProgramThresholdMb} MB or more of disk space.",
         ProgramTab.Infrequent => $"Programs not launched for {Settings.InfrequentlyUsedDays}+ days (based on Windows usage counters – a heuristic).",
         ProgramTab.Bundleware => "Programs installed within minutes of another vendor's program – often unwanted 'bundled offers'. Review before removing.",
-        ProgramTab.Broken => "Entries whose install folder and uninstaller no longer exist. Remove the entry or run a Force Uninstall to clean leftovers.",
+        ProgramTab.Broken => "Programs Windows cannot uninstall normally: broken entries (files and uninstaller gone), a missing uninstaller, no uninstall command, or an earlier uninstall that failed. Use Force Uninstall – or Remove entry for broken ones.",
         _ => "All programs registered in Programs & Features (64-bit, 32-bit and per-user).",
     };
 
@@ -120,7 +121,7 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
             ProgramTab.Large => InstalledProgramsService.IsLarge(item.Program, Settings.LargeProgramThresholdMb),
             ProgramTab.Infrequent => InstalledProgramsService.IsInfrequentlyUsed(item.Program, Settings.InfrequentlyUsedDays),
             ProgramTab.Bundleware => item.Program.IsBundleSuspect,
-            ProgramTab.Broken => item.Program.IsBrokenEntry,
+            ProgramTab.Broken => item.HasUninstallIssue,
             _ => true,
         };
     }
@@ -182,8 +183,10 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
         var selected = Items.Where(i => i.IsSelected).Select(i => i.Program.Id).ToHashSet();
         foreach (var old in Items) old.PropertyChanged -= ItemOnPropertyChanged;
         Items.Clear();
+        var history = _services.History.Entries;
         foreach (var p in programs)
         {
+            if (p.UninstallIssue == UninstallIssue.None && UninstallIssueRules.FailedBefore(p, history)) p.UninstallIssue = UninstallIssue.FailedBefore;
             var vm = new ProgramItemViewModel(p, _services.Icons) { IsSelected = selected.Contains(p.Id) };
             vm.PropertyChanged += ItemOnPropertyChanged;
             Items.Add(vm);

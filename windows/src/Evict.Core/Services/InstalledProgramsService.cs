@@ -182,7 +182,8 @@ public sealed class InstalledProgramsService
             ? InstallerKind.Msi
             : UninstallCommandParser.DetectInstaller(UninstallCommandParser.Parse(uninstallString)?.FileName, ReadHead);
 
-        program.IsBrokenEntry = DetectBroken(program);
+        program.UninstallIssue = UninstallIssueRules.Classify(program, File.Exists, Directory.Exists);
+        program.IsBrokenEntry = program.UninstallIssue == UninstallIssue.Broken;
         return program;
     }
 
@@ -290,22 +291,6 @@ public sealed class InstalledProgramsService
         }
         if (iconPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(iconPath)) return iconPath;
         return null;
-    }
-
-    private static bool DetectBroken(InstalledProgram p)
-    {
-        if (p.IsMsi) return false; // msiexec can still remove it (or not – MSI handles its own validation)
-        bool folderMissing = string.IsNullOrEmpty(p.InstallLocation) || !Directory.Exists(p.InstallLocation);
-        var cmd = UninstallCommandParser.Parse(p.UninstallString);
-        bool uninstallerMissing = cmd is null || (!UninstallCommandParser.IsMsiExec(cmd)
-                                                  && !cmd.FileName.Contains("rundll32", StringComparison.OrdinalIgnoreCase)
-                                                  && IsRooted(cmd.FileName) && !File.Exists(cmd.FileName));
-        return folderMissing && uninstallerMissing;
-    }
-
-    private static bool IsRooted(string s)
-    {
-        try { return Path.IsPathRooted(s); } catch { return false; }
     }
 
     // ───────────────────────────── usage ─────────────────────────────

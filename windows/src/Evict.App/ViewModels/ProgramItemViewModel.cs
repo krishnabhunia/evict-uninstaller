@@ -49,12 +49,16 @@ public sealed partial class ProgramItemViewModel : ObservableObject
     public bool IsBundleSuspect => Program.IsBundleSuspect;
     public bool IsKnownBundleware => Program.IsKnownBundleware;
     public bool IsBroken => Program.IsBrokenEntry;
+    public bool HasUninstallIssue => Program.UninstallIssue != UninstallIssue.None;
+    public string UninstallIssueText => UninstallIssueRules.Describe(Program.UninstallIssue);
+    /// <summary>An uninstall problem other than a broken entry (those have their own note and "Remove entry").</summary>
+    public bool HasOtherUninstallIssue => HasUninstallIssue && !IsBroken;
     public bool HasUninstaller => Program.HasUninstaller;
     public string? BundleNote => Program.BundleGroupNote;
     public bool HasInstallLocation => !string.IsNullOrEmpty(Program.InstallLocation) && Directory.Exists(Program.InstallLocation);
     public bool HasWebsite => !string.IsNullOrWhiteSpace(Program.UrlInfoAbout) || !string.IsNullOrWhiteSpace(Program.HelpLink);
-    public string StatusGlyph => IsBroken ? "" : IsBundleSuspect ? "" : "";
-    public string StatusTooltip => IsBroken ? "Broken entry: install folder and uninstaller are missing" : IsBundleSuspect ? (BundleNote ?? "Possibly bundled software") : "";
+    public string StatusGlyph => HasUninstallIssue ? "" : IsBundleSuspect ? "" : "";
+    public string StatusTooltip => HasUninstallIssue ? UninstallIssueText : IsBundleSuspect ? (BundleNote ?? "Possibly bundled software") : "";
 
     public string Initial => string.IsNullOrEmpty(Name) ? "?" : Name.Substring(0, 1).ToUpperInvariant();
 

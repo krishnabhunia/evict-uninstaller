@@ -65,7 +65,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             new() { Key = "installfiles", Title = "Installation files", Glyph = "\uE896", ActionText = "Review", Weight = 1, MaxPenalty = 6 },
             new() { Key = "redundant", Title = "Software redundant files", Glyph = "\uE74D", ActionText = "Clean up", Weight = 0, MaxPenalty = 0 },
             new() { Key = "residual", Title = "Leftovers from earlier uninstalls", Glyph = "", ActionText = "Clean up", Weight = 1, MaxPenalty = 5 },
-            new() { Key = "broken", Title = "Broken uninstall entries", Glyph = "", ActionText = "Review", Weight = 3, MaxPenalty = 10 },
+            new() { Key = "broken", Title = "Programs with uninstall issues", Glyph = "", ActionText = "Review", Weight = 3, MaxPenalty = 10 },
             new() { Key = "bundleware", Title = "Possible bundleware", Glyph = "", ActionText = "Review", Weight = 2, MaxPenalty = 12 },
             new() { Key = "extensions", Title = "Extensions with broad permissions", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 8 },
             new() { Key = "unused", Title = "Large programs not used recently", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 8 },
@@ -126,7 +126,14 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         {
             await programs.EnsureFullyLoadedAsync();
             var list = programs.Items.Select(i => i.Program).ToList();
-            Tile("broken").Set(list.Count(p => p.IsBrokenEntry), "Programs & Features entries whose files and uninstaller are gone.");
+            var issues = programs.Items.Where(i => i.HasUninstallIssue).GroupBy(i => i.Program.UninstallIssue).ToDictionary(g => g.Key, g => g.Count());
+            int CountOf(UninstallIssue k) => issues.TryGetValue(k, out var n) ? n : 0;
+            var issueParts = new List<string>();
+            if (CountOf(UninstallIssue.Broken) > 0) issueParts.Add($"{CountOf(UninstallIssue.Broken)} broken entr{(CountOf(UninstallIssue.Broken) == 1 ? "y" : "ies")}");
+            if (CountOf(UninstallIssue.UninstallerMissing) > 0) issueParts.Add($"{CountOf(UninstallIssue.UninstallerMissing)} missing uninstaller");
+            if (CountOf(UninstallIssue.NoUninstaller) > 0) issueParts.Add($"{CountOf(UninstallIssue.NoUninstaller)} without uninstall command");
+            if (CountOf(UninstallIssue.FailedBefore) > 0) issueParts.Add($"{CountOf(UninstallIssue.FailedBefore)} failed before");
+            Tile("broken").Set(issues.Values.Sum(), issueParts.Count == 0 ? "Every program has a working uninstaller." : string.Join(", ", issueParts) + " – Force Uninstall removes them.");
             Tile("bundleware").Set(list.Count(p => p.IsBundleSuspect), list.Any(p => p.IsKnownBundleware)
                 ? $"{list.Count(p => p.IsKnownBundleware)} match the known-bundleware list; the rest were installed alongside other software."
                 : "Programs installed within minutes of another vendor's program.");
