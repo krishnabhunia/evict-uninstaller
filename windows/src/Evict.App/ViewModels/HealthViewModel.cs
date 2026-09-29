@@ -54,6 +54,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
     private readonly AppServices _services;
     private readonly MainViewModel _main;
     private bool _scannedOnce;
+    private List<SecurityFinding> _securityFindings = new();
 
     public HealthViewModel(AppServices services, MainViewModel main)
     {
@@ -67,6 +68,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             new() { Key = "residual", Title = "Leftovers from earlier uninstalls", Glyph = "", ActionText = "Clean up", Weight = 1, MaxPenalty = 5 },
             new() { Key = "broken", Title = "Programs with uninstall issues", Glyph = "", ActionText = "Review", Weight = 3, MaxPenalty = 10 },
             new() { Key = "bundleware", Title = "Possible bundleware", Glyph = "", ActionText = "Review", Weight = 2, MaxPenalty = 12 },
+            new() { Key = "malicious", Title = "Malicious software & extensions", Glyph = "\uE83D", ActionText = "Review", Weight = 4, MaxPenalty = 20 },
             new() { Key = "extensions", Title = "Extensions with broad permissions", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 8 },
             new() { Key = "unused", Title = "Large programs not used recently", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 8 },
             new() { Key = "bloat", Title = "Pre-installed Store apps flagged as bloatware", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 10 },
@@ -214,6 +216,16 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
+        var securityTask = RunTile("malicious", async () =>
+        {
+            _securityFindings = await new SecurityCheckService().CheckAsync(_services.Browser, _services.Startup, CancellationToken.None);
+            var serious = _securityFindings.Where(f => f.Severity != FindingSeverity.Info).ToList();
+            Tile("malicious").Set(serious.Count, serious.Count == 0
+                ? (_securityFindings.FirstOrDefault(f => f.Section == "Antivirus")?.Title ?? "Microsoft Defender is on and reports no threats.") + " No suspicious extensions or startup programs."
+                : string.Join(" · ", serious.Take(2).Select(f => f.Title)) + (serious.Count > 2 ? $" and {serious.Count - 2} more" : ""));
+            return true;
+        });
+
         var startupTask = RunTile("startup", async () =>
         {
             var items = await Task.Run(() => _services.Startup.GetItems());
@@ -223,7 +235,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
-        await Task.WhenAll(programsTask, residualTask, junkTask, extTask, updTask, appxTask, notifyTask, permTask, startupTask);
+        await Task.WhenAll(programsTask, residualTask, junkTask, extTask, updTask, appxTask, notifyTask, permTask, securityTask, startupTask);
 
         int penalty = Tiles.Where(t => t.State == TileState.Attention).Sum(t => t.Penalty);
         Score = Math.Clamp(100 - penalty, 0, 100);
@@ -278,6 +290,17 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             case "bloat": _main.GetPage<WindowsAppsViewModel>(PageKey.WindowsApps).OnlyBloatware = true; _main.Navigate(PageKey.WindowsApps); break;
             case "notifications": OpenToggleList(new NotificationService()); break;
             case "permissions": OpenToggleList(new PermissionService()); break;
+            case "malicious":
+            {
+                var vm = new SecurityCheckViewModel(_services, _securityFindings, key =>
+                {
+                    if (key == "extensions") _main.Navigate(PageKey.BrowserExtensions);
+                    else if (key == "startup") new StartupWindow { DataContext = new StartupViewModel(_services), Owner = Application.Current.MainWindow }.ShowDialog();
+                });
+                new SecurityCheckWindow { DataContext = vm, Owner = Application.Current.MainWindow }.ShowDialog();
+                if (vm.AnythingChanged) _ = ScanAsync();
+                break;
+            }
             case "startup":
                 new StartupWindow { DataContext = new StartupViewModel(_services), Owner = Application.Current.MainWindow }.ShowDialog();
                 break;

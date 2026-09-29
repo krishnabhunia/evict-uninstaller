@@ -218,3 +218,66 @@ public class PermissionRulesTests
     [InlineData("Prompt", true)]
     public void IsAllowed(string? v, bool expected) => Assert.Equal(expected, Evict.Core.Services.PermissionRules.IsAllowed(v));
 }
+
+public class SecurityRulesTests
+{
+    [Fact]
+    public void ParseDefender_ReadsStatusThreatsAndOtherAv()
+    {
+        var d = Evict.Core.Services.SecurityRules.ParseDefender(
+            """{"AntivirusEnabled":true,"RealTime":false,"SigAge":9,"QuickScanAge":40,"Mode":"Normal","Threats":["Trojan:Win32/X"],"OtherAv":["Windows Defender"]}""");
+        Assert.True(d.AntivirusEnabled);
+        Assert.False(d.RealTimeProtection);
+        Assert.Equal(9, d.SignatureAgeDays);
+        Assert.Single(d.ActiveThreats);
+        Assert.Empty(d.OtherAntivirus); // Defender itself is not "another" antivirus
+        var f = Evict.Core.Services.SecurityRules.DefenderFindings(d).ToList();
+        Assert.Contains(f, x => x.Title.StartsWith("Active threat") && x.Severity == Evict.Core.Services.FindingSeverity.High);
+        Assert.Contains(f, x => x.Title == "Real-time protection is off");
+        Assert.Contains(f, x => x.Title.StartsWith("Virus definitions are 9 days old"));
+        Assert.Contains(f, x => x.ActionKey == "quickscan");
+    }
+
+    [Fact]
+    public void ParseDefender_SingleStringsAndOtherAntivirus()
+    {
+        var d = Evict.Core.Services.SecurityRules.ParseDefender("""{"Threats":"Adware:X","OtherAv":"Bitdefender","Error":"passive"}""");
+        Assert.Equal(new[] { "Adware:X" }, d.ActiveThreats);
+        Assert.Equal(new[] { "Bitdefender" }, d.OtherAntivirus);
+        var f = Evict.Core.Services.SecurityRules.DefenderFindings(d).ToList();
+        Assert.Contains(f, x => x.Title.StartsWith("Protected by Bitdefender"));
+        Assert.DoesNotContain(f, x => x.Title == "Real-time protection is off");
+    }
+
+    [Fact]
+    public void ParseDefender_Garbage()
+    {
+        Assert.NotNull(Evict.Core.Services.SecurityRules.ParseDefender("not json").Error);
+        Assert.NotNull(Evict.Core.Services.SecurityRules.ParseDefender(null).Error);
+        Assert.Contains(Evict.Core.Services.SecurityRules.DefenderFindings(Evict.Core.Services.SecurityRules.ParseDefender(null)), x => x.Title == "Antivirus status unknown");
+    }
+
+    private static Evict.Core.Models.BrowserExtensionInfo Ext(bool store, bool policy, bool component = false) => new()
+    {
+        Browser = Evict.Core.Models.BrowserKind.Chrome, ProfileName = "Default", ProfilePath = @"C:\p", ExtensionId = "abc", Name = "X",
+        FromWebStore = store, InstalledByPolicy = policy, IsComponent = component,
+    };
+
+    [Fact]
+    public void ExtensionFindings()
+    {
+        Assert.Null(Evict.Core.Services.SecurityRules.ExtensionFinding(Ext(store: true, policy: false)));
+        Assert.Null(Evict.Core.Services.SecurityRules.ExtensionFinding(Ext(store: false, policy: false, component: true)));
+        Assert.Contains("not installed from the web store", Evict.Core.Services.SecurityRules.ExtensionFinding(Ext(false, false))!.Title);
+        Assert.Contains("forced on by a policy", Evict.Core.Services.SecurityRules.ExtensionFinding(Ext(true, true))!.Title);
+    }
+
+    [Fact]
+    public void UserWritableLocations()
+    {
+        var roots = new[] { @"C:\Users\K\AppData\Roaming", @"C:\Users\K\AppData\Local\Temp" };
+        Assert.True(Evict.Core.Services.SecurityRules.IsUserWritableLocation(@"C:\Users\K\AppData\Roaming\x\y.exe", roots));
+        Assert.False(Evict.Core.Services.SecurityRules.IsUserWritableLocation(@"C:\Program Files\x\y.exe", roots));
+        Assert.False(Evict.Core.Services.SecurityRules.IsUserWritableLocation(null, roots));
+    }
+}
