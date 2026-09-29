@@ -52,7 +52,7 @@ jobs:
         run: python build/xaml_check.py
 
       - name: Publish single-file EXE
-        run: dotnet publish src/Evict.App/Evict.App.csproj -c Release -o publish
+        run: dotnet publish src/Evict.App/Evict.App.csproj -c Release -o Portable
 
       - name: Sign Evict.exe (optional)
         if: env.SIGN_PFX_BASE64 != ''
@@ -60,7 +60,7 @@ jobs:
         run: |
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\sign.pfx", [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
-          & $signtool.FullName sign /f "$env:RUNNER_TEMP\sign.pfx" /p $env:SIGN_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 publish\Evict.exe
+          & $signtool.FullName sign /f "$env:RUNNER_TEMP\sign.pfx" /p $env:SIGN_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 Portable\Evict.exe
           Remove-Item "$env:RUNNER_TEMP\sign.pfx" -Force
 
       - name: Build installer (Inno Setup)
@@ -69,9 +69,9 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y | Out-Null }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
-          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" "/DSourceDir=$PWD\publish" installer\Evict.iss
+          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" "/DSourceDir=$PWD\Portable" installer\Evict.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
-          Get-ChildItem installer\Output
+          Get-ChildItem Installed
 
       - name: Sign installer (optional)
         if: env.SIGN_PFX_BASE64 != ''
@@ -79,34 +79,34 @@ jobs:
         run: |
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\sign.pfx", [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
-          Get-ChildItem installer\Output\*.exe | ForEach-Object { & $signtool.FullName sign /f "$env:RUNNER_TEMP\sign.pfx" /p $env:SIGN_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName }
+          Get-ChildItem Installed\*.exe | ForEach-Object { & $signtool.FullName sign /f "$env:RUNNER_TEMP\sign.pfx" /p $env:SIGN_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName }
           Remove-Item "$env:RUNNER_TEMP\sign.pfx" -Force
 
       - name: Checksums
         shell: pwsh
         run: |
-          (Get-FileHash publish/Evict.exe -Algorithm SHA256).Hash | Out-File publish/Evict.exe.sha256 -Encoding ascii
-          Get-ChildItem installer\Output\*.exe | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash | Out-File "$($_.FullName).sha256" -Encoding ascii }
+          (Get-FileHash Portable/Evict.exe -Algorithm SHA256).Hash | Out-File Portable/Evict.exe.sha256 -Encoding ascii
+          Get-ChildItem Installed\*.exe | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash | Out-File "$($_.FullName).sha256" -Encoding ascii }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Evict-${{ steps.ver.outputs.version }}-${{ github.sha }}
           path: |
-            windows/publish/Evict.exe
-            windows/publish/Evict.exe.sha256
-            windows/installer/Output/*.exe
-            windows/installer/Output/*.sha256
+            windows/Portable/Evict.exe
+            windows/Portable/Evict.exe.sha256
+            windows/Installed/*.exe
+            windows/Installed/*.sha256
 
       - name: GitHub Release (tags only)
         if: startsWith(github.ref, 'refs/tags/win-v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            windows/publish/Evict.exe
-            windows/publish/Evict.exe.sha256
-            windows/installer/Output/*.exe
-            windows/installer/Output/*.sha256
+            windows/Portable/Evict.exe
+            windows/Portable/Evict.exe.sha256
+            windows/Installed/*.exe
+            windows/Installed/*.sha256
           generate_release_notes: true
           # Installed copies of Evict 1.3.x read releases/latest - only Windows releases may be "latest".
           make_latest: true
