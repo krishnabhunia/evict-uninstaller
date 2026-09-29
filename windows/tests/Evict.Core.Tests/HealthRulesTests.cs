@@ -281,3 +281,54 @@ public class SecurityRulesTests
         Assert.False(Evict.Core.Services.SecurityRules.IsUserWritableLocation(null, roots));
     }
 }
+
+public class HibernationRulesTests
+{
+    [Theory]
+    [InlineData("gupdate", "Google Update Service (gupdate)", true)]
+    [InlineData("AdobeARMservice", "Adobe Acrobat Update Service", true)]
+    [InlineData("MozillaMaintenance", "Mozilla Maintenance Service", true)]
+    [InlineData("Steam Client Service", "Steam Client Service", false)]
+    public void IsUpdater(string name, string display, bool expected) => Assert.Equal(expected, Evict.Core.Services.HibernationRules.IsUpdater(name, display));
+
+    [Theory]
+    [InlineData("NVIDIA Display Container LS")]
+    [InlineData("Bitdefender Endpoint Security")]
+    [InlineData("OpenVPN Interactive Service")]
+    [InlineData("Realtek Audio Universal Service")]
+    [InlineData("Dropbox Update Service")]      // sync client: updater, but its tasks keep sync healthy
+    public void Protected(string text) => Assert.True(Evict.Core.Services.HibernationRules.IsProtected(text));
+
+    [Fact]
+    public void NotProtected() => Assert.False(Evict.Core.Services.HibernationRules.IsProtected("Google Update Service", "Google LLC"));
+
+    [Theory]
+    [InlineData(0x10, 2, @"C:\Program Files\Google\Update\GoogleUpdate.exe", "Google LLC", true)]
+    [InlineData(0x20, 2, @"C:\Program Files\X\x.exe", null, true)]
+    [InlineData(0x10, 3, @"C:\Program Files\X\x.exe", null, false)]           // manual start – not always running
+    [InlineData(0x1, 2, @"C:\Program Files\X\x.sys", null, false)]            // kernel driver
+    [InlineData(0x10, 2, @"C:\Windows\System32\svchost.exe", null, false)]    // Windows' own
+    [InlineData(0x10, 2, @"C:\Program Files\Microsoft\Edge\x.exe", "Microsoft Corporation", false)]
+    [InlineData(0x10, 2, null, null, false)]
+    public void CandidateService(int type, int start, string? image, string? company, bool expected) =>
+        Assert.Equal(expected, Evict.Core.Services.HibernationRules.IsCandidateService(type, start, image, company, @"C:\Windows"));
+
+    [Fact]
+    public void ScStartArgument()
+    {
+        Assert.Equal("delayed-auto", Evict.Core.Services.HibernationRules.ScStartArgument(true));
+        Assert.Equal("auto", Evict.Core.Services.HibernationRules.ScStartArgument(false));
+    }
+
+    [Fact]
+    public void ParseTasks_ArrayObjectAndMicrosoftFolder()
+    {
+        var list = Evict.Core.Services.HibernationRules.ParseTasks(
+            """[{"TaskPath":"\\","TaskName":"GoogleUpdateTaskMachineUA","State":"Ready","Execute":"C:\\Program Files (x86)\\Google\\Update\\GoogleUpdate.exe"},{"TaskPath":"\\Microsoft\\Windows\\Defrag\\","TaskName":"ScheduledDefrag","State":"Ready"},{"TaskPath":"\\Vendor\\","TaskName":"Helper","State":"Disabled"}]""");
+        Assert.Equal(2, list.Count);
+        Assert.True(list[0].Enabled);
+        Assert.False(list[1].Enabled);
+        Assert.Single(Evict.Core.Services.HibernationRules.ParseTasks("""{"TaskPath":"\\","TaskName":"One","State":"Ready"}"""));
+        Assert.Empty(Evict.Core.Services.HibernationRules.ParseTasks("garbage"));
+    }
+}

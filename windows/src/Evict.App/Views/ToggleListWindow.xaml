@@ -34,6 +34,7 @@
             </Button>
         </Grid>
 
+        <ProgressBar Grid.Row="1" IsIndeterminate="True" VerticalAlignment="Top" Height="3" Panel.ZIndex="1" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
         <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
             <DataGrid Style="{StaticResource DataGrid.Flat}" ItemsSource="{Binding View}">
                 <DataGrid.GroupStyle>

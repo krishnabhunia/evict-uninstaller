@@ -74,6 +74,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             new() { Key = "bloat", Title = "Pre-installed Store apps flagged as bloatware", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 10 },
             new() { Key = "notifications", Title = "Disturbing notifications", Glyph = "\uE7ED", ActionText = "Review", Weight = 1, MaxPenalty = 5 },
             new() { Key = "permissions", Title = "Software permissions", Glyph = "\uE72E", ActionText = "Review", Weight = 1, MaxPenalty = 5 },
+            new() { Key = "hibernation", Title = "Software hibernation", Glyph = "\uE708", ActionText = "Manage", Weight = 0, MaxPenalty = 0 },
             new() { Key = "startup", Title = "Programs starting at sign-in", Glyph = "", ActionText = "Manage", Weight = 0, MaxPenalty = 0 },
         };
     }
@@ -226,6 +227,15 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
+        var hibernateTask = RunTile("hibernation", async () =>
+        {
+            var items = await Task.Run(() => new HibernationService().Load());
+            int awakeUpdaters = items.Count(i => i.RecommendOff && i.IsOn);
+            int asleep = items.Count(i => !i.IsOn);
+            Tile("hibernation").Set(awakeUpdaters, $"{items.Count} background services and tasks of your programs; {awakeUpdaters} updater(s) could sleep" + (asleep > 0 ? $", {asleep} asleep." : "."));
+            return true;
+        });
+
         var startupTask = RunTile("startup", async () =>
         {
             var items = await Task.Run(() => _services.Startup.GetItems());
@@ -235,7 +245,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
-        await Task.WhenAll(programsTask, residualTask, junkTask, extTask, updTask, appxTask, notifyTask, permTask, securityTask, startupTask);
+        await Task.WhenAll(programsTask, residualTask, junkTask, extTask, updTask, appxTask, notifyTask, permTask, securityTask, hibernateTask, startupTask);
 
         int penalty = Tiles.Where(t => t.State == TileState.Attention).Sum(t => t.Penalty);
         Score = Math.Clamp(100 - penalty, 0, 100);
@@ -290,6 +300,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             case "bloat": _main.GetPage<WindowsAppsViewModel>(PageKey.WindowsApps).OnlyBloatware = true; _main.Navigate(PageKey.WindowsApps); break;
             case "notifications": OpenToggleList(new NotificationService()); break;
             case "permissions": OpenToggleList(new PermissionService()); break;
+            case "hibernation": OpenToggleList(new HibernationService()); break;
             case "malicious":
             {
                 var vm = new SecurityCheckViewModel(_services, _securityFindings, key =>

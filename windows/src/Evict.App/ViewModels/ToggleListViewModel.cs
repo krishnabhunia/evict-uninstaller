@@ -54,7 +54,7 @@ public sealed partial class ToggleListViewModel : ObservableObject
         _provider = provider;
         View = CollectionViewSource.GetDefaultView(Items);
         View.GroupDescriptions.Add(new PropertyGroupDescription(nameof(ToggleItemViewModel.Group)));
-        Refresh();
+        _ = RefreshAsync();
     }
 
     public string Title => _provider.Title;
@@ -63,24 +63,29 @@ public sealed partial class ToggleListViewModel : ObservableObject
     public ObservableCollection<ToggleItemViewModel> Items { get; } = new();
     public ICollectionView View { get; }
     [ObservableProperty] private string _statusText = "";
+    [ObservableProperty] private bool _isLoading;
     public bool AnythingChanged { get; private set; }
     public int RecommendedOnCount => Items.Count(i => i.RecommendOff && i.IsOn && i.CanToggle);
     public bool HasRecommendedOn => RecommendedOnCount > 0;
     public string Summary => $"{Items.Count(i => i.IsOn)} of {Items.Count} {OnLabel.ToLowerInvariant()} · {RecommendedOnCount} recommended to switch off";
     public event Action? RequestClose;
 
+    /// <summary>Providers may be slow (PowerShell, file version reads) – load off the UI thread.</summary>
     [RelayCommand]
-    public void Refresh()
+    public async Task RefreshAsync()
     {
-        _loading = true;
+        if (IsLoading) return;
+        IsLoading = true;
         try
         {
+            var loaded = await Task.Run(() => _provider.Load());
+            _loading = true;
             Items.Clear();
-            foreach (var i in _provider.Load().OrderBy(i => i.Group).ThenByDescending(i => i.RecommendOff && i.IsOn).ThenBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase))
+            foreach (var i in loaded.OrderBy(i => i.Group).ThenByDescending(i => i.RecommendOff && i.IsOn).ThenBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase))
                 Items.Add(new ToggleItemViewModel(i, this));
         }
         catch (Exception ex) { StatusText = "Could not read the list: " + ex.Message; }
-        finally { _loading = false; }
+        finally { _loading = false; IsLoading = false; }
         RaiseCounts();
     }
 
