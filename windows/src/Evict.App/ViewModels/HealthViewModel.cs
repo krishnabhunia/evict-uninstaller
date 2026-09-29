@@ -71,6 +71,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             new() { Key = "unused", Title = "Large programs not used recently", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 8 },
             new() { Key = "bloat", Title = "Pre-installed Store apps flagged as bloatware", Glyph = "", ActionText = "Review", Weight = 1, MaxPenalty = 10 },
             new() { Key = "notifications", Title = "Disturbing notifications", Glyph = "\uE7ED", ActionText = "Review", Weight = 1, MaxPenalty = 5 },
+            new() { Key = "permissions", Title = "Software permissions", Glyph = "\uE72E", ActionText = "Review", Weight = 1, MaxPenalty = 5 },
             new() { Key = "startup", Title = "Programs starting at sign-in", Glyph = "", ActionText = "Manage", Weight = 0, MaxPenalty = 0 },
         };
     }
@@ -202,6 +203,17 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
+        var permTask = RunTile("permissions", async () =>
+        {
+            var items = await Task.Run(() => new PermissionService().Load());
+            int unused = items.Count(i => i.RecommendOff && i.IsOn);
+            int granted = items.Count(i => i.IsOn && !i.Id.EndsWith("\\NonPackaged", StringComparison.Ordinal));
+            Tile("permissions").Set(unused, unused == 0
+                ? $"{granted} app permissions granted; none are sensitive permissions an app has never used."
+                : $"{unused} app(s) hold a camera, microphone, location or similar permission they have never used.");
+            return true;
+        });
+
         var startupTask = RunTile("startup", async () =>
         {
             var items = await Task.Run(() => _services.Startup.GetItems());
@@ -211,7 +223,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
-        await Task.WhenAll(programsTask, residualTask, junkTask, extTask, updTask, appxTask, notifyTask, startupTask);
+        await Task.WhenAll(programsTask, residualTask, junkTask, extTask, updTask, appxTask, notifyTask, permTask, startupTask);
 
         int penalty = Tiles.Where(t => t.State == TileState.Attention).Sum(t => t.Penalty);
         Score = Math.Clamp(100 - penalty, 0, 100);
@@ -265,6 +277,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             case "extensions": _main.Navigate(PageKey.BrowserExtensions); break;
             case "bloat": _main.GetPage<WindowsAppsViewModel>(PageKey.WindowsApps).OnlyBloatware = true; _main.Navigate(PageKey.WindowsApps); break;
             case "notifications": OpenToggleList(new NotificationService()); break;
+            case "permissions": OpenToggleList(new PermissionService()); break;
             case "startup":
                 new StartupWindow { DataContext = new StartupViewModel(_services), Owner = Application.Current.MainWindow }.ShowDialog();
                 break;

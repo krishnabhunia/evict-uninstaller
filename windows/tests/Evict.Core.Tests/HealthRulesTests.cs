@@ -182,3 +182,39 @@ public class NotificationRulesTests
         Assert.Equal(@"C:\Tools\x.exe", Evict.Core.Services.NotificationRules.ResolvePath(@"C:\Tools\x.exe", Folder));
     }
 }
+
+public class PermissionRulesTests
+{
+    [Theory]
+    [InlineData("webcam", "Camera")]
+    [InlineData("microphone", "Microphone")]
+    [InlineData("somethingNew", "somethingNew")]
+    public void CapabilityName(string cap, string expected) => Assert.Equal(expected, Evict.Core.Services.PermissionRules.CapabilityName(cap));
+
+    [Fact]
+    public void SensitiveCapabilities()
+    {
+        Assert.True(Evict.Core.Services.PermissionRules.IsSensitive("webcam"));
+        Assert.True(Evict.Core.Services.PermissionRules.IsSensitive("LOCATION"));
+        Assert.False(Evict.Core.Services.PermissionRules.IsSensitive("musicLibrary"));
+    }
+
+    [Fact]
+    public void NonPackagedPath() =>
+        Assert.Equal(@"C:\Program Files\Zoom\bin\Zoom.exe", Evict.Core.Services.PermissionRules.NonPackagedPath("C:#Program Files#Zoom#bin#Zoom.exe"));
+
+    [Fact]
+    public void FileTimes()
+    {
+        Assert.Null(Evict.Core.Services.PermissionRules.FromFileTime(0));
+        var t = new DateTime(2026, 9, 1, 12, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(t.ToLocalTime(), Evict.Core.Services.PermissionRules.FromFileTime(t.ToFileTimeUtc()));
+    }
+
+    [Theory]
+    [InlineData("Allow", true)]
+    [InlineData("deny", false)]
+    [InlineData(null, true)]
+    [InlineData("Prompt", true)]
+    public void IsAllowed(string? v, bool expected) => Assert.Equal(expected, Evict.Core.Services.PermissionRules.IsAllowed(v));
+}
