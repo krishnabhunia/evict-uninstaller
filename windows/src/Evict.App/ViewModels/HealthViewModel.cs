@@ -62,6 +62,8 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         Tiles = new ObservableCollection<HealthTileViewModel>
         {
             new() { Key = "outdated", Title = "Outdated programs", Glyph = "", ActionText = "Update", Weight = 3, MaxPenalty = 12 },
+            new() { Key = "installfiles", Title = "Installation files", Glyph = "\uE896", ActionText = "Review", Weight = 1, MaxPenalty = 6 },
+            new() { Key = "redundant", Title = "Software redundant files", Glyph = "\uE74D", ActionText = "Clean up", Weight = 0, MaxPenalty = 0 },
             new() { Key = "residual", Title = "Leftovers from earlier uninstalls", Glyph = "", ActionText = "Clean up", Weight = 1, MaxPenalty = 5 },
             new() { Key = "broken", Title = "Broken uninstall entries", Glyph = "", ActionText = "Review", Weight = 3, MaxPenalty = 10 },
             new() { Key = "bundleware", Title = "Possible bundleware", Glyph = "", ActionText = "Review", Weight = 2, MaxPenalty = 12 },
@@ -142,6 +144,19 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
+        var junkTask = RunTile("installfiles", async () =>
+        {
+            var list = await programsTask ?? new List<InstalledProgram>();
+            var setups = await Task.Run(() => _services.Cleanup.ScanInstallationFiles(list, CancellationToken.None));
+            int ticked = setups.Items.Count(i => i.Confidence != LeftoverConfidence.Low);
+            Tile("installfiles").Set(ticked, setups.Items.Count == 0 ? "No setup packages in Downloads or on the Desktop."
+                : $"{setups.Items.Count} setup file(s), {SizeFormatter.Format(setups.TotalSize)}; {ticked} for installed programs or older than 30 days.");
+            var redundant = await Task.Run(() => _services.Cleanup.ScanRedundantFiles(list, CancellationToken.None));
+            Tile("redundant").Set(redundant.Items.Count, redundant.Items.Count == 0 ? "No large caches or logs kept by installed programs."
+                : $"{SizeFormatter.Format(redundant.TotalSize)} of caches, logs and crash reports in {redundant.Items.Count} folder(s).");
+            return true;
+        }, "redundant");
+
         var extTask = RunTile("extensions", async () =>
         {
             var exts = await _services.Browser.GetExtensionsAsync(false, CancellationToken.None);
@@ -177,7 +192,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             return true;
         });
 
-        await Task.WhenAll(programsTask, residualTask, extTask, updTask, appxTask, startupTask);
+        await Task.WhenAll(programsTask, residualTask, junkTask, extTask, updTask, appxTask, startupTask);
 
         int penalty = Tiles.Where(t => t.State == TileState.Attention).Sum(t => t.Penalty);
         Score = Math.Clamp(100 - penalty, 0, 100);
@@ -216,6 +231,8 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         {
             case "outdated": _main.Navigate(PageKey.SoftwareUpdater); break;
             case "residual": _main.GetPage<ToolsViewModel>(PageKey.Tools).OpenResidualCleaner(); _ = ScanAsync(); break;
+            case "installfiles": _main.GetPage<ToolsViewModel>(PageKey.Tools).OpenSystemCleanup(new[] { CleanupCategory.InstallationFiles }, "Installation files"); _ = ScanAsync(); break;
+            case "redundant": _main.GetPage<ToolsViewModel>(PageKey.Tools).OpenSystemCleanup(new[] { CleanupCategory.RedundantFiles }, "Software redundant files"); _ = ScanAsync(); break;
             case "broken": _main.GetPage<ProgramsViewModel>(PageKey.Programs).SelectedTab = ProgramTab.Broken; _main.Navigate(PageKey.Programs); break;
             case "bundleware": _main.GetPage<ProgramsViewModel>(PageKey.Programs).SelectedTab = ProgramTab.Bundleware; _main.Navigate(PageKey.Programs); break;
             case "unused": _main.GetPage<ProgramsViewModel>(PageKey.Programs).SelectedTab = ProgramTab.Infrequent; _main.Navigate(PageKey.Programs); break;

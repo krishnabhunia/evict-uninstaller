@@ -7,7 +7,7 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:SystemCleanupViewModel}"
         Style="{StaticResource Window.Dialog}"
-        Title="System Cleanup" Width="980" Height="700" MinWidth="800" MinHeight="540"
+        Title="{Binding WindowTitle}" Width="980" Height="700" MinWidth="800" MinHeight="540"
         Icon="pack://application:,,,/Assets/app.ico">
 
     <Grid Margin="24">
@@ -23,7 +23,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="System Cleanup" Style="{StaticResource Text.Title}" />
+                <TextBlock Text="{Binding WindowTitle}" Style="{StaticResource Text.Title}" />
                 <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" TextWrapping="Wrap"
                            Text="Junk that ordinary uninstallers never touch: orphaned Windows Installer packages, data of removed Store apps, update caches, temporary files, error reports and crash dumps. Everything is measured first – nothing is removed until you choose." />
             </StackPanel>
@@ -42,7 +42,9 @@
                 <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,6" Text="•  Windows Update download cache and Delivery Optimization cache" />
                 <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,6" Text="•  Temporary files of Windows and of your account (older than 24 hours)" />
                 <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,6" Text="•  Windows Error Reporting files and crash dumps" />
-                <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,14" Text="•  Previous Windows installation (Windows.old) – measured, removed through Storage settings" />
+                <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,6" Text="•  Previous Windows installation (Windows.old) – measured, removed through Storage settings" />
+                <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,6" Text="•  Installation files – setup packages left in Downloads and on the Desktop (to the Recycle Bin)" />
+                <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,0,0,14" Text="•  Software redundant files – caches, logs, crash reports and temp folders of installed programs" />
                 <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Caption}" Margin="0,0,0,10" />
                 <Button Style="{StaticResource Button.Primary}" Content="Scan now" Command="{Binding ScanCommand}" HorizontalAlignment="Left" MinWidth="140" />
             </StackPanel>
