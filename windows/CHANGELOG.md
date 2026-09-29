@@ -19,6 +19,8 @@
   extensions from outside the web stores or forced by a policy, and unsigned startup programs in user folders.
 - **Fix selected**: tick categories on the Software Health page and fix them in one go; each tile shows
   "N selected to fix, total M". Permissions and hibernation are opt-in.
+- The version number is shown in the title bar next to the name (and in the window / taskbar title); before, it was only
+  a small line at the bottom of the sidebar that scrolled out of view at larger text sizes.
 
 ## 1.4.0 — registry cleaning + clean self-removal (29 Sep 2026)
 
