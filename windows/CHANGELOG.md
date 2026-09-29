@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.1 (not published)
+
+- Every Windows release also comes as **`Evict-x.y.z.zip`** with exactly two folders: **installer** (`Evict-Setup-x.y.z.exe`,
+  installs Evict) and **portable** (`Evict.exe`, runs from anywhere). The separate files stay on the release as before,
+  so updates inside Evict work as they did. 1.8.0 gets its zip too.
+
 ## 1.8.0 — close running programs, fallback and rollback when an uninstall fails (29 Sep 2026)
 
 - **A running program is closed before it is uninstalled.** Its processes (install folder, main executable) are found;

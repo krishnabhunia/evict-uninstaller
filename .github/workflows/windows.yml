@@ -114,6 +114,11 @@ jobs:
           (Get-FileHash Portable/Evict.exe -Algorithm SHA256).Hash | Out-File Portable/Evict.exe.sha256 -Encoding ascii
           Get-ChildItem Installed\*.exe | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash | Out-File "$($_.FullName).sha256" -Encoding ascii }
 
+      # Release zip (Krishna's standing rule): Evict-<version>.zip holds exactly two folders — installer\ (the setup)
+      # and portable\ (Evict.exe). The script refuses anything else.
+      - name: Release zip (installer + portable)
+        run: python build/release_zip.py ${{ steps.ver.outputs.version }} --setup Installed --exe Portable --out Zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -123,6 +128,8 @@ jobs:
             windows/Portable/Evict.exe.sha256
             windows/Installed/*.exe
             windows/Installed/*.sha256
+            windows/Zip/Evict-*.zip
+            windows/Zip/Evict-*.zip.sha256
 
       - name: Release notes from CHANGELOG.md
         if: steps.rel.outputs.publish == 'true'
@@ -155,6 +162,28 @@ jobs:
             windows/Portable/Evict.exe.sha256
             windows/Installed/*.exe
             windows/Installed/*.sha256
+            windows/Zip/Evict-*.zip
+            windows/Zip/Evict-*.zip.sha256
           generate_release_notes: true
           # Installed copies of Evict 1.3.x read releases/latest - only Windows releases may be "latest".
           make_latest: true
+
+      # A release published before the zip existed (1.8.0) gets it once, made from that release's own files —
+      # nothing is rebuilt, so the zip holds exactly what was released.
+      - name: Add the zip to the current release if it has none
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rel.outputs.publish != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.rel.outputs.tag }}"; $v = "${{ steps.ver.outputs.version }}"; $repo = "${{ github.repository }}"
+          $assets = gh release view $tag --repo $repo --json assets --jq '.assets[].name' 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "No release $tag"; $global:LASTEXITCODE = 0; exit 0 }
+          if ($assets -contains "Evict-$v.zip") { Write-Host "$tag already has Evict-$v.zip"; exit 0 }
+          $d = Join-Path $env:RUNNER_TEMP "zip-$v"
+          gh release download $tag --repo $repo --dir "$d\Installed" --pattern "Evict-Setup-*.exe"
+          gh release download $tag --repo $repo --dir "$d\Portable" --pattern "Evict.exe"
+          python build/release_zip.py $v --setup "$d\Installed" --exe "$d\Portable" --out "$d\Zip"
+          if ($LASTEXITCODE -ne 0) { throw "Couldn't build the zip for $tag" }
+          gh release upload $tag --repo $repo "$d\Zip\Evict-$v.zip" "$d\Zip\Evict-$v.zip.sha256"
+          Write-Host "Added Evict-$v.zip to $tag"
