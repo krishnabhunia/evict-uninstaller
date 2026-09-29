@@ -11,3 +11,4 @@ TestResults/
 *.evict-backup
 installer/Output/
 Zip/
+CiDownload/

@@ -7,6 +7,7 @@
     python build/release_zip.py 1.7.0 --setup Installed --exe Portable --out Zip
         -> Zip/Evict-1.7.0.zip and Zip/Evict-1.7.0.zip.sha256
     python build/release_zip.py --check Zip/Evict-1.7.0.zip
+    python build/release_zip.py --check-folder CiDownload     (the unpacked zip = the CI download)
 
 It refuses to write a zip with anything else in it. Needs Python 3 only (stdlib).
 """
@@ -42,6 +43,12 @@ def check_zip(file):
         raise ZipError(f"{file}: top level must be exactly {', '.join(FOLDERS)}; found {sorted(top)}")
 
 
+def check_folder(folder):
+    found = sorted(os.listdir(folder))
+    if found != sorted(FOLDERS) or not all(os.path.isdir(os.path.join(folder, f)) for f in found):
+        raise ZipError(f"{folder}: must hold exactly {', '.join(FOLDERS)}; found {found}")
+
+
 def make_zip(version, setup_dir, exe_dir, out_dir):
     setups = sorted(glob.glob(os.path.join(setup_dir, "*.exe")))
     if len(setups) != 1:
@@ -69,9 +76,13 @@ def main(argv=None):
     p.add_argument("--exe", help="folder with Evict.exe (Portable)")
     p.add_argument("--out", help="folder for Evict-<version>.zip")
     p.add_argument("--check", metavar="ZIP", help="only check an existing zip")
+    p.add_argument("--check-folder", metavar="DIR", help="only check a folder (the unpacked CI download)")
     a = p.parse_args(argv)
     try:
-        if a.check:
+        if a.check_folder:
+            check_folder(a.check_folder)
+            print(f"{a.check_folder}: installer/ and portable/ only")
+        elif a.check:
             check_zip(a.check)
             print(f"{a.check}: installer/ and portable/ only")
         elif a.version and a.setup and a.exe and a.out:

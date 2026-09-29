@@ -119,17 +119,19 @@ jobs:
       - name: Release zip (installer + portable)
         run: python build/release_zip.py ${{ steps.ver.outputs.version }} --setup Installed --exe Portable --out Zip
 
+      # The CI download follows the same rule as the release zip: only installer\ and portable\ inside.
+      - name: Unpack the zip for the CI download
+        shell: pwsh
+        run: |
+          Expand-Archive Zip/Evict-${{ steps.ver.outputs.version }}.zip -DestinationPath CiDownload
+          python build/release_zip.py --check-folder CiDownload
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Evict-${{ steps.ver.outputs.version }}-${{ github.sha }}
-          path: |
-            windows/Portable/Evict.exe
-            windows/Portable/Evict.exe.sha256
-            windows/Installed/*.exe
-            windows/Installed/*.sha256
-            windows/Zip/Evict-*.zip
-            windows/Zip/Evict-*.zip.sha256
+          path: windows/CiDownload/
+          if-no-files-found: error
 
       - name: Release notes from CHANGELOG.md
         if: steps.rel.outputs.publish == 'true'
