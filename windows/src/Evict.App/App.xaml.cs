@@ -72,7 +72,7 @@ public partial class App : Application
         if (Services.Settings.Current.StartWithWindows) StartupRegistration.RefreshIfStale();
 
         SingleInstance.StartServer(args => HandleArgs(mainVm, args));
-        if (Program.StartupArgs.Length > 0) HandleArgs(mainVm, Program.StartupArgs, activate: !startOptions.Headless);
+        if (!startOptions.IsEmpty || startOptions.Unknown.Count > 0) HandleArgs(mainVm, Program.StartupArgs, activate: !startOptions.Headless);
         else if (Services.Settings.Current.EasyUninstallWidgetVisible) mainVm.ShowWidgetCommand.Execute(null);
 
         // Housekeeping after a self-update, then the (optional) update check in the background.
@@ -82,6 +82,26 @@ public partial class App : Application
             _ = mainVm.CheckForUpdatesOnStartupAsync();
             _ = mainVm.RunMissedScheduledScanIfDueAsync();
         }
+    }
+
+    private static bool _windowElevationTried;
+
+    /// <summary>
+    /// A start hidden in the notification area (sign-in autostart, scheduled scan) never shows a UAC prompt. The first
+    /// time its window is opened, "Start as administrator" applies: an elevated copy takes over (with these arguments) and
+    /// this one exits. Not while an installation is being recorded, and asked at most once per process.
+    /// </summary>
+    public static bool TryRestartElevatedForWindow(IReadOnlyList<string>? args = null)
+    {
+        if (!StartedHeadless || _windowElevationTried || Services is null) return false;
+        if (Current.MainWindow is { IsVisible: true }) return false;
+        _windowElevationTried = true;
+        if (!StartupElevation.ShouldElevate(Services.Settings.Current.StartAsAdministrator, ElevationHelper.IsElevated, ElevationHelper.CanElevateSameUser, new CommandLineOptions())) return false;
+        if (Background?.IsRecording == true) return false;
+        if (!ElevationHelper.RestartElevated(StartupElevation.RelaunchArgs(args ?? Array.Empty<string>(), Environment.ProcessId))) return false;
+        Log.Info("Restarting as administrator to open the window.");
+        Quit();
+        return true;
     }
 
     /// <summary>Minimal start: theme + the self-cleanup window. No services, no settings writes, no log file.</summary>
@@ -110,6 +130,9 @@ public partial class App : Application
         try
         {
             var options = CommandLineOptions.Parse(args);
+            if (options.Exit) { Log.Info("Asked to exit (--exit)."); Quit(); return; }
+            // Started hidden in the tray without administrator rights: the first window to open follows "Start as administrator".
+            if (activate && !options.Headless && TryRestartElevatedForWindow(args)) return;
             // A forwarded --tray / --scheduled-scan (e.g. sign-in autostart while Evict is open) must not pop the window up.
             if (activate && !options.Headless) vm.ShowMainWindow();
             if (!options.IsEmpty) _ = vm.HandleCommandLineAsync(options);

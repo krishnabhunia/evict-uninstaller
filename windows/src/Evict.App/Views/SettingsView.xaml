@@ -40,6 +40,15 @@
 
             <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
+                    <TextBlock Text="Administrator rights" Style="{StaticResource Text.Section}" Margin="0,0,0,12" />
+                    <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding StartAsAdministrator}" Content="Start Evict as administrator (recommended)" />
+                    <TextBlock Style="{StaticResource Hint}" Text="{Binding StartAsAdministratorHint}" />
+                    <TextBlock Text="{Binding ElevationText}" Style="{StaticResource Text.Caption}" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
                     <TextBlock Text="Uninstalling" Style="{StaticResource Text.Section}" Margin="0,0,0,12" />
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding CreateRestorePoint}" Content="Create a System Restore point before uninstalling (needs administrator)" />
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding QuietUninstall}" Content="Prefer silent uninstall when the installer supports it" />

@@ -1,10 +1,10 @@
 ; Inno Setup 6 script for Evict Uninstaller
-; Compile: ISCC.exe /DMyAppVersion=1.6.0 /DSourceDir=..\Portable Evict.iss   (output: ..\Installed\Evict-Setup-<version>.exe)
+; Compile: ISCC.exe /DMyAppVersion=1.7.0 /DSourceDir=..\Portable Evict.iss   (output: ..\Installed\Evict-Setup-<version>.exe)
 ; (GitHub Actions does this automatically – see .github/workflows/windows.yml)
 
 #define MyAppName "Evict Uninstaller"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.6.0"
+  #define MyAppVersion "1.7.0"
 #endif
 #define MyAppPublisher "Krishna Bhunia"
 #define MyAppURL "https://github.com/krishnabhunia/evict-uninstaller"
@@ -150,18 +150,54 @@ begin
                  '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
-// Force-closes every Evict.exe and waits up to ~8 s for the single-instance lock to go away.
-// Returns False while an Evict is still running (e.g. started as administrator while Setup is not elevated).
-function CloseRunningEvict(): Boolean;
+// Waits up to MaxMs for the single-instance lock to go away.
+procedure WaitForEvictExit(MaxMs: Integer);
 var
-  ResultCode, Waited: Integer;
+  Waited: Integer;
 begin
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Waited := 0;
-  while CheckForMutexes(EvictMutex) and (Waited < 8000) do
+  while CheckForMutexes(EvictMutex) and (Waited < MaxMs) do
   begin
     Sleep(250);
     Waited := Waited + 250;
+  end;
+end;
+
+// An Evict running as administrator ("Start as administrator", on by default since 1.7.0) cannot be force-closed by a
+// Setup without administrator rights. Evict 1.7+ closes itself when another copy is started with --exit: Setup uses the
+// Evict.exe it carries, the uninstaller the installed one.
+procedure AskEvictToExit();
+var
+  Exe: String;
+  ResultCode: Integer;
+begin
+  try
+    if IsUninstaller() then
+      Exe := ExpandConstant('{app}\{#MyAppExeName}')
+    else
+    begin
+      ExtractTemporaryFile('{#MyAppExeName}');
+      Exe := ExpandConstant('{tmp}\{#MyAppExeName}');
+    end;
+    if FileExists(Exe) then
+      Exec(Exe, '--exit', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  except
+    Log('Could not ask Evict to exit: ' + GetExceptionMessage());
+  end;
+end;
+
+// Closes every Evict.exe and waits for the single-instance lock to go away.
+// Returns False while an Evict is still running (e.g. an older version started as administrator while Setup is not elevated).
+function CloseRunningEvict(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  WaitForEvictExit(8000);
+  if CheckForMutexes(EvictMutex) then
+  begin
+    AskEvictToExit();
+    WaitForEvictExit(10000);
   end;
   // The process can outlive its lock by a moment while it exits; give Windows time to release Evict.exe.
   Sleep(500);

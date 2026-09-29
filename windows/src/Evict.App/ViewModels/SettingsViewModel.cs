@@ -180,6 +180,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     public bool ProgramsChanged { get; set; }
 
     public bool IsElevated => ElevationHelper.IsElevated;
+
+    public bool StartAsAdministrator { get => S.StartAsAdministrator; set { S.StartAsAdministrator = value; Save(); OnPropertyChanged(); } }
+
+    /// <summary>A standard account would be elevated as a different user, so the setting has no effect there.</summary>
+    public string StartAsAdministratorHint =>
+        !IsElevated && !ElevationHelper.CanElevateSameUser
+            ? "Your Windows account is not an administrator, so Evict starts with your own rights (an administrator password would run it under that administrator's account and clean the wrong profile)."
+            : "Windows asks for permission each time the Evict window opens. Starts hidden in the notification area (sign-in, scheduled scans) ask only when you open the window. While Evict runs as administrator, Windows blocks dragging files onto it from Explorer – use the Browse buttons instead.";
     public string VersionText => "Version " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0");
     public string DataFolder => AppPaths.DataRoot;
     public string RuntimeText => $".NET {Environment.Version} · {(Environment.Is64BitProcess ? "64-bit" : "32-bit")} · {Environment.OSVersion.VersionString}";

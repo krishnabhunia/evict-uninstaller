@@ -107,6 +107,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var w = Application.Current.MainWindow;
         if (w is null) return;
+        if (App.TryRestartElevatedForWindow()) return;
         if (!w.IsVisible) w.Show();
         if (w.WindowState == WindowState.Minimized) w.WindowState = WindowState.Normal;
         w.Activate();

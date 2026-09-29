@@ -1,4 +1,6 @@
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Windows;
@@ -45,7 +47,7 @@ public static class SingleInstance
             {
                 try
                 {
-                    using var server = new NamedPipeServerStream(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                    using var server = CreateServer();
                     await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
                     using var ms = new MemoryStream();
                     await server.CopyToAsync(ms, ct).ConfigureAwait(false);
@@ -64,4 +66,23 @@ public static class SingleInstance
     }
 
     public static void Stop() => _cts?.Cancel();
+
+    /// <summary>
+    /// The pipe grants this user read/write explicitly: with the default security, a copy without administrator rights
+    /// (Explorer's "Uninstall with Evict", Setup's --exit) could not reach an Evict running as administrator.
+    /// </summary>
+    private static NamedPipeServerStream CreateServer()
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var security = new PipeSecurity();
+            security.AddAccessRule(new PipeAccessRule(identity.User!, PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance, AccessControlType.Allow));
+            return NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+        }
+        catch (Exception ex) when (ex is not IOException)
+        {
+            return new NamedPipeServerStream(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        }
+    }
 }

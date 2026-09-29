@@ -28,6 +28,15 @@ public static class ElevationHelper
     }
 
     /// <summary>
+    /// True for an administrator account running with UAC's limited token: elevating keeps the same account, profile and
+    /// settings. False for a standard account – there UAC would run Evict under a different (administrator) account.
+    /// </summary>
+    public static bool CanElevateSameUser => Interop.NativeMethods.GetTokenElevationType() == 3;
+
+    /// <summary>Re-launches elevated with these arguments (quoted for the Windows command line).</summary>
+    public static bool RestartElevated(IReadOnlyList<string> args) => RestartElevated(Util.CommandLineOptions.JoinArguments(args));
+
+    /// <summary>
     /// Re-launches the current executable with the UAC "runas" verb. Returns true when the new process
     /// started (caller should then shut down), false when the user cancelled the prompt.
     /// </summary>
