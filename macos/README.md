@@ -70,3 +70,7 @@ SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" Scripts/make-app.sh
 | `Tests/EvictKitTests` | Unit tests for the rules that decide what may be removed. |
 | `Scripts/make-app.sh` | Builds the `.app` bundle and signs it. |
 | `docs/DESIGN.md` | How the Windows features map to macOS, and what is still to come. |
+
+## Release versions
+
+GitHub Actions automatically maintains numeric `x.y.z` versions and the bundle build number from PR and commit release intent. The macOS 15 workflow tests the exact version commit and verifies the universal bundle metadata before publishing a `mac-vX.Y.Z` release. PR validation has read-only repository access. See [automatic versioning](../docs/versioning.md).

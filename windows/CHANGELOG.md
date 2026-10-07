@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.8.1 (not published)
+## Unreleased
+
+- Request running Evict to exit through its local pipe without extracting a temporary helper; stop silent installation if the process cannot close and write a setup log automatically.
+- Upgrade GitHub Actions to supported Node.js 24 versions.
+- Automatically calculate major, minor and patch release versions from PR and commit metadata; synchronize the source version, installer and changelog in GitHub Actions.
+- Calculate PR betas from the same next stable version; retry failed publication without replacing published release files.
 
 - Add an optional beta update channel, full beta version labels, release notes and explicit beta confirmation; stable updates remain the default.
 - Publish tested Windows PR builds as GitHub prereleases with verified installer and portable assets, without merging the PR into main.
