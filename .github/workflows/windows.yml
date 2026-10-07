@@ -4,20 +4,22 @@ on:
   push:
     branches: [ main ]
     tags: [ 'win-v*', '!win-v*-beta.*' ]
-    paths: [ 'windows/**', '.github/workflows/windows.yml' ]
+    paths: [ 'windows/**', 'scripts/versioning.py', 'scripts/tests/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
   pull_request:
     branches: [ main ]
-    paths: [ 'windows/**', '.github/workflows/windows.yml' ]
+    types: [ opened, synchronize, reopened, edited, labeled, unlabeled ]
+    paths: [ 'windows/**', 'scripts/versioning.py', 'scripts/tests/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
   workflow_dispatch:
 
 permissions:
   contents: write
+  pull-requests: read
 
-# Continuous delivery: a push to main whose <Version> has no win-v tag yet builds, tags and publishes that version.
-# One release at a time, so two quick merges cannot both create the same tag.
+# Serialize planning through publication for main, stable tags and dispatches. PR previews have their own locks.
 concurrency:
-  group: windows-${{ github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('windows-pr-{0}', github.event.pull_request.number) || 'windows-stable' }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   build:
@@ -33,55 +35,170 @@ jobs:
       SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
       SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
     steps: &windows_build_steps
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # tags, to tell whether this version is already released
           # PR betas test the exact source snapshot that will be tagged, never GitHub's synthetic merge commit.
           ref: ${{ needs.prepare-beta.outputs.source_sha || github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
 
-      - name: Read version
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Semantic version engine tests
+        id: engine_tests
+        working-directory: .
+        shell: pwsh
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python -m unittest discover -s scripts/tests -v
+          if ($LASTEXITCODE -ne 0) { throw "Semantic version engine tests failed" }
+          $source = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Could not record the tested engine source" }
+          "source_sha=$source" >> $env:GITHUB_OUTPUT
+
+      - name: Plan version and synchronize stable source
         id: ver
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $v = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
-          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Expected a stable major.minor.patch version, found $v" }
-          $numeric = "$v.0"
-          if ("${{ github.event_name }}" -eq "pull_request") {
-            $parts = $v.Split('.')
-            $next = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
-            $v = "$next-beta.${{ github.event.pull_request.number }}.${{ github.run_number }}.${{ github.run_attempt }}"
-            $numeric = "$next.0"
-          }
-          $source = (git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0) { throw "Could not read the checked-out source commit" }
-          "version=$v" >> $env:GITHUB_OUTPUT
-          "numeric_version=$numeric" >> $env:GITHUB_OUTPUT
-          "source_sha=$source" >> $env:GITHUB_OUTPUT
-          "artifact=Evict-$v-$source" >> $env:GITHUB_OUTPUT
-          Write-Host "Version $v from $source (numeric file version $numeric)"
+          $repoRoot = (Resolve-Path ..).Path
+          $output = Join-Path $env:RUNNER_TEMP "windows-version-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.txt"
+          $ref = $env:GITHUB_REF
+          $event = $env:GITHUB_EVENT_NAME
+          $isMain = $ref -eq "refs/heads/main" -and $event -in @("push", "workflow_dispatch")
+          $isTag = $ref.StartsWith("refs/tags/win-v")
+          $mode = if ($event -eq "pull_request") { "beta" } elseif ($isTag) { "tag" } else { "stable" }
+          $allowed = @("windows/Directory.Build.props", "windows/installer/Evict.iss", "windows/CHANGELOG.md")
 
-      - name: Release needed?
+          function Read-Plan([bool] $sync) {
+            $engineSource = (git -C $repoRoot rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0) { throw "Could not identify the version planner source" }
+            if ($engineSource -ne "${{ steps.engine_tests.outputs.source_sha }}") {
+              # A newer main/CAS retry must test the engine that actually makes this plan.
+              $env:PYTHONUTF8 = "1"
+              Push-Location -LiteralPath $repoRoot
+              try {
+                & python -m unittest discover -s scripts/tests -v | ForEach-Object { Write-Host $_ }
+                if ($LASTEXITCODE -ne 0) { throw "Updated semantic version engine tests failed" }
+              }
+              finally { Pop-Location }
+            }
+            Set-Content -LiteralPath $output -Value "" -NoNewline -Encoding utf8
+            $planArguments = @("$repoRoot/scripts/versioning.py", "plan", "--platform", "windows", "--mode", $mode,
+              "--event-file", $env:GITHUB_EVENT_PATH, "--ref", $ref, "--repo-root", $repoRoot,
+              "--main-ref", "origin/main", "--github-output", $output)
+            if ($mode -eq "beta") { $planArguments += @("--beta-sequence", "$env:GITHUB_RUN_NUMBER.$env:GITHUB_RUN_ATTEMPT") }
+            if ($mode -eq "tag") { $planArguments += @("--tag", $ref.Substring("refs/tags/".Length)) }
+            if ($sync) { $planArguments += "--sync" }
+            & python @planArguments | ForEach-Object { Write-Host $_ }
+            if ($LASTEXITCODE -ne 0) { throw "Semantic version planning failed" }
+            $result = @{}
+            foreach ($line in Get-Content -LiteralPath $output -Encoding utf8) {
+              if ($line -match '^([^=]+)=(.*)$') { $result[$Matches[1]] = $Matches[2] }
+            }
+            if ($result.core_version -notmatch '^\d+\.\d+\.\d+$' -or
+                $result.version -notmatch '^\d+\.\d+\.\d+(?:-beta\.\d+\.\d+\.\d+)?$' -or
+                $result.numeric_version -ne "$($result.core_version).0" -or
+                $result.tag -ne "win-v$($result.version)" -or $result.publish -notin @("true", "false")) {
+              throw "Invalid semantic version plan"
+            }
+            return $result
+          }
+
+          if ($isMain) {
+            git -C $repoRoot config user.name "github-actions[bot]"
+            git -C $repoRoot config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              git -C $repoRoot fetch origin "refs/heads/main:refs/remotes/origin/main" --tags
+              if ($LASTEXITCODE -ne 0) { throw "Could not refresh main and release tags" }
+              # This is the isolated runner checkout. Discard only the previous attempt's generated reservation.
+              git -C $repoRoot checkout --detach --force origin/main
+              if ($LASTEXITCODE -ne 0) { throw "Could not checkout current main" }
+              $plan = Read-Plan $true
+              $syncFiles = @($plan.sync_files | ConvertFrom-Json)
+              if ($syncFiles | Where-Object { $_ -isnot [string] -or $_ -notin $allowed }) {
+                throw "Version planner requested a file outside its managed allowlist"
+              }
+              $changed = @(git -C $repoRoot diff --name-only HEAD)
+              if ($LASTEXITCODE -ne 0) { throw "Could not inspect generated version changes" }
+              if ($changed | Where-Object { $_ -notin $allowed -or $_ -notin $syncFiles }) {
+                throw "Version synchronization changed an unlisted file"
+              }
+              if ($changed.Count -gt 0) {
+                git -C $repoRoot add -- @syncFiles
+                if ($LASTEXITCODE -ne 0) { throw "Could not stage managed version files" }
+                git -C $repoRoot commit -m "chore(release): windows $($plan.core_version)"
+                if ($LASTEXITCODE -ne 0) { throw "Could not commit synchronized version files" }
+                git -C $repoRoot push origin "HEAD:refs/heads/main"
+                if ($LASTEXITCODE -ne 0) {
+                  if ($attempt -eq 3) { throw "Main changed or rejected the version commit after three attempts; no release will be published" }
+                  Write-Host "Main changed; recomputing the version from fresh source (attempt $($attempt + 1))."
+                  continue
+                }
+              }
+              break
+            }
+          }
+          else { $plan = Read-Plan $false }
+
+          function Read-Release([string] $tag) {
+            $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json"; "X-GitHub-Api-Version" = "2022-11-28" }
+            try { return Invoke-RestMethod -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" -Headers $headers }
+            catch { if ([int]$_.Exception.Response.StatusCode -eq 404) { return $null }; throw }
+          }
+
+          $eligible = $isMain -or $isTag
+          if (-not $eligible -and $mode -ne "beta") {
+            # A branch dispatch is CI only and leaves source versions untouched.
+            $core = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
+            $plan.version = $core; $plan.core_version = $core; $plan.numeric_version = "$core.0"; $plan.tag = "win-v$core"
+          }
+          $tagRef = "refs/tags/$($plan.tag)"
+          $tagSource = git -C $repoRoot rev-parse -q --verify "$tagRef^{commit}" 2>$null
+          $tagExists = $LASTEXITCODE -eq 0
+          $global:LASTEXITCODE = 0
+          $source = (git -C $repoRoot rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Could not read the checked-out source commit" }
+          $release = if ($eligible) { Read-Release $plan.tag } else { $null }
+          if ($tagExists) {
+            $tagSource = $tagSource.Trim()
+            if ($plan.publish -eq "true" -and $tagSource -ne $source) { throw "Version tag already points to different source; refusing to change it" }
+            if ($eligible -and ($null -eq $release -or $release.draft)) {
+              # Resume a reserved tag from its frozen source, even if newer documentation/Mac changes exist on main.
+              git -C $repoRoot checkout --detach $tagSource
+              if ($LASTEXITCODE -ne 0) { throw "Could not checkout the reserved release source" }
+              $source = $tagSource
+              $plan.publish = "true"
+            }
+            elseif ($null -ne $release -and -not $release.draft) { $plan.publish = "false" }
+          }
+          elseif ($null -ne $release) { throw "A release exists without its source tag; refusing to replace its provenance" }
+          if (-not $eligible -and $mode -ne "beta") { $plan.publish = "false" }
+          if ($eligible -and $plan.publish -eq "true") {
+            $stored = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
+            if ($stored -ne $plan.core_version) { throw "Release source version does not match the planned tag" }
+          }
+          $plan.source_sha = $source
+          $plan.artifact = "Evict-$($plan.version)-$source"
+          foreach ($key in $plan.Keys) { "$key=$($plan[$key])" >> $env:GITHUB_OUTPUT }
+          Write-Host "Version $($plan.version), source $source, publish $($plan.publish)"
+
+      - name: Release plan
         id: rel
         shell: pwsh
         run: |
-          $tag = "win-v${{ steps.ver.outputs.version }}"
-          $ref = "${{ github.ref }}"
-          if ($ref -eq "refs/tags/$tag") { $publish = "true" }
-          elseif ($ref.StartsWith("refs/tags/win-v")) { throw "Tag $ref does not match <Version> ${{ steps.ver.outputs.version }} in Directory.Build.props" }
-          elseif ("${{ github.event_name }}" -eq "push" -and $ref -eq "refs/heads/main") {
-            git rev-parse -q --verify "refs/tags/$tag" | Out-Null
-            $publish = if ($LASTEXITCODE -eq 0) { "false" } else { "true" }
-          }
-          else { $publish = "false" }
-          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "tag=${{ steps.ver.outputs.tag }}" >> $env:GITHUB_OUTPUT
+          $publish = if ($env:GITHUB_EVENT_NAME -eq "pull_request") { "false" } else { "${{ steps.ver.outputs.publish }}" }
           "publish=$publish" >> $env:GITHUB_OUTPUT
-          Write-Host "Release $tag : $publish"
-          $global:LASTEXITCODE = 0
 
       - name: Restore
         run: dotnet restore Evict.sln
@@ -136,6 +253,26 @@ jobs:
       - name: Release zip (installer + portable)
         run: python build/release_zip.py ${{ steps.ver.outputs.version }} --setup Installed --exe Portable --out Zip
 
+      - name: Verify stable release assets
+        id: stable_assets
+        if: steps.rel.outputs.publish == 'true'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          $v = $env:RELEASE_VERSION
+          $files = @("Portable/Evict.exe", "Installed/Evict-Setup-$v.exe", "Zip/Evict-$v.zip")
+          $assetSizes = @{}
+          foreach ($file in $files) {
+            $expected = (Get-Content -LiteralPath "$file.sha256" -Raw).Trim()
+            if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) {
+              throw "Stable release checksum mismatch: $file"
+            }
+            $assetSizes[[IO.Path]::GetFileName($file)] = (Get-Item -LiteralPath $file).Length
+            $assetSizes[[IO.Path]::GetFileName("$file.sha256")] = (Get-Item -LiteralPath "$file.sha256").Length
+          }
+          "sizes=$($assetSizes | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+
       # The CI download follows the same rule as the release zip: only installer\ and portable\ inside.
       - name: Unpack the zip for the CI download
         shell: pwsh
@@ -144,7 +281,7 @@ jobs:
           python build/release_zip.py --check-folder CiDownload
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.ver.outputs.artifact }}
           path: windows/CiDownload/
@@ -152,8 +289,8 @@ jobs:
 
       # Transport the already checked ZIP without rebuilding it in the privileged publication job.
       - name: Upload beta ZIP for publication
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
-        uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request' && steps.ver.outputs.publish == 'true' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.ver.outputs.artifact }}-release-zip
           path: windows/Zip/
@@ -176,14 +313,52 @@ jobs:
           if (-not $out) { throw "CHANGELOG.md has no '## ${{ steps.ver.outputs.version }}' section" }
           ($out -join "`n").Trim() | Out-File "$env:RUNNER_TEMP\notes.md" -Encoding utf8
 
-      - name: GitHub Release
+      - name: Verify stable source and release status
+        id: stable_guard
         if: steps.rel.outputs.publish == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: actions/github-script@v9
+        env:
+          RELEASE_TAG: ${{ steps.rel.outputs.tag }}
+          RELEASE_SOURCE_SHA: ${{ steps.ver.outputs.source_sha }}
         with:
-          # Creates the tag on this commit when it does not exist yet (push to main).
+          script: |
+            const repo = context.repo;
+            const tag = process.env.RELEASE_TAG;
+            const source = process.env.RELEASE_SOURCE_SHA;
+            let release;
+            try { release = (await github.rest.repos.getReleaseByTag({...repo, tag})).data; }
+            catch (error) { if (error.status !== 404) throw error; }
+            if (release && !release.draft) {
+              core.setOutput('publish', 'false');
+              core.info('The release is already published; leaving its assets and metadata unchanged.');
+              return;
+            }
+            if (release?.prerelease) throw new Error('A stable tag is reserved by a prerelease.');
+            const ref = 'tags/' + tag;
+            let target;
+            try { target = (await github.rest.git.getRef({...repo, ref})).data.object; }
+            catch (error) {
+              if (error.status !== 404) throw error;
+              target = (await github.rest.git.createRef({...repo, ref: 'refs/' + ref, sha: source})).data.object;
+            }
+            while (target.type === 'tag') {
+              target = (await github.rest.git.getTag({...repo, tag_sha: target.sha})).data.object;
+            }
+            if (target.type !== 'commit' || target.sha !== source) throw new Error('Stable tag points to different source.');
+            core.setOutput('publish', 'true');
+
+      - name: Upload stable release draft
+        id: stable_release
+        if: steps.stable_guard.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          # The immutable tag was verified against the actual synchronized source commit after tests.
           tag_name: ${{ steps.rel.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ steps.ver.outputs.source_sha }}
           name: Evict ${{ steps.ver.outputs.version }} for Windows
+          draft: true
+          prerelease: false
+          fail_on_unmatched_files: true
           body_path: ${{ runner.temp }}/notes.md
           files: |
             windows/Portable/Evict.exe
@@ -193,28 +368,57 @@ jobs:
             windows/Zip/Evict-*.zip
             windows/Zip/Evict-*.zip.sha256
           generate_release_notes: true
-          # Installed copies of Evict 1.3.x read releases/latest - only Windows releases may be "latest".
-          make_latest: true
+          # The final publication step promotes only a newer Windows stable version.
+          make_latest: false
 
-      # A release published before the zip existed (1.8.0) gets it once, made from that release's own files —
-      # nothing is rebuilt, so the zip holds exactly what was released.
-      - name: Add the zip to the current release if it has none
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rel.outputs.publish != 'true'
-        shell: pwsh
+      - name: Publish verified stable release
+        if: steps.stable_guard.outputs.publish == 'true'
+        uses: actions/github-script@v9
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $tag = "${{ steps.rel.outputs.tag }}"; $v = "${{ steps.ver.outputs.version }}"; $repo = "${{ github.repository }}"
-          $assets = gh release view $tag --repo $repo --json assets --jq '.assets[].name' 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host "No release $tag"; $global:LASTEXITCODE = 0; exit 0 }
-          if ($assets -contains "Evict-$v.zip") { Write-Host "$tag already has Evict-$v.zip"; exit 0 }
-          $d = Join-Path $env:RUNNER_TEMP "zip-$v"
-          gh release download $tag --repo $repo --dir "$d\Installed" --pattern "Evict-Setup-*.exe"
-          gh release download $tag --repo $repo --dir "$d\Portable" --pattern "Evict.exe"
-          python build/release_zip.py $v --setup "$d\Installed" --exe "$d\Portable" --out "$d\Zip"
-          if ($LASTEXITCODE -ne 0) { throw "Couldn't build the zip for $tag" }
-          gh release upload $tag --repo $repo "$d\Zip\Evict-$v.zip" "$d\Zip\Evict-$v.zip.sha256"
-          Write-Host "Added Evict-$v.zip to $tag"
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+          RELEASE_SOURCE_SHA: ${{ steps.ver.outputs.source_sha }}
+          RELEASE_ID: ${{ steps.stable_release.outputs.id }}
+          RELEASE_ASSET_SIZES: ${{ steps.stable_assets.outputs.sizes }}
+        with:
+          script: |
+            const version = process.env.RELEASE_VERSION;
+            const release_id = Number(process.env.RELEASE_ID);
+            if (!Number.isSafeInteger(release_id) || release_id <= 0) throw new Error('No stable release draft was created.');
+            const {data: release} = await github.rest.repos.getRelease({...context.repo, release_id});
+            if (!release.draft || release.prerelease || release.tag_name !== 'win-v' + version) {
+              throw new Error('The stable draft has unexpected metadata.');
+            }
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {...context.repo, release_id, per_page: 100});
+            const sizes = JSON.parse(process.env.RELEASE_ASSET_SIZES);
+            const expected = ['Evict.exe', 'Evict.exe.sha256', 'Evict-Setup-' + version + '.exe',
+              'Evict-Setup-' + version + '.exe.sha256', 'Evict-' + version + '.zip', 'Evict-' + version + '.zip.sha256'].sort();
+            if (JSON.stringify(assets.map(a => a.name).sort()) !== JSON.stringify(expected) ||
+                assets.some(a => a.state !== 'uploaded' || a.size <= 0 || a.size !== sizes[a.name])) {
+              throw new Error('Stable assets are incomplete; leaving the release unpublished.');
+            }
+            let target = (await github.rest.git.getRef({...context.repo, ref: 'tags/win-v' + version})).data.object;
+            while (target.type === 'tag') target = (await github.rest.git.getTag({...context.repo, tag_sha: target.sha})).data.object;
+            if (target.type !== 'commit' || target.sha !== process.env.RELEASE_SOURCE_SHA) {
+              throw new Error('Stable tag does not identify the tested version commit.');
+            }
+            let makeLatest = 'true';
+            const candidate = version.split('.').map(Number);
+            const releases = await github.paginate(github.rest.repos.listReleases, {...context.repo, per_page: 100});
+            for (const existing of releases) {
+              if (existing.draft || existing.prerelease) continue;
+              const match = existing.tag_name.match(/^(?:win-v|v)(\d+)\.(\d+)\.(\d+)$/);
+              if (!match) continue;
+              const previous = match.slice(1).map(Number);
+              let comparison = 0;
+              for (let i = 0; i < 3 && comparison === 0; i++) comparison = Math.sign(candidate[i] - previous[i]);
+              if (comparison <= 0) makeLatest = 'false';
+            }
+            const {data: published} = await github.rest.repos.updateRelease({
+              ...context.repo, release_id, draft: false, prerelease: false, make_latest: makeLatest
+            });
+            if (published.draft || published.prerelease) throw new Error('Stable publication was not confirmed.');
+            await core.summary.addHeading('Windows release published').addLink(version, published.html_url).write();
+
 
   # A preview source commit contains every PR file unchanged except .github/workflows, which matches the default
   # branch. GitHub forbids GITHUB_TOKEN release creation for targets that modify workflows; no PAT is needed here.
@@ -229,7 +433,7 @@ jobs:
     steps:
       - name: Prepare beta source without workflow changes
         id: snapshot
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const repo = context.repo;
@@ -292,6 +496,7 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read
+      pull-requests: read
     defaults:
       run:
         working-directory: windows
@@ -303,20 +508,21 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       source_sha: ${{ steps.ver.outputs.source_sha }}
       artifact: ${{ steps.ver.outputs.artifact }}
+      publish: ${{ steps.ver.outputs.publish }}
     steps: *windows_build_steps
 
   publish-beta:
     needs: pr-build
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
+    if: needs.pr-build.outputs.publish == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: windows-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ needs.pr-build.outputs.artifact }}
           path: Download
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ needs.pr-build.outputs.artifact }}-release-zip
           path: Zip
@@ -349,7 +555,7 @@ jobs:
           finally { $archive.Dispose() }
 
       - name: Confirm release source workflow permissions
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BETA_SOURCE_SHA: ${{ needs.pr-build.outputs.source_sha }}
           BETA_VERSION: ${{ needs.pr-build.outputs.version }}
@@ -383,11 +589,11 @@ jobs:
       # Keep the release a draft until every asset is uploaded and its name, size and source tag are verified.
       - name: Upload beta draft
         id: beta_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: win-v${{ needs.pr-build.outputs.version }}
           target_commitish: ${{ needs.pr-build.outputs.source_sha }}
-          name: Evict ${{ needs.pr-build.outputs.version }} for Windows (PR #${{ github.event.pull_request.number }})
+          name: 'Evict ${{ needs.pr-build.outputs.version }} for Windows (PR #${{ github.event.pull_request.number }})'
           draft: true
           prerelease: true
           make_latest: false
@@ -407,7 +613,7 @@ jobs:
             Zip/Evict-*.zip.sha256
 
       - name: Publish verified beta without changing latest
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BETA_VERSION: ${{ needs.pr-build.outputs.version }}
           BETA_SOURCE_SHA: ${{ needs.pr-build.outputs.source_sha }}
@@ -454,7 +660,7 @@ jobs:
       contents: write
     steps:
       - name: Remove this run's temporary source ref
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BETA_TEMP_REF: ${{ needs.prepare-beta.outputs.temp_ref }}
           BETA_SOURCE_SHA: ${{ needs.prepare-beta.outputs.source_sha }}

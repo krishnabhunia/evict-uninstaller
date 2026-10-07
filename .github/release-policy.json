@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "repository": "krishnabhunia/evict-uninstaller",
+  "repository_id": 1372964211,
+  "legacy_pull_requests": {
+    "10": {
+      "merge_commit_sha": "fa22d977027af1ad44205d14359d3e2fc60cf25e",
+      "windows": "minor",
+      "macos": "patch",
+      "reason": "PR #10 added the Windows beta update channel and corrected existing macOS behavior; its historical title predates Conventional Commit metadata."
+    }
+  }
+}

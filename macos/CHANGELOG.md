@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Upgrade Actions to Node.js 24 and move CI from the retiring macOS 14 runner to macOS 15.
+- Automatically calculate release versions, record the app version and build number, and publish tested source commits with matching tags.
+- Keep PR validation read-only and preserve published assets when release jobs are retried.
+
 - Keep vendor-only and shared leftovers unchecked, select the application bundle deliberately and revalidate owned command-line links before moving them to Trash.
 - Correct history date decoding, application deduplication, Apple app eligibility and verified removal counters.
 - Apply scan and review settings, prevent dismissing an active removal, and describe bytes moved to Trash accurately.

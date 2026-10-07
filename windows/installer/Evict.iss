@@ -48,6 +48,7 @@ CloseApplications=yes
 CloseApplicationsFilter=*.exe
 RestartApplications=no
 ShowLanguageDialog=no
+SetupLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -90,14 +91,288 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--updated"; Flags: nowait skipifnotsilent; Check: IsSelfUpdate
 
 [UninstallRun]
-; Safety net if Evict.exe could not run its own clean-up (see [Code]): release the exe and remove the autostart entry.
-; Scheduled tasks are removed only by the owner-aware self-cleanup above.
-Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F"; Flags: runhidden; RunOnceId: "KillEvict"
+; Safety net if Evict.exe could not run its own clean-up: remove the autostart entry.
+; Scheduled tasks are removed only by the owner-aware self-cleanup below.
 Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Evict /f"; Flags: runhidden; RunOnceId: "DelRun"
 
 [Code]
 var
   SelfCleanupHandled: Boolean;
+
+const
+  EvictMutex = 'EvictUninstaller.SingleInstance';
+  EvictPipe = '\\.\pipe\EvictUninstaller.Args.v1';
+  EvictGenericWrite = $40000000;
+  EvictOpenExisting = 3;
+  EvictShareAll = 7;
+  EvictSynchronize = $00100000;
+  EvictQueryLimitedInformation = $1000;
+  EvictSecurityIdentification = $00010000;
+  EvictSecurityQosPresent = $00100000;
+  EvictPipeNowait = 1;
+  EvictWaitObject = 0;
+  EvictSharingViolation = 32;
+  EvictLockViolation = 33;
+
+// These declarations use Inno's pointer-sized HANDLE/UINT_PTR and Win32 BOOL/DWORD types.
+function EvictCreateFile(Name: String; Access, Share: DWORD; Security: UINT_PTR;
+  Creation, Attributes: DWORD; Template: THandle): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
+function EvictCloseHandle(Handle: THandle): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';
+function EvictWaitNamedPipe(Name: String; Timeout: DWORD): BOOL;
+  external 'WaitNamedPipeW@kernel32.dll stdcall';
+function EvictSetPipeState(Pipe: THandle; var Mode: DWORD;
+  CollectionCount, CollectionTimeout: UINT_PTR): BOOL;
+  external 'SetNamedPipeHandleState@kernel32.dll stdcall';
+function EvictWriteFile(Handle: THandle; Buffer: AnsiString; Count: DWORD;
+  var Written: DWORD; Overlapped: UINT_PTR): BOOL;
+  external 'WriteFile@kernel32.dll stdcall';
+function EvictGetPipeServerPid(Pipe: THandle; var Pid: DWORD): BOOL;
+  external 'GetNamedPipeServerProcessId@kernel32.dll stdcall';
+function EvictOpenProcess(Access: DWORD; Inherit: BOOL; Pid: DWORD): THandle;
+  external 'OpenProcess@kernel32.dll stdcall';
+function EvictQueryProcessImage(Process: THandle; Flags: DWORD; Name: String;
+  var Size: DWORD): BOOL;
+  external 'QueryFullProcessImageNameW@kernel32.dll stdcall';
+function EvictWaitForProcess(Process: THandle; Timeout: DWORD): DWORD;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function EvictCurrentPid(): DWORD;
+  external 'GetCurrentProcessId@kernel32.dll stdcall';
+function EvictProcessSession(Pid: DWORD; var Session: DWORD): BOOL;
+  external 'ProcessIdToSessionId@kernel32.dll stdcall';
+
+function CloseFailureMessage(): String;
+begin
+  Result := 'Evict is still running or could not be contacted. Setup will not replace its files.' +
+    #13#10 + 'Exit Evict from its notification-area icon, then run Setup again.' +
+    #13#10 + 'If security software reports a blocked Evict file, review its notifications ' +
+    '(Bitdefender: Notifications). The Setup log records the Windows error; no protection changes are required.';
+end;
+
+// --exit is six ASCII/UTF-8 bytes, exactly CommandLineOptions.Pack(new[] { "--exit" }).
+// Close the byte-pipe connection after writing so the running app receives EOF.
+// Never extract or launch the bundled EXE merely to contact the current instance.
+function AskEvictToExit(): Boolean;
+var
+  Pipe, Process: THandle;
+  Pid, Session, SetupSession, ImageSize, Mode, Written, ErrorCode, WaitResult: DWORD;
+  Image: String;
+  Payload: AnsiString;
+begin
+  Result := False;
+  Process := 0;
+  if not EvictWaitNamedPipe(EvictPipe, 2500) then
+  begin
+    ErrorCode := DLLGetLastError;
+    Log('Evict exit pipe unavailable; Windows error ' + IntToStr(ErrorCode));
+    exit;
+  end;
+  Pipe := EvictCreateFile(EvictPipe, EvictGenericWrite, 0, 0, EvictOpenExisting,
+    EvictSecurityQosPresent or EvictSecurityIdentification, 0);
+  if Pipe = THandle(-1) then
+  begin
+    ErrorCode := DLLGetLastError;
+    Log('Could not open Evict exit pipe; Windows error ' + IntToStr(ErrorCode));
+    exit;
+  end;
+  try
+    if not EvictGetPipeServerPid(Pipe, Pid) then
+    begin
+      ErrorCode := DLLGetLastError;
+      Log('Could not identify Evict pipe server; Windows error ' + IntToStr(ErrorCode));
+      exit;
+    end;
+    if not EvictProcessSession(Pid, Session) or
+       not EvictProcessSession(EvictCurrentPid(), SetupSession) or (Session <> SetupSession) then
+    begin
+      Log('Refusing to close a pipe server outside this Windows session.');
+      exit;
+    end;
+    Process := EvictOpenProcess(EvictSynchronize or EvictQueryLimitedInformation, False, Pid);
+    if Process = 0 then
+    begin
+      ErrorCode := DLLGetLastError;
+      Log('Could not inspect/wait for Evict process; Windows error ' + IntToStr(ErrorCode));
+      exit;
+    end;
+    ImageSize := 32768;
+    SetLength(Image, ImageSize);
+    if not EvictQueryProcessImage(Process, 0, Image, ImageSize) then
+    begin
+      ErrorCode := DLLGetLastError;
+      Log('Could not read Evict pipe server image; Windows error ' + IntToStr(ErrorCode));
+      exit;
+    end;
+    SetLength(Image, ImageSize);
+    if CompareText(ExtractFileName(Image), '{#MyAppExeName}') <> 0 then
+    begin
+      Log('Refusing to send --exit to an unexpected pipe server: ' + Image);
+      exit;
+    end;
+    Log('Asking Evict to exit gracefully: PID ' + IntToStr(Pid) + ', ' + Image);
+    // Nonblocking byte mode makes the tiny WriteFile return immediately, even if the app is stuck.
+    Mode := EvictPipeNowait;
+    if not EvictSetPipeState(Pipe, Mode, 0, 0) then
+    begin
+      ErrorCode := DLLGetLastError;
+      Log('Could not make Evict exit pipe nonblocking; Windows error ' + IntToStr(ErrorCode));
+      exit;
+    end;
+    Payload := Utf8Encode('--exit');
+    Written := 0;
+    if not EvictWriteFile(Pipe, Payload, Length(Payload), Written, 0) or
+       (Written <> DWORD(Length(Payload))) then
+    begin
+      ErrorCode := DLLGetLastError;
+      Log('Evict exit request was not completely written; bytes ' + IntToStr(Written) +
+        ', Windows error ' + IntToStr(ErrorCode));
+      exit;
+    end;
+    Result := True;
+  finally
+    EvictCloseHandle(Pipe);
+    if not Result and (Process <> 0) then
+    begin
+      EvictCloseHandle(Process);
+      Process := 0;
+    end;
+  end;
+  if Process <> 0 then
+  begin
+    try
+      WaitResult := EvictWaitForProcess(Process, 10000);
+      Result := WaitResult = EvictWaitObject;
+      Log('Evict process exit wait result: ' + IntToStr(WaitResult));
+    finally
+      EvictCloseHandle(Process);
+    end;
+  end;
+end;
+
+procedure WaitForEvictExit(MaxMs: Integer);
+var
+  Waited: Integer;
+begin
+  Waited := 0;
+  while CheckForMutexes(EvictMutex) and (Waited < MaxMs) do
+  begin
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+end;
+
+function CloseRunningEvict(): Boolean;
+begin
+  Result := True;
+  if not CheckForMutexes(EvictMutex) then exit;
+  Result := AskEvictToExit();
+  // A successful request is not enough: the process must terminate and release its mutex.
+  Result := Result and not CheckForMutexes(EvictMutex);
+  if not Result then Log(CloseFailureMessage());
+end;
+
+function IsSelfUpdate(): Boolean;
+begin
+  Result := ExpandConstant('{param:EVICTUPDATE|0}') = '1';
+end;
+
+// Open the exact destination without truncating or changing it. A mapped/running EXE rejects write access.
+// This also catches access-denied/blocked-file errors before the actual replacement starts.
+function DestinationReady(const Filename: String; var ErrorCode: DWORD): Boolean;
+var
+  Handle: THandle;
+begin
+  ErrorCode := 0;
+  Handle := EvictCreateFile(Filename, EvictGenericWrite, EvictShareAll, 0, EvictOpenExisting, 0, 0);
+  if Handle <> THandle(-1) then
+  begin
+    EvictCloseHandle(Handle);
+    Result := True;
+  end
+  else
+  begin
+    ErrorCode := DLLGetLastError;
+    Result := (ErrorCode = 2) or (ErrorCode = 3); // first installation: destination absent
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Filename: String;
+  ErrorCode: DWORD;
+  Waited: Integer;
+begin
+  Result := '';
+  if not CloseRunningEvict() then
+  begin
+    Result := CloseFailureMessage();
+    exit;
+  end;
+  Filename := ExpandConstant('{app}\{#MyAppExeName}');
+  Waited := 0;
+  // Self-updates release their mutex before their final shutdown. Wait for this particular file's lock too.
+  while not DestinationReady(Filename, ErrorCode) do
+  begin
+    if ((ErrorCode <> EvictSharingViolation) and (ErrorCode <> EvictLockViolation)) or (Waited >= 10000) then
+    begin
+      Log('Destination not ready: ' + Filename + '; Windows error ' + IntToStr(ErrorCode));
+      Result := 'Setup cannot open ' + Filename + ' for replacement.' + #13#10 +
+        'Windows error ' + IntToStr(ErrorCode) + ': ' + SysErrorMessage(ErrorCode) + #13#10 +
+        'Close Evict and try again. If security software reports a blocked file, review its notifications ' +
+        '(Bitdefender: Notifications). Keep the Setup log for diagnosis.';
+      exit;
+    end;
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+  Log('Destination is ready for replacement: ' + Filename);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  Log('Initializing Evict Setup ' + '{#MyAppVersion}');
+  if IsSelfUpdate() then WaitForEvictExit(10000);
+  while CheckForMutexes(EvictMutex) do
+  begin
+    if WizardSilent() or IsSelfUpdate() then
+    begin
+      Result := CloseRunningEvict();
+      if not Result then Log(CloseFailureMessage());
+      exit;
+    end;
+    if MsgBox('Evict Uninstaller is running (possibly minimized to the notification area).' +
+      #13#10 + #13#10 + 'Setup needs to close it before installing. Close Evict now?',
+      mbConfirmation, MB_OKCANCEL) = IDCANCEL then
+    begin
+      Result := False;
+      exit;
+    end;
+    if not CloseRunningEvict() then
+      MsgBox(CloseFailureMessage(), mbError, MB_OK);
+  end;
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  Result := True;
+  if not CheckForMutexes(EvictMutex) then exit;
+  if not UninstallSilent() then
+    if MsgBox('Evict Uninstaller is running. Close it and continue uninstalling?',
+      mbConfirmation, MB_OKCANCEL) = IDCANCEL then
+    begin
+      Result := False;
+      exit;
+    end;
+  Result := CloseRunningEvict();
+  if not Result then
+  begin
+    Log(CloseFailureMessage());
+    if not UninstallSilent() then MsgBox(CloseFailureMessage(), mbError, MB_OK);
+  end;
+end;
+
 
 // Before the files are removed, Evict.exe itself removes its registry entries, scheduled task and menus, and asks
 // (checkbox dialog) which of its data to delete: settings, history + registry backups, the installer-package backup,
@@ -112,7 +387,8 @@ begin
   begin
     SelfCleanupHandled := False;
     // A running Evict (tray / widget) would hold its files and could rewrite its settings while they are removed.
-    Exec(ExpandConstant('{cmd}'), '/C taskkill /IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if not CloseRunningEvict() then
+      RaiseException(CloseFailureMessage());
     ExePath := ExpandConstant('{app}\{#MyAppExeName}');
     if UninstallSilent() then
       Params := '--self-cleanup integration'
@@ -134,125 +410,3 @@ begin
   end;
 end;
 
-// Evict starts the new Setup with /SILENT /CLOSEAPPLICATIONS /NORESTART /EVICTUPDATE=1 when the user
-// accepts an in-app update; the [Run] entry above relaunches Evict afterwards.
-function IsSelfUpdate(): Boolean;
-begin
-  Result := ExpandConstant('{param:EVICTUPDATE|0}') = '1';
-end;
-
-const
-  // Held by every running Evict (Program.cs: Local\EvictUninstaller.SingleInstance) – installed, portable, tray or elevated.
-  EvictMutex = 'EvictUninstaller.SingleInstance';
-
-// True while any Evict.exe process exists (tasklist | find returns 0 when it finds the name).
-function EvictProcessRunning(): Boolean;
-var
-  ResultCode: Integer;
-begin
-  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /NH /FI "IMAGENAME eq {#MyAppExeName}" | find /I "{#MyAppExeName}" >nul',
-                 '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
-end;
-
-// Waits up to MaxMs for the single-instance lock to go away.
-procedure WaitForEvictExit(MaxMs: Integer);
-var
-  Waited: Integer;
-begin
-  Waited := 0;
-  while CheckForMutexes(EvictMutex) and (Waited < MaxMs) do
-  begin
-    Sleep(250);
-    Waited := Waited + 250;
-  end;
-end;
-
-// An Evict running as administrator ("Start as administrator", on by default since 1.7.0) cannot be force-closed by a
-// Setup without administrator rights. Evict 1.7+ closes itself when another copy is started with --exit: Setup uses the
-// Evict.exe it carries, the uninstaller the installed one.
-procedure AskEvictToExit();
-var
-  Exe: String;
-  ResultCode: Integer;
-begin
-  try
-    if IsUninstaller() then
-      Exe := ExpandConstant('{app}\{#MyAppExeName}')
-    else
-    begin
-      ExtractTemporaryFile('{#MyAppExeName}');
-      Exe := ExpandConstant('{tmp}\{#MyAppExeName}');
-    end;
-    if FileExists(Exe) then
-      Exec(Exe, '--exit', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  except
-    Log('Could not ask Evict to exit: ' + GetExceptionMessage());
-  end;
-end;
-
-// Closes every Evict.exe and waits for the single-instance lock to go away.
-// Returns False while an Evict is still running (e.g. an older version started as administrator while Setup is not elevated).
-function CloseRunningEvict(): Boolean;
-var
-  ResultCode: Integer;
-begin
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  WaitForEvictExit(8000);
-  if CheckForMutexes(EvictMutex) then
-  begin
-    AskEvictToExit();
-    WaitForEvictExit(10000);
-  end;
-  // The process can outlive its lock by a moment while it exits; give Windows time to release Evict.exe.
-  Sleep(500);
-  Result := not CheckForMutexes(EvictMutex);
-end;
-
-// Before anything is installed: if an Evict is running (any copy, any version) ask to close it – Setup cannot replace
-// Evict.exe while it runs. Silent installs and Evict's own self-update close it without asking.
-function InitializeSetup(): Boolean;
-var
-  Waited: Integer;
-begin
-  Result := True;
-  if IsSelfUpdate() then
-  begin
-    // The updating Evict released its lock and is exiting (saving its settings): give it up to 10 s, then make sure.
-    Waited := 0;
-    while EvictProcessRunning() and (Waited < 10000) do
-    begin
-      Sleep(500);
-      Waited := Waited + 500;
-    end;
-    if EvictProcessRunning() then CloseRunningEvict();
-    exit;
-  end;
-  while CheckForMutexes(EvictMutex) do
-  begin
-    if WizardSilent() then
-    begin
-      if not CloseRunningEvict() then Log('Evict is still running; the file replacement may need a restart.');
-      exit;
-    end;
-    if MsgBox('Evict Uninstaller is running (possibly minimized to the notification area).' + #13#10 + #13#10 +
-              'Setup needs to close it before installing. Close Evict now?', mbConfirmation, MB_OKCANCEL) = IDCANCEL then
-    begin
-      Result := False; // user cancelled – leave everything as it is
-      exit;
-    end;
-    if not CloseRunningEvict() then
-      MsgBox('Evict could not be closed – it may be running as administrator.' + #13#10 +
-             'Exit it from its notification-area icon (right-click → Exit), then click OK to try again.', mbError, MB_OK);
-  end;
-end;
-
-// The uninstaller gets the same check (its own [Code] also force-closes Evict, but a prompt is friendlier).
-function InitializeUninstall(): Boolean;
-begin
-  Result := True;
-  if UninstallSilent() or not CheckForMutexes(EvictMutex) then exit;
-  if MsgBox('Evict Uninstaller is running. Close it and continue uninstalling?', mbConfirmation, MB_OKCANCEL) = IDCANCEL then
-    Result := False
-  else
-    CloseRunningEvict();
-end;

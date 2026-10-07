@@ -3,10 +3,10 @@
 Uninstaller and leftover cleaner for **Windows** and **macOS**. The two apps are separate native programs
 (no shared code). This repository holds both.
 
-| SrNo. | Platform | Folder | Stack | Current version | Release tags | Docs |
+| SrNo. | Platform | Folder | Stack | Version source | Release tags | Docs |
 |---|---|---|---|---|---|---|
-| 1 | Windows 10/11 | [`windows/`](windows/) | C# / .NET 8 / WPF, Inno Setup | 1.8.0 | `win-vX.Y.Z` (`vX.Y.Z` up to 1.3.3) | [windows/README.md](windows/README.md) |
-| 2 | macOS 13+ | [`macos/`](macos/) | Swift 5.9 / SwiftUI, SwiftPM | 0.1.0 | `mac-vX.Y.Z` | [macos/README.md](macos/README.md) |
+| 1 | Windows 10/11 | [`windows/`](windows/) | C# / .NET 8 / WPF, Inno Setup | [Build metadata](windows/Directory.Build.props) | `win-vX.Y.Z` (`vX.Y.Z` up to 1.3.3) | [windows/README.md](windows/README.md) |
+| 2 | macOS 13+ | [`macos/`](macos/) | Swift 5.9 / SwiftUI, SwiftPM | [Version.swift](macos/Sources/EvictKit/Version.swift) | `mac-vX.Y.Z` | [macos/README.md](macos/README.md) |
 
 ## Downloads
 
@@ -21,53 +21,27 @@ up to 1.3.3 update themselves from `releases/latest`.
 | 1 | Windows | `dotnet test tests/Evict.Core.Tests` · `build/publish.sh` or `build/publish.ps1` | [`.github/workflows/windows.yml`](.github/workflows/windows.yml) |
 | 2 | macOS | `swift test` · `Scripts/make-app.sh --universal` | [`.github/workflows/macos.yml`](.github/workflows/macos.yml) |
 
-Each workflow runs only when its own folder (or the workflow file) changes, and publishes a GitHub Release only
-for its own tag prefix.
+Each platform workflow runs when its own files or shared release automation change, and publishes only its own tag prefix.
 
-## Versioning
+## Automatic versioning and releases
 
-Both apps use **Semantic Versioning** – `MAJOR.MINOR.PATCH`. The number changes **once per release** (not per pull
-request); the biggest change in the release decides the bump, and a number is **never published twice** (the in-app
-update check compares numbers, so a PC that already has x.y.z never takes a different x.y.z).
+GitHub Actions maintains versions as **x.y.z** and records the calculated version in source before testing and packaging the release.
 
-| SrNo. | Part | Increase when the release contains… | Example | Reset |
-|---|---|---|---|---|
-| 1 | **PATCH** (`x.y.Z`) | only bug fixes | 1.6.0 → 1.6.1 | – |
-| 2 | **MINOR** (`x.Y.0`) | at least one new feature, nothing that stops working the old way | 1.6.1 → 1.7.0 | PATCH → 0 |
-| 3 | **MAJOR** (`X.0.0`) | a breaking change: dropped Windows / macOS version, settings or history older versions cannot read, a removed feature or command-line option | 1.7.0 → 2.0.0 | MINOR, PATCH → 0 |
+| Change | PR title or commit example | From 1.8.0 |
+| --- | --- | --- |
+| Major update / breaking change | `feat!: redesign the uninstall workflow` | 2.0.0 |
+| New feature | `feat: add a beta update channel` | 1.9.0 |
+| Bug or error fix | `fix: handle interrupted downloads` | 1.8.1 |
 
-Test builds from CI carry the version in the code at that moment. If a test build was installed somewhere, the next
-release must use a higher number than that build, or that PC is never offered the update.
+The highest increment among unreleased changes wins. Major increments reset minor and patch; minor increments reset patch. Windows and macOS keep independent version tracks.
 
-## Releasing
+Use the PR title, a `release:major` / `release:minor` / `release:patch` label, or a `Release-Type:` description line to describe the change. Contributors do not need to edit version files or create version tags. Documentation and test changes alone do not publish a release.
 
-| SrNo. | Step | Windows | macOS |
-|---|---|---|---|
-| 1 | Decide the bump (table above) | – | – |
-| 2 | Set the version | `windows/Directory.Build.props` → `<Version>`; `windows/installer/Evict.iss` default `MyAppVersion`; the table at the top of this file | `macos/Sources/EvictKit/Version.swift`; the table at the top of this file |
-| 3 | Changelog | `windows/CHANGELOG.md`: new `## X.Y.Z — title (date)` heading | `macos/CHANGELOG.md` |
-| 4 | Pull request → CI green → merge | `.github/workflows/windows.yml` | `.github/workflows/macos.yml` |
-| 5 | **Automatic** (continuous delivery) | The merge to `main` runs the workflow; it sees there is no `win-vX.Y.Z` tag for the new `<Version>` yet, builds, tests, **creates the tag and the release** | same with `mac-vX.Y.Z` from `Version.swift` |
-| 6 | CI attaches the files | `Evict.exe`, `Evict-Setup-X.Y.Z.exe` + `.sha256` (marked **Latest**); release notes = the version's `CHANGELOG.md` section (+ any "not published" sections below it) | `Evict-X.Y.Z.zip` + `.sha256` (never "Latest") |
-| 7 | Check | Installed copies show "Evict X.Y.Z is available" at their next start | – |
+After a merge to `main`, the workflow calculates the version, commits the managed version files and changelog, tests that exact source commit, and publishes matching assets. Published releases stay unchanged; failed publication can be retried from Actions on `main`.
 
-**Continuous delivery rules**
+Trusted Windows PRs publish optional beta previews such as `1.9.0-beta.11.23.1` before merge. Enable **Settings → Updates → Include beta releases** in a beta-aware Evict installation to receive these through the app.
 
-| SrNo. | Rule | Why |
-|---|---|---|
-| 1 | A merge publishes **only when the version number changed** (its tag does not exist yet) | Ordinary merges (fixes collected for the next release) publish nothing |
-| 2 | Bumping `<Version>` / `Version.swift` in a pull request **is** the decision to release | The PR review is the release gate |
-| 3 | The version's `## X.Y.Z` heading must exist in the changelog | The release fails instead of shipping without notes |
-| 4 | Pushing a tag by hand still works, but it must equal the version in the code | Otherwise the build fails (no mismatched file names) |
-| 5 | Existing tags are never moved or re-published | A PC that has X.Y.Z never takes a different X.Y.Z |
-
-Releases are listed at **github.com/krishnabhunia/evict-uninstaller → Releases** (right-hand column of the repository
-page, or the *Code* tab → *Releases*); each workflow run is under the *Actions* tab.
-
-**Asking Claude Code for a release:** say what should ship (for example *"prepare a Windows release with the fixes on
-main"*). It lists the changes since the last published tag, picks the bump with the table above (fixes only → PATCH,
-any feature → MINOR, anything breaking → MAJOR – and above any installed test build), does steps 2–4 in a pull
-request, and after you merge verifies the release CI publishes (steps 5–7).
+See [automatic versioning](docs/versioning.md) for intent rules, scoped platform overrides, retry behavior and source provenance, and [beta updates](docs/beta-updates.md) for preview installation.
 
 ## Build output
 
