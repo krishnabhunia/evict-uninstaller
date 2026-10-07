@@ -74,6 +74,53 @@ GENERATED = {
 }
 CONVENTIONAL = re.compile(r"^([a-z][a-z0-9-]*)(?:\(([^)\r\n]+)\))?(!)?:\s+\S", re.I)
 
+# One-time migration of a stable release previously published from an unmerged test PR.
+# Keep its exact source/tag reserved forever; do not trust arbitrary draft or unreachable tags.
+RETIRED_STABLE_RESERVATIONS = {
+    "krishnabhunia/evict-uninstaller": {
+        "windows": {
+            "win-v1.10.0": {
+                "pull_number": 12,
+                "original_pr_sha": "89877b5a3a193c27dde216be345f96c5e76544e2",
+                "source_sha": "cd62afeedd2838cfa1dda814ed8c6b9369e794ed",
+            },
+        },
+    },
+}
+RETIRED_RESERVATION_MARKER = "Evict retired stable reservation: "
+
+
+def retired_stable_reservation(release: dict[str, Any], repository: str, platform: str) -> CoreVersion | None:
+    """Validate the narrowly pinned withdrawn release before reserving its shipped core."""
+    if platform != "windows":
+        return None
+    lines = str(release.get("body") or "").splitlines()
+    markers = [line for line in lines if line.lstrip().startswith(RETIRED_RESERVATION_MARKER)]
+    if not markers:
+        return None
+    tag = str(release.get("tag_name") or "")
+    descriptor = RETIRED_STABLE_RESERVATIONS.get(repository, {}).get(platform, {}).get(tag)
+    version = stable_tag_version(tag, platform)
+    if (descriptor is None or version is None or len(markers) != 1
+            or markers[0] != RETIRED_RESERVATION_MARKER + platform + " " + str(version)
+            or release.get("draft") is not True or release.get("prerelease") is not False):
+        raise VersionError("Untrusted or unwithdrawn retired stable release reservation.")
+    expected = {
+        "Release channel:": "Release channel: stable",
+        "Release-test request:": "Release-test request: true",
+        "Original PR head:": "Original PR head: " + descriptor["original_pr_sha"],
+        "Built and tested release source:": "Built and tested release source: " + descriptor["source_sha"],
+        "Explicit installed-update release test of": (
+            "Explicit installed-update release test of [PR #" + str(descriptor["pull_number"])
+            + "](https://github.com/" + repository + "/pull/" + str(descriptor["pull_number"]) + ")."),
+    }
+    for prefix, value in expected.items():
+        matching = [line for line in lines if line.lstrip().startswith(prefix)]
+        if matching != [value]:
+            raise VersionError("Retired stable release reservation has missing or different provenance.")
+    return version
+
+
 
 def stable_tag_version(tag: str, platform: str) -> CoreVersion | None:
     prefixes = (PREFIX[platform], "v") if platform == "windows" else (PREFIX[platform],)
@@ -175,8 +222,8 @@ def release_intent(message: str, metadata: dict[str, Any] | None, platform: str)
     return max(declared) if declared else Bump.PATCH
 
 
-def release_test_request(event: dict[str, Any], repository: str, platform: str, mode: str) -> tuple[str, CoreVersion] | None:
-    """Explicit owner-directed release tests are assertions, never version overrides."""
+def release_test_request(event: dict[str, Any], repository: str, platform: str, mode: str) -> tuple[str, CoreVersion | None] | None:
+    """A PR test may request beta verification; it can never select stable delivery."""
     if platform != "windows" or mode != "beta":
         return None
     pull = event.get("pull_request") or {}
@@ -187,9 +234,9 @@ def release_test_request(event: dict[str, Any], repository: str, platform: str, 
         return None
     if len(directives) != 1:
         raise VersionError("A release test requires exactly one Windows directive.")
-    match = re.fullmatch(r"\s*Release-Test-Windows:\s*(stable|beta)\s+((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\s*", directives[0], re.I)
+    match = re.fullmatch(r"\s*Release-Test-Windows:\s*beta(?:\s+((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)))?\s*", directives[0], re.I)
     if not match:
-        raise VersionError("Use Release-Test-Windows: stable|beta major.minor.patch.")
+        raise VersionError("PR release tests must use beta; stable releases are published only from main.")
     base = pull.get("base") or {}
     head = pull.get("head") or {}
     if ((event.get("repository") or {}).get("full_name") != repository
@@ -200,7 +247,7 @@ def release_test_request(event: dict[str, Any], repository: str, platform: str, 
         login = identity.get("login") or ""
         if identity.get("type") != "User" or not login or login.lower().endswith("[bot]"):
             raise VersionError("Release tests require a non-bot PR author and event sender.")
-    return match[1].lower(), CoreVersion.parse(match[2])
+    return "beta", CoreVersion.parse(match[1]) if match[1] else None
 
 
 class Git:
@@ -222,6 +269,12 @@ class Git:
 
     def merge_base(self, left: str, right: str) -> str:
         return self.run("merge-base", left, right)
+
+    def application_entries(self, commit: str) -> list[str]:
+        entries = self.run("ls-tree", "-r", "-z", "--full-tree", commit).split("\0")
+        return sorted(entry for entry in entries if entry
+                      and entry.split("\t", 1)[1] != ".github/workflows"
+                      and not entry.split("\t", 1)[1].startswith(".github/workflows/"))
 
     def paths(self, before: str | None, after: str) -> list[str]:
         if before:
@@ -341,6 +394,15 @@ class GitHub:
                 and stable_tag_version(str(release.get("tag_name") or ""), platform) is not None]
 
 
+    def retired_stable_reservations(self, platform: str) -> list[dict[str, Any]]:
+        if platform != "windows":
+            return []
+        # This reuses the complete authenticated pagination; drafts are absent from the public feed.
+        self.published_stable_releases(platform)
+        return [release for release in self.release_cache or []
+                if retired_stable_reservation(release, self.repository, platform) is not None]
+
+
 def safe_path(root: Path, relative: str) -> Path:
     target = (root / relative).resolve()
     if not target.is_relative_to(root.resolve()):
@@ -444,30 +506,53 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
                beta_sequence: str | None = None, tag: str | None = None) -> dict[str, Any]:
     event = event or {}
     head = git.resolve("HEAD")
+    if mode not in ("stable", "beta", "tag"):
+        raise VersionError("Unknown release planning mode.")
+    if main_ref not in ("origin/main", "refs/remotes/origin/main"):
+        raise VersionError("Release planning must use the repository main branch.")
+    main = git.resolve(main_ref)
+    if mode != "beta" and event.get("pull_request"):
+        raise VersionError("A pull request can publish only beta releases.")
+    if mode == "stable" and head != main:
+        raise VersionError("Stable planning requires the exact current main source.")
+    if mode == "tag" and git.merge_base(head, main) != head:
+        raise VersionError("Stable tags must identify source from main.")
     source = CoreVersion.parse(source_version(git.root, platform))
-    target = git.resolve(main_ref) if mode == "beta" else head
+    target = main if mode == "beta" else head
     all_tags = git.tags(target)
     baseline = highest_stable_tag(all_tags, platform)
     base_tag, base = baseline if baseline else ("", source)
     tag_sha = git.resolve(base_tag) if base_tag else ""
     test_request = release_test_request(event, policy.get("repository") or getattr(github, "repository", ""), platform, mode)
-    channel = test_request[0] if test_request else "beta" if mode == "beta" else "stable"
+    channel = "beta" if mode == "beta" else "stable"
     published = github.published_stable_releases(platform) if platform == "windows" and mode != "tag" else []
     published_baseline = highest_stable_tag([release["tag_name"] for release in published], platform)
-    floor_tag, floor = published_baseline if published_baseline else ("", base)
-    reused_test = None
+    published_floor_tag, published_floor = published_baseline if published_baseline else ("", base)
+    retired = github.retired_stable_reservations(platform) if platform == "windows" and mode != "tag" else []
+    repository = policy.get("repository") or getattr(github, "repository", "")
+    retired_tags: list[str] = []
+    for release in retired:
+        if retired_stable_reservation(release, repository, platform) is None:
+            raise VersionError("The retired stable release reservation could not be authenticated.")
+    if mode != "tag" and platform == "windows":
+        expected = RETIRED_STABLE_RESERVATIONS.get(repository, {}).get(platform, {})
+        known_tags = set(git.run("tag", "--list").splitlines())
+        # GitHub hides drafts from read-only/public release listings. This one historical,
+        # already shipped reservation is pinned to its original reviewed immutable source.
+        # Never derive a floor from an arbitrary unreachable or unpublished tag.
+        for reserved_tag, descriptor in expected.items():
+            if reserved_tag not in known_tags:
+                raise VersionError("The pinned historical release reservation tag was not fetched.")
+            reserved = stable_tag_version(reserved_tag, platform)
+            frozen = git.resolve(reserved_tag)
+            if (reserved is None or frozen != descriptor["source_sha"]
+                    or source_version(git.root, platform, git, frozen) != str(reserved)
+                    or git.application_entries(git.resolve(descriptor["original_pr_sha"])) != git.application_entries(frozen)):
+                raise VersionError("The historical stable tag disagrees with its pinned immutable reviewed source.")
+            retired_tags.append(reserved_tag)
+    release_baseline = highest_stable_tag([release["tag_name"] for release in published] + retired_tags, platform)
+    floor_tag, floor = release_baseline if release_baseline else ("", base)
     release_source_sha = head
-    if test_request and channel == "stable":
-        matching = [release for release in published if release["tag_name"] == PREFIX[platform] + str(test_request[1])]
-        if matching:
-            original = str((event.get("pull_request") or {}).get("head", {}).get("sha") or "")
-            provenance = rf"(?im)^\s*Original PR head:\s*{re.escape(original)}\s*$"
-            if len(matching) != 1 or not re.fullmatch(r"[0-9a-f]{40}", original) or not re.search(provenance, str(matching[0].get("body") or "")):
-                raise VersionError("The requested stable test version is already published with different or missing PR provenance.")
-            reused_test = test_request[1]
-            release_source_sha = git.resolve(matching[0]["tag_name"])
-            if source_version(git.root, platform, git, release_source_sha) != str(reused_test):
-                raise VersionError("The published release-test tag disagrees with its immutable source version.")
     if mode == "tag":
         if not tag or stable_tag_version(tag, platform) is None:
             raise VersionError("Tag mode requires a stable tag for this platform.")
@@ -512,8 +597,9 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
         pr_affects = False
         if mode == "beta":
             pull = event.get("pull_request") or {}
-            if not pull or not beta_sequence or not re.fullmatch(r"[1-9][0-9]*(?:\.(?:0|[1-9][0-9]*))*", beta_sequence):
+            if not pull or not beta_sequence or not re.fullmatch(r"[1-9][0-9]*\.[1-9][0-9]*", beta_sequence):
                 raise VersionError("Beta mode requires PR metadata and a numeric run/attempt sequence.")
+            run_number, run_attempt = beta_sequence.split(".")
             number = pull.get("number") or event.get("number")
             if not isinstance(number, int) or number <= 0:
                 raise VersionError("Beta mode requires a valid pull-request number.")
@@ -527,19 +613,21 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
         arithmetic_base = max(base, floor)
         computed = arithmetic_base.bump(intent) if intent != Bump.NONE else base
         reserved_core = max(reservations, default=base)
-        core = reused_test if reused_test is not None else max(computed, reserved_core)
-        if test_request and (source != test_request[1] or core != test_request[1]):
-            raise VersionError("The release test source and requested core must equal the automatically calculated next core.")
-        if source > core:
+        core = max(computed, reserved_core)
+        if test_request and test_request[1] is not None and core != test_request[1]:
+            raise VersionError("The requested beta core must equal the automatically calculated next core.")
+        # PR source metadata is generated in CI, including correcting old manually selected cores.
+        # Stable source reservations remain strict so a retry cannot silently downgrade main.
+        if mode != "beta" and source > core:
             raise VersionError("The committed source version is ahead of calculated intent; declare the intended major/minor change instead of downgrading it.")
         if platform == "windows" and any(part > 65535 for part in (core.major, core.minor, core.patch)):
             raise VersionError("The calculated version exceeds Windows numeric version-resource limits.")
         if core > computed:
             intent = Bump.MAJOR if core.major > base.major else Bump.MINOR if core.minor > base.minor else Bump.PATCH
-        publish = reused_test is None and core > max(base, floor) and (mode != "beta" or pr_affects)
+        publish = core > max(base, floor) and (mode != "beta" or pr_affects)
         version_text = str(core)
         if channel == "beta":
-            version_text += f"-beta.{number}.{beta_sequence}"
+            version_text += f"-beta.{run_number}.{number}.{run_attempt}"
         plan = {"bump": intent.name.lower(), "publish": publish, "core_version": str(core), "version": version_text,
                 "tag": PREFIX[platform] + version_text if mode == "beta" or core != base or not base_tag else base_tag,
                 "base_tag": base_tag, "base_version": str(base), "tag_source_sha": tag_sha,
@@ -548,12 +636,16 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
     plan["release_source_sha"] = release_source_sha
     plan["channel"] = channel
     plan["release_test"] = test_request is not None
-    plan["published_floor"] = str(floor)
-    plan["published_floor_tag"] = floor_tag
+    plan["published_floor"] = str(published_floor)
+    plan["published_floor_tag"] = published_floor_tag
+    plan["release_floor"] = str(floor)
+    plan["release_floor_tag"] = floor_tag
+    plan["retired_reservations"] = sorted(retired_tags)
     plan["release"] = plan["publish"]
     plan["numeric_version"] = plan["core_version"] + ".0"
     plan["notes_path"] = GENERATED[platform][-1]
     plan["sync_files"] = []
+    plan["sync_date"] = ""
     return plan
 
 
@@ -599,11 +691,12 @@ def main(argv: list[str] | None = None) -> int:
         plan = build_plan(git, github, policy, arguments.platform, arguments.mode, event,
                           arguments.main_ref, arguments.beta_sequence, tag)
         if arguments.sync:
-            if arguments.mode != "stable":
-                raise VersionError("Only stable preparation may synchronize committed source versions.")
+            if arguments.mode == "tag":
+                raise VersionError("Tag validation cannot modify its immutable source.")
             if plan["publish"]:
+                plan["sync_date"] = date.today().isoformat()
                 plan["sync_files"] = sync_sources(root, arguments.platform, CoreVersion.parse(plan["core_version"]),
-                                                 plan["base_tag"], plan["notes"])
+                                                 plan["base_tag"], plan["notes"], plan["sync_date"])
                 plan["source_version"] = source_version(root, arguments.platform)
         if arguments.github_output:
             write_outputs(plan, arguments.github_output)

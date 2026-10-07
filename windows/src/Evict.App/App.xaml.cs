@@ -9,6 +9,8 @@ namespace Evict.App;
 
 public partial class App : Application
 {
+    private static readonly CancellationTokenSource ShutdownCancellation = new();
+    public static CancellationToken ShutdownToken => ShutdownCancellation.Token;
     public static AppServices Services { get; private set; } = null!;
     public static UiState UiState { get; } = new();
     public static BackgroundCoordinator Background { get; private set; } = null!;
@@ -23,6 +25,7 @@ public partial class App : Application
     public static void Quit()
     {
         IsExiting = true;
+        ShutdownCancellation.Cancel();
         Current.Shutdown();
     }
 
@@ -78,13 +81,11 @@ public partial class App : Application
         if (!startOptions.IsEmpty || startOptions.Unknown.Count > 0) HandleArgs(mainVm, Program.StartupArgs, activate: !startOptions.Headless);
         else if (Services.Settings.Current.EasyUninstallWidgetVisible) mainVm.ShowWidgetCommand.Execute(null);
 
-        // Housekeeping after a self-update, then the (optional) update check in the background.
+        // Check once on every service-running launch, including tray and scheduled-scan launches.
+        // The check is silent and cancellable; a short-lived scheduled scan can exit before the delay ends.
         Services.Updater.CleanupAfterUpdate();
-        if (!startOptions.ScheduledScan)
-        {
-            _ = mainVm.CheckForUpdatesOnStartupAsync();
-            _ = mainVm.RunMissedScheduledScanIfDueAsync();
-        }
+        _ = mainVm.CheckForUpdatesOnStartupAsync(ShutdownToken);
+        if (!startOptions.ScheduledScan) _ = mainVm.RunMissedScheduledScanIfDueAsync();
     }
 
     private static bool _windowElevationTried;
@@ -166,11 +167,13 @@ public partial class App : Application
     protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
     {
         IsExiting = true; // sign-out / shutdown must not be diverted to the tray
+        ShutdownCancellation.Cancel();
         base.OnSessionEnding(e);
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        ShutdownCancellation.Cancel();
         try { Background?.Shutdown(); } catch { /* ignore */ }
         try { Services?.Settings.Save(); } catch { /* ignore */ }
         Log.Info("Exit.");

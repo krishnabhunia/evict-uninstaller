@@ -39,8 +39,7 @@ public sealed class PublishedUpdateScenarioTests(ITestOutputHelper output)
         Assert.Equal(version, expected.ToString());
         var betaChannel = channel == "beta";
         Assert.Equal(betaChannel, expected.IsPrerelease);
-        Assert.Equal(betaChannel ? new Version(1, 11, 0) : new Version(1, 10, 0), expected.Core);
-        var current = betaChannel ? "1.10.0" : "1.9.0-beta.11.27.1";
+
         var expectedTag = "win-v" + version;
 
         var runnerTemp = Environment.GetEnvironmentVariable("RUNNER_TEMP");
@@ -65,6 +64,15 @@ public sealed class PublishedUpdateScenarioTests(ITestOutputHelper output)
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
             client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
 
+            // Resolve the public stable baseline from GitHub instead of hardcoding a test version.
+            // This also proves that beta and draft releases cannot become the default channel.
+            var baselineProbe = new UpdateService(client, directory, _ =>
+                throw new InvalidOperationException("Release discovery must not launch an installer."), "0.0.0");
+            var baselineCheck = await baselineProbe.CheckAsync(timeout.Token);
+            var stableBaseline = Assert.IsType<ReleaseInfo>(baselineCheck.Release);
+            Assert.Equal(UpdateStatus.UpdateAvailable, baselineCheck.Status);
+            Assert.False(stableBaseline.IsPreview);
+            var current = betaChannel ? stableBaseline.DisplayVersion : "0.0.0";
             var launches = new List<ProcessStartInfo>();
             var events = new List<string>();
             var updater = new UpdateService(client, directory,
@@ -73,10 +81,11 @@ public sealed class PublishedUpdateScenarioTests(ITestOutputHelper output)
             if (betaChannel)
             {
                 var stableOnly = await updater.CheckAsync(timeout.Token);
-                output.WriteLine("Live stable-only check: " + stableOnly.Message);
+                output.WriteLine("Live beta opt-out: " + stableOnly.Message);
                 Assert.Equal(UpdateStatus.UpToDate, stableOnly.Status);
                 var stableRelease = Assert.IsType<ReleaseInfo>(stableOnly.Release);
-                Assert.Equal("1.10.0", stableRelease.DisplayVersion);
+                Assert.Equal(stableBaseline.TagName, stableRelease.TagName);
+                Assert.Equal(stableBaseline.DisplayVersion, stableRelease.DisplayVersion);
                 Assert.False(stableRelease.IsPreview);
                 Assert.Empty(launches);
                 Assert.Empty(Directory.EnumerateFileSystemEntries(directory));
@@ -86,13 +95,20 @@ public sealed class PublishedUpdateScenarioTests(ITestOutputHelper output)
             output.WriteLine("Live requested-channel check: " + check.Message);
             Assert.Equal(UpdateStatus.UpdateAvailable, check.Status);
             Assert.Equal(current, updater.CurrentVersionLabel);
-            var release = Assert.IsType<ReleaseInfo>(check.Release);
-            Assert.Equal(expectedTag, release.TagName);
-            Assert.Equal(version, release.DisplayVersion);
-            Assert.Equal(betaChannel, release.IsPreview);
-            Assert.NotNull(release.PublishedAt);
+            var selected = Assert.IsType<ReleaseInfo>(check.Release);
+            Assert.NotNull(selected.PublishedAt);
+            // Parallel PRs can publish a newer preview while this release is being verified.
+            // The normal updater must select the highest available version, not force this PR.
+            Assert.True(selected.SemanticVersion.CompareTo(expected) >= 0,
+                "The updater selected a version older than the newly published release.");
+            if (!betaChannel)
+            {
+                Assert.False(selected.IsPreview);
+                Assert.Equal(expectedTag, selected.TagName);
+            }
 
-            // Check the actual GitHub prerelease flag too; semantic parsing must not hide a publishing mistake.
+            // Independently verify and download this exact PR's real release, even when another
+            // PR preview is newer. No catalog response or installed-update launch is fabricated.
             var metadataUrl = "https://api.github.com/repos/" + UpdateChecker.RepoOwner + "/" +
                 UpdateChecker.RepoName + "/releases/tags/" + Uri.EscapeDataString(expectedTag);
             var metadataJson = await client.GetStringAsync(metadataUrl, timeout.Token);
@@ -102,6 +118,13 @@ public sealed class PublishedUpdateScenarioTests(ITestOutputHelper output)
                 Assert.False(metadata.RootElement.GetProperty("draft").GetBoolean());
                 Assert.Equal(betaChannel, metadata.RootElement.GetProperty("prerelease").GetBoolean());
             }
+            var release = Assert.IsType<ReleaseInfo>(UpdateChecker.ParseRelease(metadataJson));
+            Assert.Equal(expectedTag, release.TagName);
+            Assert.Equal(version, release.DisplayVersion);
+            Assert.Equal(betaChannel, release.IsPreview);
+            Assert.NotNull(release.PublishedAt);
+            output.WriteLine("Live selected release: " + selected.TagName +
+                "; exact published installer under verification: " + release.TagName);
 
             var asset = Assert.IsType<ReleaseAsset>(UpdateChecker.PickAsset(release, installedMode: true));
             var checksum = Assert.IsType<ReleaseAsset>(UpdateChecker.PickChecksumAsset(release, asset));
