@@ -139,7 +139,9 @@ def check_macos_archive(file):
             links = {}
             directories = {}
             for info in infos:
-                parts = safe_name(info.filename)
+                parts = safe_name(info.orig_filename)
+                if info.orig_filename != info.filename:
+                    raise ZipError(f"archive path was normalized before validation: {info.orig_filename!r}")
                 path = info.filename.rstrip("/")
                 if path in paths:
                     raise ZipError(f"duplicate macOS archive entry: {info.filename}")
@@ -248,6 +250,9 @@ def check_zip(file):
         with zipfile.ZipFile(file) as archive:
             infos = archive.infolist()
             for info in infos:
+                safe_name(info.orig_filename)
+                if info.orig_filename != info.filename:
+                    raise ZipError(f"archive path was normalized before validation: {info.orig_filename!r}")
                 if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG):
                     raise ZipError(f"outer release ZIP must contain ordinary payload files only: {info.filename}")
             _check_payloads(
