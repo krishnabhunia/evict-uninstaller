@@ -125,10 +125,9 @@ If Evict is already running, a second launch hands its arguments to the open win
 
 ## Continuous integration
 
-`.github/workflows/windows.yml` (repository root) builds on `windows-latest` for every push that touches `windows/`: unit tests → XAML checks → single-file publish →
-(optional signing) → Inno Setup installer → SHA-256 files → artifact `Evict-<version>-<sha>` with the folders `Portable/` (`Evict.exe`)
-and `Installed/` (`Evict-Setup-<version>.exe`), each with its `.sha256`. Pushing a tag `win-vX.Y.Z` (`v1.x` before the repositories were merged) additionally creates a GitHub Release with the
-same four files attached (auto-generated notes) — that release is what the in-app update check reads.
+`.github/workflows/windows.yml` tests and packages Windows changes on `windows-latest`: version-engine tests, .NET tests, XAML checks, single-file publish, optional signing, Inno Setup installer and SHA-256 checksums. The Actions artifact contains `installer/` and `portable/`, each with its payload and checksum.
+
+Main-branch delivery calculates the next major, minor or patch version from PR and commit metadata, commits the source version and changelog, and builds that exact commit. Stable releases use `win-vX.Y.Z` and are marked latest. PR previews use the same calculated core with a beta suffix and can be installed before merging. Published releases are preserved. See [automatic versioning](../docs/versioning.md).
 
 The installer script is `installer/Evict.iss` (Inno Setup 6.3+). Locally: `ISCC.exe /DMyAppVersion=1.6.0 /DSourceDir=..\Portable installer\Evict.iss` → `Installed\Evict-Setup-1.6.0.exe`.
 

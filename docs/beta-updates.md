@@ -10,7 +10,7 @@ For manual testing, download the Windows Actions artifact or the published beta 
 
 ## Version and channel rules
 
-- PR packages use the next patch version with a suffix: `1.8.1-beta.<PR>.<run>.<attempt>`.
+- PR packages use the automatically calculated next major, minor or patch version with a suffix, for example `1.9.0-beta.<PR>.<run>.<attempt>`. See [automatic versioning](versioning.md).
 - The running application's informational version includes the suffix; installers and update dialogs display it.
 - Beta identifiers are compared numerically, so beta.10 is newer than beta.9.
 - A final release is newer than its beta at the same numeric version.
@@ -20,7 +20,7 @@ For manual testing, download the Windows Actions artifact or the published beta 
 
 ## Publication and provenance
 
-Trusted same-repository Windows PR builds test and package a beta before publishing a GitHub prerelease. Fork and Dependabot PRs can build with read-only access and do not publish releases. Stable main-branch release behavior remains unchanged.
+Trusted same-repository Windows PR builds test and package a beta before publishing a GitHub prerelease. Fork and Dependabot PRs can build with read-only access and do not publish releases. Stable main-branch releases use the same automatic major/minor/patch calculation.
 
 GitHub requires workflow-write permission when a release target changes workflows relative to the default branch. The publisher creates a source snapshot containing the exact PR app, tests and documentation, with only the workflow subtree matching the default branch. The snapshot's parent is the default-branch commit. Its scoped build reference makes that snapshot available for checkout. This publishes app code with the normal contents-write token while keeping the default branch unchanged.
 
