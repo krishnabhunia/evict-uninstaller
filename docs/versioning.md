@@ -35,7 +35,7 @@ After a change reaches `main`, the platform workflow:
 4. Pushes a version commit without force. If main advances, it fetches and recalculates instead of overwriting changes.
 5. Tests and packages that exact commit, then publishes its matching release tag.
 
-Every PR validation package has a beta suffix, including documentation-only builds that do not publish a prerelease. It cannot masquerade as a future stable release.
+Every Windows PR validation package has a beta suffix, including documentation-only builds that do not publish a prerelease. It cannot masquerade as a future stable release.
 
 The same workflow continues after committing the version. GitHub does not start another push workflow for a commit made with `GITHUB_TOKEN`.
 

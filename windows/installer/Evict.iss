@@ -145,8 +145,8 @@ function EvictProcessSession(Pid: DWORD; var Session: DWORD): BOOL;
 function CloseFailureMessage(): String;
 begin
   Result := 'Evict is still running or could not be contacted. Setup will not replace its files.' +
-    #13#10 + 'Exit Evict from its notification-area icon, then run Setup again.' +
-    #13#10 + 'If security software reports a blocked Evict file, review its notifications ' +
+    '' + #13#10 + 'Exit Evict from its notification-area icon, then run Setup again.' +
+    '' + #13#10 + 'If security software reports a blocked Evict file, review its notifications ' +
     '(Bitdefender: Notifications). The Setup log records the Windows error; no protection changes are required.';
 end;
 
@@ -343,7 +343,7 @@ begin
       exit;
     end;
     if MsgBox('Evict Uninstaller is running (possibly minimized to the notification area).' +
-      #13#10 + #13#10 + 'Setup needs to close it before installing. Close Evict now?',
+      '' + #13#10 + #13#10 + 'Setup needs to close it before installing. Close Evict now?',
       mbConfirmation, MB_OKCANCEL) = IDCANCEL then
     begin
       Result := False;

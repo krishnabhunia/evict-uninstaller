@@ -233,6 +233,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
           Get-ChildItem Installed
 
+      - name: Native installer smoke tests
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File build/installer_smoke.ps1 -SetupPath "Installed/Evict-Setup-${{ steps.ver.outputs.version }}.exe" -PackagedExe "Portable/Evict.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Native installer smoke tests failed with exit code $LASTEXITCODE" }
+
       - name: Sign installer (optional)
         if: env.SIGN_PFX_BASE64 != ''
         shell: pwsh
