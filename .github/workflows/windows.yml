@@ -714,7 +714,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
           lipo -info macos/build/Evict.app/Contents/MacOS/Evict
-          lipo -verify_arch arm64 x86_64 macos/build/Evict.app/Contents/MacOS/Evict
+          lipo macos/build/Evict.app/Contents/MacOS/Evict -verify_arch arm64 x86_64
           codesign --verify --verbose=2 macos/build/Evict.app
           python - <<'PY'
           import hashlib, importlib.util, os, pathlib, plistlib, re, shutil
