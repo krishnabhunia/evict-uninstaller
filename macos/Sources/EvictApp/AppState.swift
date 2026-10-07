@@ -110,30 +110,34 @@ final class AppState: ObservableObject {
     // ── uninstall flow ──
 
     func preparePlan(for app: InstalledApp) async {
+        guard !isPlanning, !isRemoving else { return }
         isPlanning = true
         plan = nil
         removalResult = nil
         let planner = self.planner
         let casks = self.casks
-        let built = await Task.detached(priority: .userInitiated) { planner.plan(for: app, casks: casks) }.value
+        let options = settings
+        let built = await Task.detached(priority: .userInitiated) { planner.plan(for: app, casks: casks, settings: options) }.value
         plan = built
-        planSelection = built.defaultSelection
+        planSelection = built.initialSelection(settings: options)
         isPlanning = false
     }
 
     func prepareForcePlan(name: String, bundlePath: String?) async {
+        guard !isPlanning, !isRemoving else { return }
         isPlanning = true
         plan = nil
         removalResult = nil
         let planner = self.planner
-        let built = await Task.detached(priority: .userInitiated) { planner.plan(forLeftoverName: name, bundlePath: bundlePath) }.value
+        let options = settings
+        let built = await Task.detached(priority: .userInitiated) { planner.plan(forLeftoverName: name, bundlePath: bundlePath, settings: options) }.value
         plan = built
-        planSelection = built.defaultSelection
+        planSelection = built.initialSelection(settings: options)
         isPlanning = false
     }
 
     func performRemoval() async {
-        guard let plan else { return }
+        guard !isRemoving, !isPlanning, let plan else { return }
         isRemoving = true
         let planner = self.planner
         let selection = planSelection
@@ -147,6 +151,7 @@ final class AppState: ObservableObject {
     }
 
     func dismissPlan() {
+        guard !isRemoving else { return }
         plan = nil
         planSelection = []
         removalResult = nil

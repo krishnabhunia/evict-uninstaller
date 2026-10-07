@@ -109,6 +109,9 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
     /// <summary>"Running now: Notepad++ – Evict asks to close it first." on the first page (empty when nothing runs).</summary>
     [ObservableProperty] private string _runningNowText = "";
     private readonly CleanupUndo _undo = new();
+    private readonly UninstallCleanupLedger _cleanupLedger = new();
+    private readonly HashSet<LeftoverItem> _cleanupFailures = new();
+    private readonly Dictionary<UninstallJob, (Guid Id, DateTime Timestamp)> _historyEntries = new();
 
     // Done-step summary
     [ObservableProperty] private int _programsUninstalled;
@@ -120,6 +123,7 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
     /// <summary>.reg file with every registry entry this run removed (enables "Undo registry changes").</summary>
     [ObservableProperty] private string? _registryBackupFile;
     [ObservableProperty] private long _bytesReclaimed;
+    [ObservableProperty] private long _bytesRemoved;
     [ObservableProperty] private bool _rebootRecommended;
     public ObservableCollection<string> Errors { get; } = new();
 
@@ -134,6 +138,7 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
         ? "Creates a System Restore point before anything is removed (Windows may skip it if one was created in the last 24 hours)."
         : "Requires administrator rights – restart Evict as administrator to enable.";
     public string BytesReclaimedText => SizeFormatter.Format(BytesReclaimed);
+    public string CleanupSpaceText => $"{SizeFormatter.Format(BytesRemoved)} removed from original locations; {BytesReclaimedText} permanently deleted. Recycled data still occupies disk space.";
 
     public event Action? RequestClose;
 
@@ -228,9 +233,9 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
             OnPropertyChanged(nameof(HasRegistryLeftovers));
             OnPropertyChanged(nameof(NextToRegistryText));
             // A forced removal deletes a program that is still installed: always let the user see the list first.
-            if (AutoClean && !Jobs.Any(j => j.Job.ForceRemoval))
+            if (AutoClean && Jobs.All(j => j.Job.Scan is null || UninstallOrchestrator.CanAutoClean(j.Job)))
             {
-                await CleanAsync(Review.Items.Concat(RegistryReview.Items).Where(i => !i.IsLow).Select(i => i.Item).ToList());
+                await CleanAsync(Review.Items.Concat(RegistryReview.Items).Where(i => i.IsHigh).Select(i => i.Item).ToList());
             }
             else
             {
@@ -346,6 +351,15 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
         }
         else
         {
+            int choice = Dialogs.Choose($"{jvm.Name} has no uninstaller",
+                "Evict cannot uninstall this program normally. Force uninstall scans its files and registry entries for you to review before removing anything. This requires a scan even when Powerful Scan was turned off.",
+                new[] { "Force uninstall - scan and review its items", "Skip this program - change nothing" }, cancelIndex: 1);
+            if (choice != 0)
+            {
+                Skip(jvm, "Skipped - no uninstaller is registered.");
+                return AskContinue(jvm);
+            }
+            job.ForceRemoval = true;
             job.Fingerprint ??= LeftoverScanner.Fingerprint(job.Program);
             job.RunResult = new UninstallRunResult { Note = "No uninstaller registered – only leftovers can be removed." };
             job.Message = "No uninstaller registered.";
@@ -354,7 +368,11 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
         if (options.ScanLeftovers || job.ForceRemoval)
         {
             // A force uninstall removes files of a program that may still run: close it once more.
-            if (job.ForceRemoval) await CloseRunningProgramAsync(jvm, ct);
+            if (job.ForceRemoval && !await CloseRunningProgramAsync(jvm, ct))
+            {
+                Skip(jvm, "Skipped - the program is still running. No force removal was performed.");
+                return AskContinue(jvm);
+            }
             await _services.Orchestrator.ScanAsync(job, options, progress, ct);
         }
         UninstallOrchestrator.Complete(job);
@@ -497,30 +515,53 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
         Progress = 0;
         var progress = new Progress<ProgressReport>(r => { StatusText = r.Message; if (r.Percent is { } p) Progress = p; });
         var label = "Uninstall " + (IsSingle ? Jobs[0].Name : $"{Jobs.Count} programs");
-        _undo.BeginIfFirst();
-        var result = await _services.Cleaner.CleanAsync(items, new CleanupOptions { SendToRecycleBin = SendToRecycleBin, BackupLabel = label }, progress, CancellationToken.None);
-        _undo.Record(items, result, SendToRecycleBin);
-        RegistryBackupFile = _undo.RegistryBackupFile;
-        CanUndoCleanup = _undo.CanUndo;
-        if (result.RegistryBackupFile != null) Log("Registry backup: " + result.RegistryBackupFile);
-        LeftoversRemoved = result.Removed;
-        LeftoversFailed = result.Failed;
-        BytesReclaimed = result.BytesReclaimed;
-        foreach (var (item, error) in result.Errors) Errors.Add($"{item.Path}: {error}");
-        Log($"Cleanup: {result.Removed} removed, {result.Failed} failed, {SizeFormatter.Format(result.BytesReclaimed)} reclaimed.");
-        int regTotal = items.Count(i => i.Kind is LeftoverKind.RegistryKey or LeftoverKind.RegistryValue or LeftoverKind.StartupEntry);
-        int adminNeeded = result.Errors.Count(e => e.Error.Contains("Administrator rights", StringComparison.Ordinal));
-        if (regTotal > 0)
+        try
         {
-            RegistrySummary = $"Registry: {result.RegistryVerified} of {regTotal} key(s)/value(s) removed and verified gone"
-                              + (adminNeeded > 0 ? $" · {adminNeeded} need administrator rights (Restart as administrator → Tools → Residual Cleaner)." : ".");
-            Log(RegistrySummary);
-        }
-        if (adminNeeded > 0) Log($"{adminNeeded} item(s) need administrator rights – restart Evict as administrator and run Tools → Residual Cleaner to remove them.");
-        AnythingChanged = true;
-        Finish(items.Count);
+            _undo.BeginIfFirst();
+            var result = await _services.Cleaner.CleanAsync(items, new CleanupOptions { SendToRecycleBin = SendToRecycleBin, BackupLabel = label }, progress, CancellationToken.None);
+            _undo.Record(items, result, SendToRecycleBin);
+            _cleanupLedger.Record(result);
+            foreach (var item in result.RemovedItems) _cleanupFailures.Remove(item);
+            foreach (var (item, _) in result.Errors) _cleanupFailures.Add(item);
+            RegistryBackupFile = _undo.RegistryBackupFile;
+            CanUndoCleanup = _undo.CanUndo;
+            if (result.RegistryBackupFile != null) Log("Registry backup: " + result.RegistryBackupFile);
+            UpdateCleanupTotals();
+            foreach (var (item, error) in result.Errors) Errors.Add($"{item.Path}: {error}");
+            Log($"Cleanup: {result.Removed} removed, {result.Failed} failed. {CleanupSpaceText}");
+            int regTotal = items.Count(i => i.Kind is LeftoverKind.RegistryKey or LeftoverKind.RegistryValue or LeftoverKind.StartupEntry);
+            int adminNeeded = result.Errors.Count(e => e.Error.Contains("Administrator rights", StringComparison.Ordinal));
+            if (regTotal > 0)
+            {
+                RegistrySummary = $"Registry: {result.RegistryVerified} of {regTotal} key(s)/value(s) removed and verified gone"
+                                  + (adminNeeded > 0 ? $" · {adminNeeded} need administrator rights (Restart as administrator → Tools → Residual Cleaner)." : ".");
+                Log(RegistrySummary);
+            }
+            if (adminNeeded > 0) Log($"{adminNeeded} item(s) need administrator rights – restart Evict as administrator and run Tools → Residual Cleaner to remove them.");
+            AnythingChanged = true;
+            Finish(items.Count);
 
-        if (result.Failed > 0) await OfferRetryOrRollbackAsync(result);
+            if (result.Failed > 0) await OfferRetryOrRollbackAsync(result);
+        }
+        catch (Exception ex)
+        {
+            Log("Cleanup failed: " + ex.Message);
+            Errors.Add(ex.Message);
+            foreach (var item in items) _cleanupFailures.Add(item);
+            UpdateCleanupTotals();
+            Finish(items.Count);
+            OfferRollback("The cleanup stopped: " + ex.Message);
+        }
+    }
+
+    private void UpdateCleanupTotals()
+    {
+        LeftoversRemoved = _cleanupLedger.RemovedCount;
+        LeftoversFailed = _cleanupFailures.Count;
+        BytesRemoved = _cleanupLedger.BytesRemoved;
+        BytesReclaimed = _cleanupLedger.BytesReclaimed;
+        OnPropertyChanged(nameof(BytesReclaimedText));
+        OnPropertyChanged(nameof(CleanupSpaceText));
     }
 
     /// <summary>Some leftovers could not be removed: retry them (after closing what still runs), undo the cleanup, or keep it.</summary>
@@ -533,16 +574,17 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
         int pick = Dialogs.Choose($"{result.Failed} leftover item(s) could not be removed", sample, options, cancelIndex: options.Count - 1);
         if (pick == 0)
         {
-            foreach (var j in Jobs) { var running = await Task.Run(() => RunningProgramService.Find(j.Job.Program)); if (running.Count > 0) await Task.Run(() => RunningProgramService.ForceClose(running)); }
             var retry = result.Errors.Select(e => e.Item).ToList();
+            foreach (var j in Jobs.Where(j => j.Job.Scan?.Items.Any(retry.Contains) == true))
+            {
+                var running = await Task.Run(() => RunningProgramService.Find(j.Job.Program));
+                if (running.Count == 0) continue;
+                var closeErrors = await Task.Run(() => RunningProgramService.ForceClose(running));
+                foreach (var error in closeErrors) Log("  could not close " + error);
+            }
             foreach (var (item, _) in result.Errors) Errors.Remove(Errors.FirstOrDefault(x => x.StartsWith(item.Path + ":", StringComparison.Ordinal)) ?? "");
-            int removedBefore = LeftoversRemoved;
-            long bytesBefore = BytesReclaimed;
             Log($"Retrying {retry.Count} item(s).");
             await CleanAsync(retry);
-            LeftoversRemoved += removedBefore;
-            BytesReclaimed += bytesBefore;
-            OnPropertyChanged(nameof(BytesReclaimedText));
         }
         else if (pick == 1 && CanUndoCleanup)
         {
@@ -568,11 +610,12 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
 
         bool hadRegistry = RegistryBackupFile != null;
         var (ok, lines) = await _undo.UndoAsync();
-        if (hadRegistry && ok) RegistrySummary = "Registry: the removed entries were restored from the backup.";
-        CanUndoCleanup = false;
-        LeftoversRemoved = 0;
-        BytesReclaimed = 0;
-        OnPropertyChanged(nameof(BytesReclaimedText));
+        _cleanupLedger.Restore(_undo.LastRestoredItems);
+        if (hadRegistry && _undo.RegistryBackupFile == null) RegistrySummary = "Registry: the removed entries were restored from the backup.";
+        RegistryBackupFile = _undo.RegistryBackupFile;
+        CanUndoCleanup = _undo.CanUndo;
+        UpdateCleanupTotals();
+        Finish(Review.TotalCount + RegistryReview.TotalCount);
         if (RestorePointCreated) lines.Add("\nTo undo what the program's own uninstaller changed, use Open System Restore.");
         var text = string.Join("\n", lines);
         Log("Undo leftover removal: " + text.Replace("\n", " "));
@@ -603,37 +646,53 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
 
     private void FinishWithoutCleanup() => Finish(0);
 
-    private bool _historyWritten;
-
     private void Finish(int leftoversConsidered)
     {
+        foreach (var j in Jobs.Where(j => j.Job.ForceRemoval && (j.Job.Status is JobStatus.Completed or JobStatus.CompletedWithWarnings)))
+        {
+            var totals = _cleanupLedger.ForItems(j.Job.Scan?.Items.AsEnumerable() ?? Enumerable.Empty<LeftoverItem>());
+            j.Job.ForceRemovalVerified = UninstallOrchestrator.VerifyForcedRemoval(j.Job, totals.Count > 0);
+            UninstallOrchestrator.Complete(j.Job);
+            j.Sync();
+        }
         ProgramsUninstalled = Jobs.Count(j => j.Job.Status == JobStatus.Completed);
         ProgramsWithWarnings = Jobs.Count(j => j.Job.Status is JobStatus.CompletedWithWarnings or JobStatus.Failed or JobStatus.Cancelled
                                                || (j.Job.Status == JobStatus.Skipped && j.Job.Attempts.Count > 0));
         RebootRecommended = Jobs.Any(j => j.Job.RunResult?.ExitCode is 3010 or 1641) || Errors.Any(e => e.Contains("restart", StringComparison.OrdinalIgnoreCase));
         OnPropertyChanged(nameof(BytesReclaimedText));
 
-        // Written once per run – a retry of failed leftovers calls Finish again.
-        foreach (var j in _historyWritten ? Enumerable.Empty<UninstallJobViewModel>() : Jobs)
+        // Stable operation IDs let retries and partial restores correct the existing persisted row.
+        foreach (var j in Jobs)
         {
             if (j.Job.Status is JobStatus.Pending || (j.Job.Status == JobStatus.Skipped && j.Job.Attempts.Count == 0)) continue;
             var found = j.Job.Scan?.Items.Count ?? 0;
-            _services.History.Add(new UninstallHistoryEntry
+            var owned = j.Job.Scan?.Items ?? new List<LeftoverItem>();
+            var totals = _cleanupLedger.ForItems(owned);
+            int failed = owned.Count(_cleanupFailures.Contains);
+            if (!_historyEntries.TryGetValue(j.Job, out var operation))
             {
+                operation = (Guid.NewGuid(), DateTime.Now);
+                _historyEntries[j.Job] = operation;
+            }
+            _services.History.Upsert(new UninstallHistoryEntry
+            {
+                Id = operation.Id,
+                Timestamp = operation.Timestamp,
                 ProgramName = j.Name,
                 Publisher = j.Job.Program.Publisher,
                 Version = j.Job.Program.DisplayVersion,
                 Method = j.Job.ForceRemoval ? UninstallMethod.Force : QuietMode ? UninstallMethod.Quiet : UninstallMethod.Standard,
                 ExitCode = j.Job.RunResult?.ExitCode,
-                Succeeded = j.Job.Status == JobStatus.Completed,
+                Succeeded = j.Job.Status == JobStatus.Completed && failed == 0,
                 LeftoversFound = found,
-                LeftoversRemoved = Jobs.Count == 1 ? LeftoversRemoved : Math.Min(found, LeftoversRemoved),
-                BytesReclaimed = Jobs.Count == 1 ? BytesReclaimed : 0,
-                Notes = j.Job.Message,
+                LeftoversRemoved = totals.Count,
+                BytesRemoved = totals.BytesRemoved,
+                BytesReclaimed = totals.BytesReclaimed,
+                Notes = j.Job.Message + (found > 0 ? $" Cleanup: {totals.Count} removed, {failed} failed." : "")
+                    + (j.Job.ForceRemoval && !j.Job.ForceRemovalVerified ? " Complete application removal could not be verified." : ""),
                 InstallLocation = j.Job.Program.InstallLocation,
             });
         }
-        _historyWritten = true;
         CanCancel = false;
         Step = WizardStep.Done;
         StatusText = "";

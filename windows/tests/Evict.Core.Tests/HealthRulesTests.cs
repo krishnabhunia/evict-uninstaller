@@ -245,7 +245,9 @@ public class SecurityRulesTests
         Assert.Equal(new[] { "Adware:X" }, d.ActiveThreats);
         Assert.Equal(new[] { "Bitdefender" }, d.OtherAntivirus);
         var f = Evict.Core.Services.SecurityRules.DefenderFindings(d).ToList();
-        Assert.Contains(f, x => x.Title.StartsWith("Protected by Bitdefender"));
+        Assert.Contains(f, x => x.Title.StartsWith("Registered antivirus: Bitdefender"));
+        Assert.Contains(f, x => x.Title == "Antivirus status unknown");
+        Assert.DoesNotContain(f, x => x.Title.Contains("protection healthy"));
         Assert.DoesNotContain(f, x => x.Title == "Real-time protection is off");
     }
 

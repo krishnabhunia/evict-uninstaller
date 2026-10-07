@@ -6,6 +6,10 @@
 #ifndef MyAppVersion
   #define MyAppVersion "1.8.0"
 #endif
+#ifndef MyAppNumericVersion
+  ; Windows version resources require numbers; AppVersion and filenames retain the full beta label.
+  #define MyAppNumericVersion MyAppVersion
+#endif
 #define MyAppPublisher "Krishna Bhunia"
 #define MyAppURL "https://github.com/krishnabhunia/evict-uninstaller"
 #define MyAppExeName "Evict.exe"
@@ -22,7 +26,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
-VersionInfoVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppNumericVersion}
 DefaultDirName={autopf}\Evict
 DefaultGroupName=Evict
 DisableProgramGroupPage=yes
@@ -86,9 +90,9 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--updated"; Flags: nowait skipifnotsilent; Check: IsSelfUpdate
 
 [UninstallRun]
-; Safety net if Evict.exe could not run its own clean-up (see [Code]): release the exe, drop the scheduled scan + autostart entry.
+; Safety net if Evict.exe could not run its own clean-up (see [Code]): release the exe and remove the autostart entry.
+; Scheduled tasks are removed only by the owner-aware self-cleanup above.
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F"; Flags: runhidden; RunOnceId: "KillEvict"
-Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /F /TN ""Evict Software Health scan"""; Flags: runhidden; RunOnceId: "DelTask"
 Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Evict /f"; Flags: runhidden; RunOnceId: "DelRun"
 
 [Code]

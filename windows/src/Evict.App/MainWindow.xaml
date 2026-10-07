@@ -142,7 +142,8 @@
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource Button.Ghost}" Content="&#xE8BB;" FontFamily="{StaticResource Font.Icons}" FontSize="10" Padding="8,4"
                             Command="{Binding DismissUpdateBannerCommand}" ToolTip="Not now" />
-                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Primary}" Content="Update now" Command="{Binding ShowUpdateCommand}" Margin="12,0" Padding="12,4" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Primary}" Content="Review update" Command="{Binding ShowUpdateCommand}" Margin="12,0" Padding="12,4" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="Update settings / betas" Command="{Binding OpenUpdateSettingsCommand}" Margin="8,0" />
                     <TextBlock Text="&#xE896;" Style="{StaticResource Icon}" Foreground="{DynamicResource Brush.Accent}" DockPanel.Dock="Left" Margin="0,0,10,0" />
                     <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text.Primary}" Text="{Binding UpdateBannerText}" />
                 </DockPanel>

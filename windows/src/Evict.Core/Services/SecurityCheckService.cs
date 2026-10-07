@@ -1,12 +1,16 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using Evict.Core.Models;
 using Evict.Core.Util;
 
 namespace Evict.Core.Services;
 
 public enum FindingSeverity { High, Medium, Info }
+
+/// <summary>Documented WSC_SECURITY_PROVIDER_HEALTH values, not the undocumented WMI productState bit field.</summary>
+public enum AntivirusProviderHealth { Good, NotMonitored, Poor, Snooze }
 
 /// <summary>One line of the "Malicious software &amp; extensions" check.</summary>
 public sealed record SecurityFinding(string Section, string Title, string Detail, FindingSeverity Severity, string? ActionKey = null);
@@ -21,6 +25,7 @@ public sealed class DefenderStatus
     public string? Mode { get; init; }
     public List<string> ActiveThreats { get; init; } = new();
     public List<string> OtherAntivirus { get; init; } = new();
+    public AntivirusProviderHealth? ProviderHealth { get; init; }
     public string? Error { get; init; }
 }
 
@@ -28,9 +33,9 @@ public sealed class DefenderStatus
 public static class SecurityRules
 {
     /// <summary>Parses the JSON the Defender script prints (see <see cref="SecurityCheckService"/>).</summary>
-    public static DefenderStatus ParseDefender(string? json)
+    public static DefenderStatus ParseDefender(string? json, AntivirusProviderHealth? providerHealth = null)
     {
-        if (string.IsNullOrWhiteSpace(json)) return new DefenderStatus { Error = "Microsoft Defender did not answer." };
+        if (string.IsNullOrWhiteSpace(json)) return new DefenderStatus { Error = "Microsoft Defender did not answer.", ProviderHealth = providerHealth };
         try
         {
             using var doc = JsonDocument.Parse(json.Trim());
@@ -50,9 +55,10 @@ public static class SecurityRules
                 QuickScanAgeDays = I("QuickScanAge"), Mode = S("Mode"), ActiveThreats = L("Threats"), OtherAntivirus = L("OtherAv")
                     .Where(n => !IsMicrosoftDefender(n)).ToList(),
                 Error = S("Error"),
+                ProviderHealth = providerHealth,
             };
         }
-        catch (JsonException) { return new DefenderStatus { Error = "Unreadable answer from Microsoft Defender." }; }
+        catch (JsonException) { return new DefenderStatus { Error = "Unreadable answer from Microsoft Defender.", ProviderHealth = providerHealth }; }
     }
 
     /// <summary>"Windows Defender" / "Microsoft Defender Antivirus" – not "Bitdefender".</summary>
@@ -69,19 +75,28 @@ public static class SecurityRules
         const string section = "Antivirus";
         foreach (var t in d.ActiveThreats)
             yield return new SecurityFinding(section, "Active threat: " + t, "Microsoft Defender found this and has not removed it yet. Open Windows Security to remove it.", FindingSeverity.High, "windowsSecurity");
-        bool otherAv = d.OtherAntivirus.Count > 0;
-        if (otherAv)
+        if (d.OtherAntivirus.Count > 0)
+            yield return new SecurityFinding(section, "Registered antivirus: " + string.Join(", ", d.OtherAntivirus),
+                "Registration alone does not confirm active protection. Open Windows Security to inspect each provider.", FindingSeverity.Info, "windowsSecurity");
+        if (d.ProviderHealth == AntivirusProviderHealth.Good)
         {
-            yield return new SecurityFinding(section, "Protected by " + string.Join(", ", d.OtherAntivirus), "Another antivirus is active; its own app reports threats.", FindingSeverity.Info);
-            yield break;
+            yield return new SecurityFinding(section, "Windows Security reports antivirus protection healthy",
+                "The antivirus category reports good health. This does not certify every registered antivirus product.", FindingSeverity.Info);
+            if (d.AntivirusEnabled != true || d.RealTimeProtection != true) yield break;
         }
+        if (d.ProviderHealth is AntivirusProviderHealth.Poor or AntivirusProviderHealth.Snooze)
+            yield return new SecurityFinding(section, "Windows Security reports antivirus protection needs attention",
+                d.ProviderHealth == AntivirusProviderHealth.Snooze ? "Antivirus protection is snoozed." : "Antivirus protection reports poor health; protection or definitions may be unavailable.",
+                FindingSeverity.High, "windowsSecurity");
         if (d.Error != null && d.AntivirusEnabled is null)
         {
             yield return new SecurityFinding(section, "Antivirus status unknown", d.Error, FindingSeverity.Medium, "windowsSecurity");
             yield break;
         }
         if (d.AntivirusEnabled == false || d.RealTimeProtection == false)
-            yield return new SecurityFinding(section, "Real-time protection is off", "Nothing is scanning files as they arrive. Switch it on in Windows Security → Virus & threat protection.", FindingSeverity.High, "windowsSecurity");
+            yield return new SecurityFinding(section, "Real-time protection is off", "Microsoft Defender real-time protection is off. Check Windows Security to confirm another provider is actively protecting this PC.", FindingSeverity.High, "windowsSecurity");
+        else if ((d.ProviderHealth is null or AntivirusProviderHealth.NotMonitored) && d.OtherAntivirus.Count > 0)
+            yield return new SecurityFinding(section, "Other antivirus protection status unknown", "Windows Security could not confirm protection health for the registered antivirus products.", FindingSeverity.Medium, "windowsSecurity");
         if (d.SignatureAgeDays is > 7)
             yield return new SecurityFinding(section, $"Virus definitions are {d.SignatureAgeDays} days old", "Run Windows Update or \"Check for updates\" in Windows Security.", FindingSeverity.Medium, "windowsSecurity");
         if (d.QuickScanAgeDays is > 30)
@@ -112,6 +127,22 @@ public static class SecurityRules
 /// </summary>
 public sealed class SecurityCheckService
 {
+    [DllImport("wscapi.dll", ExactSpelling = true)]
+    private static extern int WscGetSecurityProviderHealth(uint providers, out AntivirusProviderHealth health);
+
+    private static AntivirusProviderHealth? ReadAntivirusHealth()
+    {
+        try
+        {
+            // WSC_SECURITY_PROVIDER_ANTIVIRUS = 4. S_FALSE (service unavailable) is not healthy.
+            return WscGetSecurityProviderHealth(4, out var health) == 0 && Enum.IsDefined(health) ? health : null;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            return null;
+        }
+    }
+
     private const string DefenderScript = @"
 $r=@{}
 try { $s=Get-MpComputerStatus -ErrorAction Stop; $r.AntivirusEnabled=$s.AntivirusEnabled; $r.RealTime=$s.RealTimeProtectionEnabled; $r.SigAge=[int]$s.AntivirusSignatureAge; $r.QuickScanAge=[int]$s.QuickScanAge; $r.Mode=[string]$s.AMRunningMode } catch { $r.Error=$_.Exception.Message }
@@ -126,7 +157,7 @@ $r | ConvertTo-Json -Compress";
         var defenderTask = Task.Run(async () =>
         {
             var res = await PowerShellRunner.RunScriptAsync(DefenderScript, ct, TimeSpan.FromMinutes(1)).ConfigureAwait(false);
-            return SecurityRules.ParseDefender(res.StdOut.Trim().Split('\n').LastOrDefault(l => l.TrimStart().StartsWith('{')));
+            return SecurityRules.ParseDefender(res.StdOut.Trim().Split('\n').LastOrDefault(l => l.TrimStart().StartsWith('{')), ReadAntivirusHealth());
         }, ct);
 
         try

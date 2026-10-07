@@ -1,4 +1,6 @@
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using Evict.Core.Models;
 using Evict.Core.Util;
 
@@ -22,8 +24,13 @@ public sealed class FileShredder
         var files = new List<string>();
         var dirs = new List<string>();
 
-        foreach (var p in paths)
+        foreach (var input in paths)
         {
+            if (!PathUtil.TryCanonicalizeAbsolute(input, out var p) || PathUtil.HasReparsePoint(p))
+            {
+                result.Errors.Add((input, "Refusing to shred a relative path or a path through a junction/symlink."));
+                continue;
+            }
             if (File.Exists(p)) files.Add(p);
             else if (Directory.Exists(p))
             {
@@ -42,7 +49,7 @@ public sealed class FileShredder
         }
 
         int done = 0;
-        foreach (var file in files)
+        foreach (var file in files.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             ct.ThrowIfCancellationRequested();
             done++;
@@ -60,14 +67,11 @@ public sealed class FileShredder
         {
             try
             {
-                // Rename sub-directories too, so their names do not linger in the MFT.
-                foreach (var sub in Directory.EnumerateDirectories(dir, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }).OrderByDescending(s => s.Length))
-                {
-                    try { Directory.Delete(RenameRandom(sub), recursive: true); } catch { /* try parent */ }
-                }
-                Directory.Delete(RenameRandom(dir), recursive: true);
+                ct.ThrowIfCancellationRequested();
+                DeleteEmptyTree(dir, dir, ct);
                 result.FoldersRemoved++;
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex) { result.Errors.Add((dir, ex.Message)); }
         }
         return result;
@@ -76,18 +80,22 @@ public sealed class FileShredder
     /// <summary>Overwrites and deletes one file, returning the number of bytes written.</summary>
     public static long ShredFile(string path, ShredMethod method, CancellationToken ct)
     {
+        if (!PathUtil.TryCanonicalizeAbsolute(path, out var canonical) || PathUtil.HasReparsePoint(canonical))
+            throw new IOException("Refusing to overwrite a file through a junction/symlink.");
+        path = canonical;
         var info = new FileInfo(path);
         if (!info.Exists) return 0;
-        info.Attributes = FileAttributes.Normal;
-        long length = info.Length;
         long written = 0;
         int passes = (int)method;
 
-        if (length > 0)
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None, BufferSize, FileOptions.WriteThrough))
         {
-            var buffer = new byte[BufferSize];
-            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None, BufferSize, FileOptions.WriteThrough))
+            if (!PathUtil.OpenedFileMatchesPath(fs.SafeFileHandle, path))
+                throw new IOException("The opened file resolved outside the selected path or has other hard links; it was not overwritten.");
+            long length = fs.Length;
+            if (length > 0)
             {
+                var buffer = new byte[BufferSize];
                 for (int pass = 0; pass < passes; pass++)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -105,20 +113,43 @@ public sealed class FileShredder
                     }
                     fs.Flush(flushToDisk: true);
                 }
-                fs.SetLength(0);
+            }
+            fs.SetLength(0);
+            // Change timestamps through the verified handle, never through a path that could be replaced.
+            if (OperatingSystem.IsWindows())
+            {
+                long stamp = new DateTime(2000, 1, 1).ToFileTime();
+                SetFileTime(fs.SafeFileHandle, ref stamp, ref stamp, ref stamp);
             }
         }
 
-        // Scrub the file name and timestamps, then delete.
-        try
-        {
-            var stamp = new DateTime(2000, 1, 1);
-            File.SetCreationTime(path, stamp); File.SetLastWriteTime(path, stamp); File.SetLastAccessTime(path, stamp);
-        }
-        catch { /* ignore */ }
         var renamed = RenameRandom(path);
         File.Delete(renamed);
         return written;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetFileTime(SafeFileHandle handle, ref long creationTime, ref long lastAccessTime, ref long lastWriteTime);
+
+    private static void DeleteEmptyTree(string directory, string root, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!PathUtil.IsUnder(directory, root) || PathUtil.HasReparsePoint(directory))
+            throw new IOException("Refusing to traverse a junction/symlink while removing folders.");
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            ct.ThrowIfCancellationRequested();
+            var attributes = File.GetAttributes(entry);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                if ((attributes & FileAttributes.Directory) != 0) Directory.Delete(entry, false);
+                else File.Delete(entry);
+            }
+            else if ((attributes & FileAttributes.Directory) != 0) DeleteEmptyTree(entry, root, ct);
+            else throw new IOException("A file could not be shredded; its folder was kept.");
+        }
+        // Never recursively delete a parent to hide errors from shredding its children.
+        Directory.Delete(RenameRandom(directory), false);
     }
 
     private static bool IsRandomPass(int pass, int passes) => passes switch

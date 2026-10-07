@@ -53,6 +53,7 @@ struct ApplicationsView: View {
                             Task { await state.preparePlan(for: app) }
                         }
                         .listRowSeparator(.visible)
+                        .disabled(state.isPlanning || state.isRemoving)
                     }
                 }
                 .listStyle(.inset)
@@ -75,7 +76,7 @@ struct ApplicationsView: View {
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         return DropReader.firstFileURL(providers) { url in
-            guard url.pathExtension == "app" else { return }
+            guard AppInventory.validBundlePath(url.path) != nil else { return }
             Task { @MainActor in
                 if let known = state.apps.first(where: { $0.bundlePath == url.path }) {
                     await state.preparePlan(for: known)

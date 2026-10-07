@@ -67,43 +67,88 @@ internal static class NativeMethods
 
     // ───────────────────────────── Shell file operations (Recycle Bin) ─────────────────────────────
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 8)]
-    private struct SHFILEOPSTRUCTW
+    // FOF_ALLOWUNDO alone permits permanent deletion when recycling is unavailable.
+    // Windows 8+'s recycle-only flag explicitly requests recycling instead.
+    internal const uint RecycleOnlyFlags = 0x00080000 /* FOFX_RECYCLEONDELETE */
+        | 0x20000000 /* FOFX_ADDUNDORECORD */ | 0x00100000 /* FOFX_EARLYFAILURE */
+        | 0x0400 /* FOF_NOERRORUI */ | 0x0004 /* FOF_SILENT */ | 0x0010 /* FOF_NOCONFIRMATION */;
+
+    [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellItem { }
+
+    [ComImport, Guid("947AAB5F-0A5C-4C13-B4D6-4BF7836FC9F8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IFileOperation
     {
-        public IntPtr hwnd;
-        public uint wFunc;
-        public string pFrom;
-        public string? pTo;
-        public ushort fFlags;
-        [MarshalAs(UnmanagedType.Bool)] public bool fAnyOperationsAborted;
-        public IntPtr hNameMappings;
-        public string? lpszProgressTitle;
+        [PreserveSig] int Advise(IntPtr sink, out uint cookie);
+        [PreserveSig] int Unadvise(uint cookie);
+        [PreserveSig] int SetOperationFlags(uint flags);
+        [PreserveSig] int SetProgressMessage([MarshalAs(UnmanagedType.LPWStr)] string message);
+        [PreserveSig] int SetProgressDialog(IntPtr dialog);
+        [PreserveSig] int SetProperties(IntPtr properties);
+        [PreserveSig] int SetOwnerWindow(IntPtr owner);
+        [PreserveSig] int ApplyPropertiesToItem(IShellItem item);
+        [PreserveSig] int ApplyPropertiesToItems(IntPtr items);
+        [PreserveSig] int RenameItem(IShellItem item, [MarshalAs(UnmanagedType.LPWStr)] string name, IntPtr sink);
+        [PreserveSig] int RenameItems(IntPtr items, [MarshalAs(UnmanagedType.LPWStr)] string name);
+        [PreserveSig] int MoveItem(IShellItem item, IShellItem destination, [MarshalAs(UnmanagedType.LPWStr)] string name, IntPtr sink);
+        [PreserveSig] int MoveItems(IntPtr items, IShellItem destination);
+        [PreserveSig] int CopyItem(IShellItem item, IShellItem destination, [MarshalAs(UnmanagedType.LPWStr)] string name, IntPtr sink);
+        [PreserveSig] int CopyItems(IntPtr items, IShellItem destination);
+        [PreserveSig] int DeleteItem(IShellItem item, IntPtr sink);
+        [PreserveSig] int DeleteItems(IntPtr items);
+        [PreserveSig] int NewItem(IShellItem destination, uint attributes, [MarshalAs(UnmanagedType.LPWStr)] string name, [MarshalAs(UnmanagedType.LPWStr)] string template, IntPtr sink);
+        [PreserveSig] int PerformOperations();
+        [PreserveSig] int GetAnyOperationsAborted([MarshalAs(UnmanagedType.Bool)] out bool aborted);
     }
 
-    private const uint FO_DELETE = 0x0003;
-    private const ushort FOF_SILENT = 0x0004;
-    private const ushort FOF_NOCONFIRMATION = 0x0010;
-    private const ushort FOF_ALLOWUNDO = 0x0040;
-    private const ushort FOF_NOERRORUI = 0x0400;
-    private const ushort FOF_NOCONFIRMMKDIR = 0x0200;
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+    private static extern int SHCreateItemFromParsingName(string path, IntPtr bindContext, ref Guid interfaceId, out IShellItem item);
 
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    private static extern int SHFileOperationW(ref SHFILEOPSTRUCTW lpFileOp);
-
-    /// <summary>Sends a file or folder to the Recycle Bin. Returns 0 on success, otherwise a shell error code.</summary>
+    /// <summary>Recycle-only operation. Non-recyclable volumes, failures and cancellation never trigger a hard delete.</summary>
     public static int SendToRecycleBin(string path)
     {
-        var op = new SHFILEOPSTRUCTW
+        if (!OperatingSystem.IsWindowsVersionAtLeast(6, 2)) return unchecked((int)0x80004001); // E_NOTIMPL
+        try
         {
-            hwnd = IntPtr.Zero,
-            wFunc = FO_DELETE,
-            pFrom = path + "\0\0",          // double-null terminated list
-            pTo = null,
-            fFlags = (ushort)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR),
-        };
-        int rc = SHFileOperationW(ref op);
-        if (rc == 0 && op.fAnyOperationsAborted) rc = 1223; // ERROR_CANCELLED
-        return rc;
+            if (new DriveInfo(Path.GetPathRoot(path)!).DriveType != DriveType.Fixed)
+                return unchecked((int)0x80070032); // ERROR_NOT_SUPPORTED: network/removable recycling is not supported
+            if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA) return RecycleOnSta(path);
+            int result = unchecked((int)0x80004005);
+            var thread = new Thread(() => result = RecycleOnSta(path)) { IsBackground = true, Name = "Evict Recycle Bin" };
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+            return result;
+        }
+        catch (Exception ex) { return Marshal.GetHRForException(ex); }
+    }
+
+    private static int RecycleOnSta(string path)
+    {
+        object? operation = null;
+        IShellItem? item = null;
+        try
+        {
+            operation = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("3AD05575-8857-4850-9277-11B85BDB8E09"), throwOnError: true)!);
+            var op = (IFileOperation)operation!;
+            int hr = op.SetOperationFlags(RecycleOnlyFlags);
+            if (hr < 0) return hr;
+            var iid = typeof(IShellItem).GUID;
+            hr = SHCreateItemFromParsingName(path, IntPtr.Zero, ref iid, out item);
+            if (hr < 0) return hr;
+            hr = op.DeleteItem(item, IntPtr.Zero);
+            if (hr < 0) return hr;
+            hr = op.PerformOperations();
+            if (hr < 0) return hr;
+            hr = op.GetAnyOperationsAborted(out bool aborted);
+            return hr < 0 ? hr : aborted ? unchecked((int)0x800704C7) : 0;
+        }
+        catch (Exception ex) { return Marshal.GetHRForException(ex); }
+        finally
+        {
+            try { if (item != null) Marshal.FinalReleaseComObject(item); } catch { /* release only */ }
+            try { if (operation != null) Marshal.FinalReleaseComObject(operation); } catch { /* release only */ }
+        }
     }
 
     // ───────────────────────────── Windows ─────────────────────────────

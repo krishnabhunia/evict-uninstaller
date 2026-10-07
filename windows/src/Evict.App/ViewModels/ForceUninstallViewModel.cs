@@ -53,12 +53,17 @@ public sealed partial class ForceUninstallViewModel : ObservableObject
     [ObservableProperty] private int _removed;
     [ObservableProperty] private int _failed;
     [ObservableProperty] private long _bytesReclaimed;
+    [ObservableProperty] private long _bytesRemoved;
     /// <summary>Something was removed that can be put back (Recycle Bin / registry backup).</summary>
     [ObservableProperty] private bool _canUndo;
     private readonly CleanupUndo _undo = new();
+    private readonly UninstallCleanupLedger _cleanupLedger = new();
+    private Guid? _historyId;
+    private DateTime _historyTimestamp;
 
     public bool AnythingChanged { get; private set; }
     public string BytesReclaimedText => SizeFormatter.Format(BytesReclaimed);
+    public string CleanupSpaceText => $"{SizeFormatter.Format(BytesRemoved)} removed from original locations; {BytesReclaimedText} permanently deleted. Recycled data still occupies disk space.";
     public string TargetName => UseProgram ? SelectedProgram?.DisplayName ?? "" : (CustomName.Length > 0 ? CustomName : PathUtil.LeafName(TargetPath));
     public bool CanScan => UseProgram ? SelectedProgram != null : TargetPath.Trim().Length > 0 && (Directory.Exists(TargetPath.Trim()) || File.Exists(TargetPath.Trim()));
 
@@ -67,7 +72,7 @@ public sealed partial class ForceUninstallViewModel : ObservableObject
     /// <summary>Skips the scan step and shows a ready-made list (used by Install Monitor logs).</summary>
     public void PreloadLeftovers(IEnumerable<LeftoverItem> items)
     {
-        Review.Load(items, selectLowConfidence: true);
+        Review.Load(items, selectLowConfidence: false);
         Step = ForceStep.Review;
     }
 
@@ -100,17 +105,15 @@ public sealed partial class ForceUninstallViewModel : ObservableObject
         var progress = new Progress<ProgressReport>(r => { StatusText = r.Message; if (r.Percent is { } p) Progress = p; });
         try
         {
-            var (fp, result) = await _services.Force.ScanAsync(UseProgram ? SelectedProgram : null, UseProgram ? null : TargetPath.Trim(),
+            var program = UseProgram ? SelectedProgram : null;
+            var selectedPath = UseProgram ? null : TargetPath.Trim();
+            var (_, result) = await _services.Force.ScanAsync(program, selectedPath,
                 new LeftoverScanOptions { ScanAllUserProfiles = _services.Settings.Current.ScanAllUserProfiles }, progress, _cts.Token);
             foreach (var w in result.Warnings) Warnings.Add(w);
 
             RunningProcesses.Clear();
-            var folder = fp.InstallLocation;
-            if (!string.IsNullOrEmpty(folder))
-            {
-                foreach (var (pid, name, path) in ForceUninstallService.FindProcessesUnder(folder))
-                    RunningProcesses.Add($"{name} (PID {pid}) – {path}");
-            }
+            var running = await Task.Run(() => ForceUninstallService.FindProcessesFor(program, selectedPath));
+            foreach (var (pid, name, path) in running) RunningProcesses.Add($"{name} (PID {pid}) - {path}");
             Review.Load(result.Items, selectLowConfidence: false);
             Step = ForceStep.Review;
         }
@@ -142,37 +145,59 @@ public sealed partial class ForceUninstallViewModel : ObservableObject
         BytesReclaimed = 0;
         var progress = new Progress<ProgressReport>(r => { StatusText = r.Message; if (r.Percent is { } p) Progress = p; });
 
-        if (KillProcesses)
+        try
         {
-            var folder = UseProgram ? SelectedProgram?.InstallLocation : (Directory.Exists(TargetPath) ? TargetPath : Path.GetDirectoryName(TargetPath));
-            if (!string.IsNullOrEmpty(folder))
+            if (KillProcesses)
             {
-                StatusText = "Closing running processes…";
-                await Task.Run(() =>
+                var program = UseProgram ? SelectedProgram : null;
+                var selectedPath = UseProgram ? null : TargetPath.Trim();
+                if (program != null || !string.IsNullOrEmpty(selectedPath))
                 {
-                    ForceUninstallService.KillProcessesUnder(folder, out var errs);
-                    foreach (var e in errs) System.Windows.Application.Current.Dispatcher.Invoke(() => Errors.Add(e));
-                });
+                    StatusText = "Closing running processes…";
+                    await Task.Run(() =>
+                    {
+                        ForceUninstallService.KillProcessesFor(program, selectedPath, out var errs);
+                        foreach (var e in errs) System.Windows.Application.Current.Dispatcher.Invoke(() => Errors.Add(e));
+                    });
+                }
             }
+
+            var result = await CleanAndRecordAsync(items, progress);
+            if (result.Failed > 0) result = await OfferRetryOrUndoAsync(result, progress);
+
+            PersistHistory();
+            Step = ForceStep.Done;
         }
-
-        var result = await CleanAndRecordAsync(items, progress);
-        if (result.Failed > 0) result = await OfferRetryOrUndoAsync(result, progress);
-
-        _services.History.Add(new UninstallHistoryEntry
+        catch (Exception ex)
         {
-            ProgramName = name,
+            Errors.Add("Removal stopped: " + ex.Message);
+            Failed = Math.Max(1, items.Count - Removed);
+            CanUndo = _undo.CanUndo;
+            PersistHistory();
+            Step = ForceStep.Done;
+            Dialogs.Error("Force removal stopped: " + ex.Message);
+        }
+    }
+
+    private void PersistHistory()
+    {
+        if (_historyId == null) { _historyId = Guid.NewGuid(); _historyTimestamp = DateTime.Now; }
+        _services.History.Upsert(new UninstallHistoryEntry
+        {
+            Id = _historyId.Value,
+            Timestamp = _historyTimestamp,
+            ProgramName = TargetName,
             Publisher = SelectedProgram?.Publisher,
             Version = SelectedProgram?.DisplayVersion,
             Method = UninstallMethod.Force,
-            Succeeded = Failed == 0,
+            Succeeded = Failed == 0 && Removed > 0,
             LeftoversFound = Review.TotalCount,
             LeftoversRemoved = Removed,
             BytesReclaimed = BytesReclaimed,
+            BytesRemoved = BytesRemoved,
             InstallLocation = UseProgram ? SelectedProgram?.InstallLocation : TargetPath,
             Notes = "Force uninstall",
         });
-        Step = ForceStep.Done;
     }
 
     private async Task<CleanupResult> CleanAndRecordAsync(IReadOnlyList<LeftoverItem> items, IProgress<ProgressReport> progress)
@@ -180,11 +205,14 @@ public sealed partial class ForceUninstallViewModel : ObservableObject
         _undo.BeginIfFirst();
         var result = await _services.Cleaner.CleanAsync(items, new CleanupOptions { SendToRecycleBin = SendToRecycleBin, BackupLabel = "Force uninstall " + TargetName }, progress, CancellationToken.None);
         _undo.Record(items, result, SendToRecycleBin);
+        _cleanupLedger.Record(result);
         CanUndo = _undo.CanUndo;
-        Removed += result.Removed;
+        Removed = _cleanupLedger.RemovedCount;
         Failed = result.Failed;
-        BytesReclaimed += result.BytesReclaimed;
+        BytesRemoved = _cleanupLedger.BytesRemoved;
+        BytesReclaimed = _cleanupLedger.BytesReclaimed;
         OnPropertyChanged(nameof(BytesReclaimedText));
+        OnPropertyChanged(nameof(CleanupSpaceText));
         foreach (var (item, error) in result.Errors) Errors.Add($"{item.Path}: {error}");
         AnythingChanged = true;
         return result;
@@ -202,9 +230,11 @@ public sealed partial class ForceUninstallViewModel : ObservableObject
             int pick = Dialogs.Choose($"{result.Failed} item(s) could not be removed", sample, options, cancelIndex: options.Count - 1);
             if (pick == 0)
             {
-                var folder = UseProgram ? SelectedProgram?.InstallLocation : (Directory.Exists(TargetPath) ? TargetPath : Path.GetDirectoryName(TargetPath));
-                if (!string.IsNullOrEmpty(folder)) await Task.Run(() => ForceUninstallService.KillProcessesUnder(folder, out _));
                 Errors.Clear();
+                var program = UseProgram ? SelectedProgram : null;
+                var selectedPath = UseProgram ? null : TargetPath.Trim();
+                var errors = await Task.Run(() => { ForceUninstallService.KillProcessesFor(program, selectedPath, out var lines); return lines; });
+                foreach (var error in errors) Errors.Add(error);
                 result = await CleanAndRecordAsync(result.Errors.Select(e => e.Item).ToList(), progress);
                 continue;
             }
@@ -222,10 +252,14 @@ public sealed partial class ForceUninstallViewModel : ObservableObject
         if (!CanUndo) return;
         if (confirm && !Dialogs.Confirm("Put back what this force uninstall removed?\n\nFiles and folders come back from the Recycle Bin; registry entries are restored from the backup.")) return;
         var (ok, lines) = await _undo.UndoAsync();
-        CanUndo = false;
-        Removed = 0;
-        BytesReclaimed = 0;
+        _cleanupLedger.Restore(_undo.LastRestoredItems);
+        CanUndo = _undo.CanUndo;
+        Removed = _cleanupLedger.RemovedCount;
+        BytesRemoved = _cleanupLedger.BytesRemoved;
+        BytesReclaimed = _cleanupLedger.BytesReclaimed;
         OnPropertyChanged(nameof(BytesReclaimedText));
+        OnPropertyChanged(nameof(CleanupSpaceText));
+        if (_historyId != null) PersistHistory();
         var text = string.Join("\n", lines);
         Core.Services.Log.Info("Force uninstall undo: " + text.Replace("\n", " "));
         if (ok) Dialogs.Info(text); else Dialogs.Error(text);

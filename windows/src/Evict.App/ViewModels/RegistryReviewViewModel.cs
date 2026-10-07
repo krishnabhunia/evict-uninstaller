@@ -15,6 +15,7 @@ public sealed partial class RegistryReviewViewModel : ObservableObject
 {
     private readonly AppServices _services;
     private readonly string _backupLabel;
+    private UninstallHistoryEntry? _historyEntry;
 
     public RegistryReviewViewModel(AppServices services, string title, string subtitle, IEnumerable<LeftoverItem> items, string backupLabel)
     {
@@ -52,12 +53,13 @@ public sealed partial class RegistryReviewViewModel : ObservableObject
         foreach (var (item, error) in result.Errors) Errors.Add($"{item.Path}: {error}");
         AnythingChanged = result.Removed > 0;
         StatusText = $"Removed {result.Removed} of {selected.Count} entr{(selected.Count == 1 ? "y" : "ies")}" + (result.Failed > 0 ? $" – {result.Failed} failed." : ".");
-        _services.History.Add(new UninstallHistoryEntry
+        _historyEntry = new UninstallHistoryEntry
         {
             ProgramName = _backupLabel, Method = UninstallMethod.Force, Succeeded = result.Failed == 0,
             LeftoversFound = selected.Count, LeftoversRemoved = result.Removed,
             Notes = StatusText + (BackupFile != null ? $" Backup: {BackupFile}" : ""),
-        });
+        };
+        _services.History.Upsert(_historyEntry);
         Step = CleanupStep.Done;
     }
 
@@ -68,6 +70,20 @@ public sealed partial class RegistryReviewViewModel : ObservableObject
         if (!Dialogs.Confirm("Put back every registry entry that was just removed?")) return;
         var (ok, message) = await RegistryBackupService.RestoreAsync(BackupFile);
         StatusText = message;
+        if (ok)
+        {
+            BackupFile = null;
+            if (_historyEntry is { } previous)
+            {
+                _historyEntry = new UninstallHistoryEntry
+                {
+                    Id = previous.Id, Timestamp = previous.Timestamp, ProgramName = previous.ProgramName,
+                    Method = previous.Method, Succeeded = false, LeftoversFound = previous.LeftoversFound,
+                    LeftoversRemoved = 0, Notes = "Registry cleanup was undone: " + message,
+                };
+                _services.History.Upsert(_historyEntry);
+            }
+        }
         if (ok) Dialogs.Info(message); else Dialogs.Error(message);
     }
 

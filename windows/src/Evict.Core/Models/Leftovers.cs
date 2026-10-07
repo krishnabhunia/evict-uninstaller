@@ -81,7 +81,14 @@ public sealed class CleanupResult
 {
     public int Removed { get; set; }
     public int Failed { get; set; }
+    /// <summary>Bytes removed from their original locations, including files sent to the Recycle Bin.</summary>
+    public long BytesRemoved { get; set; }
+    /// <summary>Bytes permanently deleted. Recycled files still occupy space on the disk.</summary>
     public long BytesReclaimed { get; set; }
+    /// <summary>Items whose removal completed successfully.</summary>
+    public List<LeftoverItem> RemovedItems { get; } = new();
+    /// <summary>Paths actually sent to the Recycle Bin, rather than inferred from the requested option.</summary>
+    public List<string> RecycledPaths { get; } = new();
     /// <summary>Registry keys/values deleted and confirmed absent afterwards.</summary>
     public int RegistryVerified { get; set; }
     /// <summary>.reg file holding everything that was deleted from the registry (null when nothing was).</summary>

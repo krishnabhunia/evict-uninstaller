@@ -86,8 +86,8 @@
                     <TextBlock Style="{StaticResource Text.Subtitle}">
                         <Run Text="{Binding Removed, Mode=OneWay}" /><Run Text=" item(s) removed ·" />
                         <Run Text="{Binding Failed, Mode=OneWay}" /><Run Text=" failed ·" />
-                        <Run Text="{Binding BytesReclaimedText, Mode=OneWay}" /><Run Text=" reclaimed" />
                     </TextBlock>
+                    <TextBlock Text="{Binding CleanupSpaceText}" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" MaxWidth="640" Margin="0,4,0,0" />
                 </StackPanel>
             </StackPanel>
             <Border Grid.Row="1" Style="{StaticResource Card}" Visibility="{Binding Errors.Count, Converter={StaticResource BoolToVis}}">

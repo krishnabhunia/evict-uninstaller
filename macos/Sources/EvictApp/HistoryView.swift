@@ -8,6 +8,7 @@ struct HistoryView: View {
     @EnvironmentObject private var state: AppState
     @State private var entries: [HistoryEntry] = []
     @State private var confirmingClear = false
+    @State private var loadMessage: String?
 
     private static let dateStyle: DateFormatter = {
         let f = DateFormatter()
@@ -20,14 +21,19 @@ struct HistoryView: View {
         VStack(spacing: 0) {
             PageHeader(title: "History",
                        subtitle: entries.isEmpty ? "Nothing removed yet"
-                                                 : "\(entries.count) uninstalls · \(ByteFormat.string(entries.reduce(0) { $0 + $1.bytesFreed })) freed in total") {
+                                                  : "\(entries.count) removals · \(ByteFormat.string(entries.reduce(0) { $0 + $1.bytesFreed })) moved to Trash in total") {
                 Button("Clear", role: .destructive) { confirmingClear = true }
-                    .disabled(entries.isEmpty)
+                    .disabled(entries.isEmpty && loadMessage == nil)
             }
 
+            if let loadMessage {
+                Label(loadMessage, systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(.orange)
+                    .padding(.horizontal, 20).padding(.bottom, 8)
+            }
             if entries.isEmpty {
                 EmptyStateView(icon: "clock", title: "No history yet",
-                               message: "Every uninstall Evict carries out is recorded here, with what was removed and how much space it freed.")
+                                message: "Evict records removal results and the size moved to the Trash. Moving items to the Trash does not reclaim disk space until it is emptied.")
             } else {
                 List(entries) { entry in
                     HStack(spacing: 10) {
@@ -65,6 +71,7 @@ struct HistoryView: View {
     private func reload() {
         state.history.load()
         entries = state.history.entries
+        loadMessage = state.history.lastError
     }
 }
 #endif

@@ -41,6 +41,8 @@ public sealed class AppSettings
     public bool HealthAutoScan { get; set; } = true;
     /// <summary>Check GitHub Releases for a newer version at start-up.</summary>
     public bool CheckForUpdates { get; set; } = true;
+    /// <summary>Opt in to beta and other prerelease updates. Existing settings stay on stable releases.</summary>
+    public bool IncludeBetaUpdates { get; set; } = false;
 
     /// <summary>How many winget upgrades run at the same time (1–6).</summary>
     public int ParallelUpdates { get; set; } = 3;

@@ -8,7 +8,12 @@ namespace Evict.Core.Util;
 public sealed record RegRawValue(string Name, uint Type, byte[] Data);
 
 /// <summary>A key block of a .reg file: "[HKEY_…\path]" followed by some or all of its values.</summary>
-public sealed record RegKeyBlock(string FullPath, IReadOnlyList<RegRawValue> Values);
+public sealed record RegKeyBlock(string FullPath, IReadOnlyList<RegRawValue> Values)
+{
+    public RegistryView View { get; init; } = RegistryView.Default;
+}
+
+public sealed record RegistryRestoreDocument(RegistryView View, string Document);
 
 /// <summary>
 /// Writes regedit's "Windows Registry Editor Version 5.00" format (what regedit exports and <c>reg import</c> reads).
@@ -17,6 +22,8 @@ public sealed record RegKeyBlock(string FullPath, IReadOnlyList<RegRawValue> Val
 public static class RegFileFormat
 {
     public const string Header = "Windows Registry Editor Version 5.00";
+    public const string ViewMarker = "; Evict registry view: ";
+    public const string RestoreHint = "; Restore with Evict to preserve registry views. Manual import uses the importer's default view.";
 
     public const uint RegNone = 0, RegSz = 1, RegExpandSz = 2, RegBinary = 3, RegDword = 4, RegMultiSz = 7, RegQword = 11;
 
@@ -30,20 +37,10 @@ public static class RegFileFormat
         _ => throw new ArgumentOutOfRangeException(nameof(hive), hive, "Unsupported hive"),
     };
 
-    /// <summary>Full key path as a 64-bit regedit sees it: 32-bit HKLM\SOFTWARE keys live under WOW6432Node.</summary>
+    /// <summary>Logical registry path. The originating view is stored separately, including for shared keys.</summary>
     public static string KeyPath(RegistryHive hive, RegistryView view, string subKey)
     {
         var sk = subKey.Trim('\\');
-        if (view == RegistryView.Registry32 && hive == RegistryHive.LocalMachine
-            && sk.StartsWith(@"SOFTWARE\", StringComparison.OrdinalIgnoreCase)
-            && !sk.StartsWith(@"SOFTWARE\WOW6432Node", StringComparison.OrdinalIgnoreCase))
-        {
-            sk = @"SOFTWARE\WOW6432Node\" + sk[9..];
-        }
-        else if (view == RegistryView.Registry32 && hive == RegistryHive.LocalMachine && sk.Equals("SOFTWARE", StringComparison.OrdinalIgnoreCase))
-        {
-            sk = @"SOFTWARE\WOW6432Node";
-        }
         return sk.Length == 0 ? HiveName(hive) : $@"{HiveName(hive)}\{sk}";
     }
 
@@ -86,15 +83,60 @@ public static class RegFileFormat
 
     public static string BuildDocument(IEnumerable<RegKeyBlock> blocks)
     {
+        var list = blocks.ToList();
+        bool preserveViews = list.Any(b => b.View != RegistryView.Default);
         var sb = new StringBuilder();
         sb.Append(Header).Append("\r\n\r\n");
-        foreach (var b in blocks)
+        if (preserveViews) sb.Append(RestoreHint).Append("\r\n\r\n");
+        foreach (var b in list)
         {
+            if (preserveViews)
+                sb.Append(ViewMarker).Append(b.View switch { RegistryView.Registry32 => "32", RegistryView.Registry64 => "64", _ => "default" }).Append("\r\n");
             sb.Append('[').Append(b.FullPath).Append("]\r\n");
             foreach (var v in b.Values) sb.Append(FormatValue(v)).Append("\r\n");
             sb.Append("\r\n");
         }
         return sb.ToString();
+    }
+
+    /// <summary>Builds one import document per recorded view. Legacy unmarked .reg files retain their default-view behavior.</summary>
+    public static IReadOnlyList<RegistryRestoreDocument> RestoreDocuments(string document)
+    {
+        if (!document.TrimStart('\uFEFF', ' ', '\r', '\n').StartsWith(Header, StringComparison.Ordinal))
+            throw new FormatException("This is not a Windows Registry Editor backup.");
+        if (!document.Contains(ViewMarker, StringComparison.Ordinal))
+            return new[] { new RegistryRestoreDocument(RegistryView.Default, document) };
+
+        var groups = new Dictionary<RegistryView, StringBuilder>();
+        var hasKeys = new HashSet<RegistryView>();
+        RegistryView view = RegistryView.Default;
+        bool viewSpecified = false;
+        foreach (var line in document.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (line.StartsWith(ViewMarker, StringComparison.Ordinal))
+            {
+                view = line[ViewMarker.Length..].Trim() switch
+                {
+                    "32" => RegistryView.Registry32,
+                    "64" => RegistryView.Registry64,
+                    "default" => RegistryView.Default,
+                    _ => throw new FormatException("The backup contains an invalid registry-view marker."),
+                };
+                viewSpecified = true;
+                continue;
+            }
+            if (line.StartsWith('['))
+            {
+                if (!viewSpecified) throw new FormatException("A registry key in the backup has no recorded view.");
+                hasKeys.Add(view);
+            }
+            if (!viewSpecified || line.TrimStart('\uFEFF').Equals(Header, StringComparison.Ordinal)) continue;
+            if (!groups.TryGetValue(view, out var body)) groups[view] = body = new StringBuilder();
+            body.Append(line).Append("\r\n");
+        }
+        if (hasKeys.Count == 0) throw new FormatException("The backup contains no registry keys.");
+        return groups.Where(g => hasKeys.Contains(g.Key))
+            .Select(g => new RegistryRestoreDocument(g.Key, Header + "\r\n\r\n" + g.Value)).ToList();
     }
 
     /// <summary>regedit writes UTF-16 LE with a BOM; <c>reg import</c> expects the same.</summary>
