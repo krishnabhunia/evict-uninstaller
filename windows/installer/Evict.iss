@@ -142,6 +142,8 @@ function EvictCurrentPid(): DWORD;
   external 'GetCurrentProcessId@kernel32.dll stdcall';
 function EvictProcessSession(Pid: DWORD; var Session: DWORD): Integer;
   external 'ProcessIdToSessionId@kernel32.dll stdcall';
+function EvictTickCount(): DWORD;
+  external 'GetTickCount@kernel32.dll stdcall';
 
 function CloseFailureMessage(): String;
 begin
@@ -151,13 +153,71 @@ begin
     '(Bitdefender: Notifications). The Setup log records the Windows error; no protection changes are required.';
 end;
 
+// GetTickCount is monotonic. Widen before subtracting and handle its 49-day rollover.
+function EvictWriteTimeRemaining(Started: DWORD): Integer;
+var
+  Elapsed: Int64;
+begin
+  Elapsed := Int64(EvictTickCount()) - Int64(Started);
+  if Elapsed < 0 then Elapsed := Elapsed + 4294967296;
+  if Elapsed >= 2500 then
+    Result := 0
+  else
+    Result := 2500 - Integer(Elapsed);
+end;
+
+// PIPE_NOWAIT may report success with zero or partial bytes before the server starts reading.
+// Retry only the unwritten suffix; never duplicate bytes or wait indefinitely for a stuck server.
+function WriteEvictExitRequest(Pipe: THandle; Payload: AnsiString): Boolean;
+var
+  Remaining: AnsiString;
+  Written, TotalWritten, Started, ErrorCode: DWORD;
+  DelayMs: Integer;
+begin
+  Result := False;
+  TotalWritten := 0;
+  Started := EvictTickCount();
+  while TotalWritten < DWORD(Length(Payload)) do
+  begin
+    if EvictWriteTimeRemaining(Started) = 0 then break;
+    Remaining := Copy(Payload, Integer(TotalWritten) + 1,
+      Length(Payload) - Integer(TotalWritten));
+    Written := 0;
+    if EvictWriteFile(Pipe, Remaining, Length(Remaining), Written, 0) = 0 then
+    begin
+      ErrorCode := DLLGetLastError;
+      Log('Could not write Evict exit request; delivered bytes ' + IntToStr(TotalWritten) +
+        ', Windows error ' + IntToStr(ErrorCode));
+      exit;
+    end;
+    if Written > DWORD(Length(Remaining)) then
+    begin
+      Log('Evict exit pipe returned an invalid byte count: ' + IntToStr(Written));
+      exit;
+    end;
+    TotalWritten := TotalWritten + Written;
+    if TotalWritten < DWORD(Length(Payload)) then
+    begin
+      DelayMs := EvictWriteTimeRemaining(Started);
+      if DelayMs > 50 then DelayMs := 50;
+      if DelayMs > 0 then Sleep(DelayMs);
+    end;
+  end;
+  Result := TotalWritten = DWORD(Length(Payload));
+  if not Result then
+    Log('Evict exit request was only partially written within 2500 ms; bytes ' +
+      IntToStr(TotalWritten) + ' of ' + IntToStr(Length(Payload)))
+  else
+    Log('Evict exit request delivered; bytes ' + IntToStr(TotalWritten));
+end;
+
 // --exit is six ASCII/UTF-8 bytes, exactly CommandLineOptions.Pack(new[] { "--exit" }).
 // Close the byte-pipe connection after writing so the running app receives EOF.
 // Never extract or launch the bundled EXE merely to contact the current instance.
 function AskEvictToExit(): Boolean;
 var
   Pipe, Process: THandle;
-  Pid, Session, SetupSession, ImageSize, Mode, Written, ErrorCode, WaitResult: DWORD;
+  Pid, Session, SetupSession, ImageSize, Mode, ErrorCode, WaitResult: DWORD;
   Image: String;
   Payload: AnsiString;
 begin
@@ -232,20 +292,7 @@ begin
       exit;
     end;
     Payload := Utf8Encode('--exit');
-    Written := 0;
-    if EvictWriteFile(Pipe, Payload, Length(Payload), Written, 0) = 0 then
-    begin
-      ErrorCode := DLLGetLastError;
-      Log('Could not write Evict exit request; bytes ' + IntToStr(Written) +
-        ', Windows error ' + IntToStr(ErrorCode));
-      exit;
-    end;
-    if Written <> DWORD(Length(Payload)) then
-    begin
-      Log('Evict exit request was only partially written; bytes ' + IntToStr(Written) +
-        ' of ' + IntToStr(Length(Payload)));
-      exit;
-    end;
+    if not WriteEvictExitRequest(Pipe, Payload) then exit;
     Result := True;
   finally
     EvictCloseHandle(Pipe);

@@ -55,6 +55,14 @@ function Assert-NoExistingInstall {
     } finally { $mutex.Dispose() }
 }
 
+function Assert-NoInstanceMutex {
+    $created = $false
+    $mutex = [Threading.Mutex]::new($false, 'Local\EvictUninstaller.SingleInstance', [ref]$created)
+    try {
+        if (-not $created) { throw 'Released-instance fixture still has a single-instance mutex.' }
+    } finally { $mutex.Dispose() }
+}
+
 function Wait-FixtureProcess([Diagnostics.Process]$Process, [int]$Seconds) {
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
     while (-not $Process.WaitForExit(1000)) {
@@ -158,6 +166,16 @@ using System.Text;
 if (args.Length != 3) return 2;
 using var mutex = new Mutex(true, @"Local\EvictUninstaller.SingleInstance", out var created);
 if (!created) return 3;
+if (args[0] == "released")
+{
+    // Matches the self-update handoff: IPC/mutex disappear before the image is unmapped.
+    // Release on the acquiring thread before the first await, then close the named object.
+    mutex.ReleaseMutex();
+    mutex.Dispose();
+    File.WriteAllText(args[1], Environment.ProcessId.ToString());
+    await Task.Delay(TimeSpan.FromSeconds(3));
+    return 0;
+}
 if (args[0] == "no-pipe")
 {
     File.WriteAllText(args[1], Environment.ProcessId.ToString());
@@ -195,6 +213,18 @@ return payload == "--exit" ? 0 : 5;
     }
     Assert-PackagedExe 'IPC replacement'
 
+    Write-Host 'Installer smoke: released mutex while apphost remains mapped must wait for exit.'
+    $mock = Start-Mock 'released'
+    Assert-NoInstanceMutex
+    if ($mock.Process.HasExited) { throw 'Released-instance fixture exited before Setup started.' }
+    $log = Invoke-Setup 'released' $true
+    if (-not $mock.Process.HasExited) {
+        throw 'Setup completed while the released-instance fixture PID was still running.'
+    }
+    $code = Wait-FixtureProcess $mock.Process 10
+    if ($code -ne 0) { throw "Released-instance fixture exited unexpectedly: $code" }
+    Assert-PackagedExe 'Released-mutex replacement'
+
     Write-Host 'Installer smoke: locked destination without mutex must abort unchanged.'
     $before = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
     $lock = [IO.FileStream]::new($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
@@ -222,7 +252,7 @@ return payload == "--exit" ? 0 : 5;
     }
     $mock.Process.Kill($false)
     $mock.Process.WaitForExit(5000) | Out-Null
-    Write-Host 'Installer smoke passed: fresh, IPC replacement, locked image and unavailable pipe.'
+    Write-Host 'Installer smoke passed: fresh, IPC replacement, released-mutex replacement, locked image and unavailable pipe.'
 } finally {
     foreach ($process in $processes) {
         try {
