@@ -39,9 +39,11 @@ public sealed partial class ResidualViewModel : ObservableObject
     [ObservableProperty] private int _removed;
     [ObservableProperty] private int _failed;
     [ObservableProperty] private long _bytesReclaimed;
+    [ObservableProperty] private long _bytesRemoved;
 
     public bool AnythingChanged { get; private set; }
     public string BytesReclaimedText => SizeFormatter.Format(BytesReclaimed);
+    public string CleanupSpaceText => $"{SizeFormatter.Format(BytesRemoved)} removed from original locations; {BytesReclaimedText} permanently deleted. Recycled data still occupies disk space.";
     public int HistoryCandidates => _services.History.Entries.Count(h => h.Method is UninstallMethod.Standard or UninstallMethod.Quiet or UninstallMethod.Force);
     public int BrokenCount => _installed.Count(p => p.IsBrokenEntry);
     public string HistoryHint => $"{HistoryCandidates} uninstall(s) recorded in History will be re-checked.";
@@ -91,13 +93,16 @@ public sealed partial class ResidualViewModel : ObservableObject
         var progress = new Progress<ProgressReport>(r => { StatusText = r.Message; if (r.Percent is { } p) Progress = p; });
         var result = await _services.Cleaner.CleanAsync(items, new CleanupOptions { SendToRecycleBin = SendToRecycleBin }, progress, CancellationToken.None);
         Removed = result.Removed; Failed = result.Failed; BytesReclaimed = result.BytesReclaimed;
+        BytesRemoved = result.BytesRemoved;
         OnPropertyChanged(nameof(BytesReclaimedText));
+        OnPropertyChanged(nameof(CleanupSpaceText));
         foreach (var (item, error) in result.Errors) Errors.Add($"{item.Path}: {error}");
         AnythingChanged = true;
         _services.History.Add(new UninstallHistoryEntry
         {
             ProgramName = "Residual Cleaner", Method = UninstallMethod.Force, Succeeded = result.Failed == 0,
             LeftoversFound = Review.TotalCount, LeftoversRemoved = result.Removed, BytesReclaimed = result.BytesReclaimed,
+            BytesRemoved = result.BytesRemoved,
             Notes = $"Removed leftovers of previously uninstalled programs ({items.Count} selected)",
         });
         Step = ResidualStep.Done;

@@ -17,6 +17,7 @@ public static class SingleInstance
 {
     private const string PipeName = "EvictUninstaller.Args.v1";
     private static CancellationTokenSource? _cts;
+    private static Action<string[]>? _onArgs;
 
     /// <summary>Tries to forward the arguments to an already running instance. Returns true on success.</summary>
     public static bool TryForward(string[] args)
@@ -39,6 +40,8 @@ public static class SingleInstance
     /// <summary>Starts listening; <paramref name="onArgs"/> is invoked on the UI thread for every message.</summary>
     public static void StartServer(Action<string[]> onArgs)
     {
+        Stop();
+        _onArgs = onArgs;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         _ = Task.Run(async () =>
@@ -66,6 +69,11 @@ public static class SingleInstance
     }
 
     public static void Stop() => _cts?.Cancel();
+
+    public static void RestartServer()
+    {
+        if (_onArgs != null) StartServer(_onArgs);
+    }
 
     /// <summary>
     /// The pipe grants this user read/write explicitly: with the default security, a copy without administrator rights

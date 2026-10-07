@@ -21,6 +21,8 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
     private bool _loadedOnce;
     private readonly TaskCompletionSource _firstLoad = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _fullLoad = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task? _currentLoad;
+    private Exception? _lastLoadException;
 
     /// <summary>Completes once the program list has been populated at least once (starts a load if needed).</summary>
     public async Task EnsureLoadedAsync()
@@ -34,6 +36,19 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
     {
         if (!_loadedOnce && !IsBusy) _ = RefreshAsync();
         await _fullLoad.Task;
+    }
+
+    /// <summary>Each new health scan needs a current inventory; share a load that is already in progress.</summary>
+    public async Task RefreshForScanAsync()
+    {
+        var load = _currentLoad is { IsCompleted: false } ? _currentLoad : RefreshAsync();
+        while (true)
+        {
+            await load;
+            if (_currentLoad == load) break;
+            load = _currentLoad!; // a user refresh superseded the load this scan joined
+        }
+        if (_lastLoadException != null) throw new InvalidOperationException("The installed-program inventory could not be refreshed.", _lastLoadException);
     }
 
     /// <summary>Opens the uninstall wizard for one program (used by the widget, context menu and command line).</summary>
@@ -72,6 +87,10 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
     /// <summary>Programs with any uninstall problem (broken entry, missing / no uninstaller, failed before).</summary>
     public int CountBroken => Items.Count(i => i.HasUninstallIssue);
     public int VisibleCount => ProgramsView.Cast<object>().Count();
+    public int HiddenSelectedCount => Items.Count(i => i.IsSelected && !ProgramsView.Contains(i));
+    public string SelectionSummary => SelectedCount == 1
+        ? "1 program selected" + (HiddenSelectedCount > 0 ? " (hidden by this filter)" : "")
+        : $"{SelectedCount} programs selected" + (HiddenSelectedCount > 0 ? $" ({HiddenSelectedCount} hidden by this filter)" : "");
 
     public string TabDescription => SelectedTab switch
     {
@@ -109,6 +128,7 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
         ProgramsView.Refresh();
         OnPropertyChanged(nameof(VisibleCount));
         UpdateSummary();
+        UpdateSelectionState();
     }
 
     private bool FilterItem(object o)
@@ -127,10 +147,17 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
     }
 
     [RelayCommand]
-    public async Task RefreshAsync()
+    public Task RefreshAsync()
+    {
+        _currentLoad = RefreshCoreAsync();
+        return _currentLoad;
+    }
+
+    private async Task RefreshCoreAsync()
     {
         _loadCts?.Cancel();
         var cts = _loadCts = new CancellationTokenSource();
+        _lastLoadException = null;
         if (_fullLoad.Task.IsCompleted) _fullLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         IsBusy = true;
         ProgressIndeterminate = true;
@@ -167,6 +194,8 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
         catch (OperationCanceledException) { /* superseded */ }
         catch (Exception ex)
         {
+            if (_loadCts != cts) return;
+            _lastLoadException = ex;
             StatusText = "Failed to load programs: " + ex.Message;
             Log.Error("Programs load failed", ex);
             _firstLoad.TrySetResult();
@@ -247,6 +276,8 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
         try
         {
             SelectedCount = Items.Count(i => i.IsSelected);
+            OnPropertyChanged(nameof(HiddenSelectedCount));
+            OnPropertyChanged(nameof(SelectionSummary));
             var visible = ProgramsView.Cast<ProgramItemViewModel>().ToList();
             int sel = visible.Count(v => v.IsSelected);
             AllSelected = visible.Count == 0 ? false : sel == 0 ? false : sel == visible.Count ? true : null;

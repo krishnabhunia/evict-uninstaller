@@ -6,6 +6,7 @@ namespace Evict.Core.Tests;
 
 public class Build4Tests
 {
+    private const string ScanUserSid = "S-1-5-21-1-2-3-1001";
     // ───────────── installer detection heuristics ─────────────
 
     [Theory]
@@ -84,9 +85,11 @@ public class Build4Tests
         Assert.Contains("--scheduled-scan", xml);
         Assert.Contains("S-1-5-21-1-2-3-1001", xml);
         Assert.NotNull(doc.Root);
-        var daily = ScheduledScanTask.BuildTaskXml("e.exe", "Daily", 22, 0, null);
+        var daily = ScheduledScanTask.BuildTaskXml("e.exe", "Daily", 22, 0, ScanUserSid);
         Assert.Contains("<ScheduleByDay>", daily);
-        Assert.DoesNotContain("<UserId>", daily);
+        Assert.Contains("<UserId>" + ScanUserSid + "</UserId>", daily);
+        Assert.Contains("<AllowHardTerminate>false</AllowHardTerminate>", daily);
+        Assert.Contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", daily);
         Assert.Contains("T22:00:00", daily);
     }
 
@@ -135,15 +138,15 @@ public class Build4Tests
     [Fact]
     public void ScheduledScan_BuildsWeeklyAndDailyArguments()
     {
-        var weekly = ScheduledScanTask.BuildCreateArguments(@"C:\Tools\Evict\Evict.exe", "Weekly", 10, 0);
+        var weekly = ScheduledScanTask.BuildCreateArguments(@"C:\Tools\Evict\Evict.exe", "Weekly", 10, 0, ScanUserSid);
         Assert.Contains("/SC WEEKLY /D SUN", weekly);
-        Assert.Contains("/XML", ScheduledScanTask.BuildCreateFromXmlArguments(@"C:\x\t.xml"));
+        Assert.Contains("/XML", ScheduledScanTask.BuildCreateFromXmlArguments(@"C:\x\t.xml", ScanUserSid));
         Assert.Contains("/ST 10:00", weekly);
         Assert.Contains(@"\""C:\Tools\Evict\Evict.exe\"" --scheduled-scan", weekly);
-        Assert.Contains($"/TN \"{ScheduledScanTask.TaskName}\"", weekly);
+        Assert.Contains($"/TN \"{ScheduledScanTask.TaskNameForUser(ScanUserSid)}\"", weekly);
         Assert.Contains("/F", weekly);
 
-        var daily = ScheduledScanTask.BuildCreateArguments(@"C:\Tools\Evict\Evict.exe", "Daily", 23, 6);
+        var daily = ScheduledScanTask.BuildCreateArguments(@"C:\Tools\Evict\Evict.exe", "Daily", 23, 6, ScanUserSid);
         Assert.Contains("/SC DAILY", daily);
         Assert.DoesNotContain("/D ", daily);
         Assert.Contains("/ST 23:00", daily);
@@ -152,17 +155,17 @@ public class Build4Tests
     [Fact]
     public void ScheduledScan_ClampsAndValidates()
     {
-        Assert.Contains("/ST 23:00", ScheduledScanTask.BuildCreateArguments("e.exe", "Daily", 99, 0));
-        Assert.Contains("/D SAT", ScheduledScanTask.BuildCreateArguments("e.exe", "Weekly", 9, 42));
-        Assert.Throws<ArgumentException>(() => ScheduledScanTask.BuildCreateArguments("e.exe", "Off", 9, 0));
-        Assert.Throws<ArgumentException>(() => ScheduledScanTask.BuildCreateArguments("e.exe", "Monthly", 9, 0));
+        Assert.Contains("/ST 23:00", ScheduledScanTask.BuildCreateArguments("e.exe", "Daily", 99, 0, ScanUserSid));
+        Assert.Contains("/D SAT", ScheduledScanTask.BuildCreateArguments("e.exe", "Weekly", 9, 42, ScanUserSid));
+        Assert.Throws<ArgumentException>(() => ScheduledScanTask.BuildCreateArguments("e.exe", "Off", 9, 0, ScanUserSid));
+        Assert.Throws<ArgumentException>(() => ScheduledScanTask.BuildCreateArguments("e.exe", "Monthly", 9, 0, ScanUserSid));
         Assert.True(ScheduledScanTask.IsValidMode("weekly"));
         Assert.False(ScheduledScanTask.IsValidMode(null));
         Assert.Equal("Off", ScheduledScanTask.Describe("Off", 9, 0));
         Assert.StartsWith("Daily at", ScheduledScanTask.Describe("Daily", 9, 0));
         Assert.StartsWith("Weekly on", ScheduledScanTask.Describe("Weekly", 9, 0));
-        Assert.Contains(ScheduledScanTask.TaskName, ScheduledScanTask.BuildDeleteArguments());
-        Assert.Contains("/Query", ScheduledScanTask.BuildQueryArguments());
+        Assert.Contains(ScheduledScanTask.TaskNameForUser(ScanUserSid), ScheduledScanTask.BuildDeleteArguments(ScanUserSid));
+        Assert.Contains("/Query", ScheduledScanTask.BuildQueryArguments(ScanUserSid));
     }
 
     // ───────────── command line & settings ─────────────

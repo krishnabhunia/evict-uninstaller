@@ -30,6 +30,35 @@ final class ScannerRulesTests: XCTestCase {
                                     path: NSHomeDirectory() + "/Library/Caches/com.acme.otherproduct",
                                     kind: .caches, target: target())
         XCTAssertEqual(item?.confidence, .medium)
+        XCTAssertEqual(item?.isSharedVendorMatch, true)
+    }
+
+    func testDisablingSharedLibraryPreservesOnlyUserRoots() {
+        var settings = Settings()
+        settings.scanSystemLocations = false
+        let roots = LeftoverScanner.configuredRoots(LeftoverScanner.allRoots, settings: settings)
+        XCTAssertEqual(roots.map(\.path), LeftoverScanner.userRoots.map(\.path))
+    }
+
+    func testBrandNameAndWeakProductWordDoNotUpgradeVendorOwnership() {
+        let scanTarget = target(name: "GitHub Desktop", bundleID: "com.github.GitHubClient", prefix: "com.github")
+        let sibling = scanner.evaluate(entry: "com.github.otherproduct",
+                                       path: NSHomeDirectory() + "/Library/Caches/com.github.otherproduct",
+                                       kind: .caches, target: scanTarget)
+        XCTAssertEqual(sibling?.confidence, .medium)
+        XCTAssertEqual(sibling?.isSharedVendorMatch, true)
+    }
+
+    func testLowConfidenceVisibilityChangesScanResults() throws {
+        let root = NSHomeDirectory() + "/Library/Caches/EvictKitTests-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: root + "/AcmeWriter Extras", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        var settings = Settings()
+        let scanTarget = target(bundleID: nil, prefix: nil, bundlePath: nil)
+        let roots = [LeftoverScanner.SearchRoot(root, .caches)]
+        XCTAssertEqual(scanner.scan(scanTarget, roots: roots, settings: settings).count, 1)
+        settings.showLowConfidenceItems = false
+        XCTAssertTrue(scanner.scan(scanTarget, roots: roots, settings: settings).isEmpty)
     }
 
     func testLooseNameMatchIsLowConfidence() {

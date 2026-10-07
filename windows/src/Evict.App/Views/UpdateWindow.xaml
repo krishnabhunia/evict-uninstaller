@@ -7,7 +7,7 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:UpdateViewModel}"
         Style="{StaticResource Window.Dialog}"
-        Title="Update Evict" Width="640" Height="560" MinWidth="520" MinHeight="420"
+        Title="Update Evict" Width="680" Height="650" MinWidth="580" MinHeight="520"
         Icon="pack://application:,,,/Assets/app.ico">
 
     <Grid Margin="24">
@@ -44,6 +44,15 @@
         </Border>
 
         <StackPanel Grid.Row="3" Margin="0,12,0,0">
+            <CheckBox IsChecked="{Binding IncludeBetaUpdates}" Content="Include beta and other prerelease updates"
+                      IsEnabled="{Binding IsBusy, Converter={StaticResource InvBool}}" Margin="0,0,0,8" />
+            <TextBlock Text="Beta updates are optional. Use Settings → Updates → Check now after changing channels."
+                       Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,0,0,8" />
+            <Border Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="8" Padding="12,8" Margin="0,0,0,10"
+                    Visibility="{Binding IsBetaRelease, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="Beta / prerelease build: features may be unfinished. Review the notes; installation asks for confirmation."
+                           Style="{StaticResource Text.Body}" TextWrapping="Wrap" />
+            </Border>
             <Grid Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <ProgressBar Grid.Row="0" Height="8" Value="{Binding Progress, Mode=OneWay}" Maximum="100" IsIndeterminate="{Binding IsIndeterminate}" />
@@ -66,7 +75,7 @@
             <StackPanel Grid.Column="1" Orientation="Horizontal">
                 <Button Style="{StaticResource Button.Secondary}" Content="Later" Command="{Binding LaterCommand}" MinWidth="100" Margin="0,0,10,0" IsCancel="True" />
                 <Button Style="{StaticResource Button.Primary}" Content="Download and install" Command="{Binding InstallCommand}" MinWidth="170" IsDefault="True"
-                        Visibility="{Binding CanInstall, Converter={StaticResource BoolToVis}}" />
+                        Visibility="{Binding CanInstall, Converter={StaticResource BoolToVis}}" IsEnabled="{Binding IsBusy, Converter={StaticResource InvBool}}" />
             </StackPanel>
         </Grid>
     </Grid>

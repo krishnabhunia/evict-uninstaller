@@ -20,6 +20,12 @@ public sealed class CleanupOptions
 /// <summary>Deletes the items a <see cref="LeftoverScanner"/> found. Each item is independent; failures are collected.</summary>
 public sealed class LeftoverCleaner
 {
+    private readonly Func<string, bool, CleanupOptions, PathDeletionResult> _deletePath;
+
+    public LeftoverCleaner() : this((path, directory, options) => DeletePathDetailed(path, directory, options)) { }
+
+    internal LeftoverCleaner(Func<string, bool, CleanupOptions, PathDeletionResult> deletePath) => _deletePath = deletePath;
+
     public Task<CleanupResult> CleanAsync(IEnumerable<LeftoverItem> items, CleanupOptions options, IProgress<ProgressReport>? progress, CancellationToken ct) =>
         Task.Run(() => Clean(items, options, progress, ct), ct);
 
@@ -66,12 +72,14 @@ public sealed class LeftoverCleaner
             ct.ThrowIfCancellationRequested();
             n++;
             progress?.Report(new ProgressReport($"Removing {item.Path}", 100.0 * n / Math.Max(1, list.Count)));
+            PathDeletionResult? pathResult = null;
+            if (item.IsFileSystem)
+                pathResult = _deletePath(item.Path, item.Kind == LeftoverKind.Folder, options);
             string? error = notBackedUp.TryGetValue(item, out var backupError)
                 ? "Not deleted – it could not be backed up first: " + backupError
                 : item.Kind switch
             {
-                LeftoverKind.Folder => DeletePath(item.Path, isDirectory: true, options),
-                LeftoverKind.File or LeftoverKind.Shortcut => DeletePath(item.Path, isDirectory: false, options),
+                LeftoverKind.Folder or LeftoverKind.File or LeftoverKind.Shortcut => pathResult!.Value.Error,
                 LeftoverKind.RegistryKey => DeleteRegistryKey(item),
                 LeftoverKind.RegistryValue or LeftoverKind.StartupEntry => DeleteRegistryValue(item),
                 LeftoverKind.Service => DeleteService(item),
@@ -86,8 +94,13 @@ public sealed class LeftoverCleaner
             }
             if (error is null)
             {
+                if (pathResult is { Removed: false }) continue; // already absent; no bytes were removed
                 result.Removed++;
-                result.BytesReclaimed += item.SizeBytes;
+                result.RemovedItems.Add(item);
+                long bytes = item.IsFileSystem ? Math.Max(0, item.SizeBytes) : 0;
+                result.BytesRemoved += bytes;
+                if (pathResult is { Recycled: true }) result.RecycledPaths.Add(item.Path);
+                else result.BytesReclaimed += bytes;
                 Log.Info($"Removed [{item.Kind}] {item.Path}");
             }
             else
@@ -105,29 +118,41 @@ public sealed class LeftoverCleaner
     /// <param name="trustedRoot">The caller has already verified the path lies inside a folder it owns the cleanup of
     /// (e.g. Windows\Temp) – skips the generic protected-folder refusal that guards uninstall leftovers.</param>
     public static string? DeletePath(string path, bool isDirectory, CleanupOptions options, bool trustedRoot = false)
+        => DeletePathDetailed(path, isDirectory, options, trustedRoot).Error;
+
+    internal readonly record struct PathDeletionResult(string? Error, bool Removed = false, bool Recycled = false);
+
+    // Dependencies can be replaced by tests so failed recycling never exercises real shell deletion.
+    internal static PathDeletionResult DeletePathDetailed(string path, bool isDirectory, CleanupOptions options, bool trustedRoot = false,
+        Func<string, int>? recycle = null, Action<string, bool, CleanupOptions>? permanentDelete = null)
     {
         try
         {
-            if (isDirectory ? !Directory.Exists(path) : !File.Exists(path)) return null; // already gone
+            if (!PathUtil.TryCanonicalizeAbsolute(path, out var canonical)) return new("Refusing an invalid or ambiguous path.");
+            path = canonical;
+            if (isDirectory ? !Directory.Exists(path) : !File.Exists(path)) return new(null); // already gone
+            if (PathUtil.HasReparsePoint(path)) return new("Refusing a path containing a symbolic link or junction.");
 
             if (!trustedRoot && isDirectory && PathUtil.IsProtectedRoot(path, checkProtectedNames: false))
-                return "Refusing to delete a protected system folder.";
+                return new("Refusing to delete a protected system folder.");
 
             if (options.SendToRecycleBin)
             {
-                int rc = NativeMethods.SendToRecycleBin(path);
-                if (rc == 0) return null;
-                // 0x71 = DE_SAMEFILE etc.; fall through to a hard delete for anything the shell refused.
-                Log.Warn($"Recycle bin refused {path} (0x{rc:X}); trying permanent delete.");
+                int rc = (recycle ?? NativeMethods.SendToRecycleBin)(path);
+                if (rc != 0) return new($"Could not send this item to the Recycle Bin (0x{rc:X8}). It was not permanently deleted.");
+                if (isDirectory ? Directory.Exists(path) : File.Exists(path))
+                    return new("The item is still present after the Recycle Bin operation.");
+                return new(null, Removed: true, Recycled: true);
             }
 
-            if (isDirectory) DeleteDirectoryHard(path, options);
+            if (permanentDelete != null) permanentDelete(path, isDirectory, options);
+            else if (isDirectory) DeleteDirectoryHard(path, options);
             else DeleteFileHard(path, options);
-            return null;
+            return new(null, Removed: true);
         }
         catch (Exception ex)
         {
-            return ex.Message;
+            return new(ex.Message);
         }
     }
 
@@ -146,36 +171,58 @@ public sealed class LeftoverCleaner
         }
     }
 
-    private static void DeleteDirectoryHard(string path, CleanupOptions options)
+    internal static void DeleteDirectoryHard(string path, CleanupOptions options)
     {
-        var enumOpts = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true, AttributesToSkip = 0 };
+        path = Path.GetFullPath(path);
+        if (PathUtil.HasReparsePoint(path)) throw new IOException("Refusing a directory reached through a symbolic link or junction.");
         var lockedAny = false;
-        foreach (var file in Directory.EnumerateFiles(path, "*", enumOpts))
+        DeleteDirectoryContents(path, path, options, ref lockedAny);
+        if (lockedAny) throw new IOException("Some files are in use - their removal is scheduled for the next restart.");
+    }
+
+    private static void DeleteDirectoryContents(string directory, string root, CleanupOptions options, ref bool lockedAny)
+    {
+        if (!PathUtil.IsUnder(directory, root) || PathUtil.HasReparsePoint(directory))
+            throw new IOException("Refusing to leave the selected directory or follow a junction.");
+        var enumOpts = new EnumerationOptions { IgnoreInaccessible = false, RecurseSubdirectories = false, AttributesToSkip = 0 };
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", enumOpts))
         {
+            if (!PathUtil.IsUnder(entry, root)) throw new IOException("Refusing to leave the selected directory.");
+            var attributes = File.GetAttributes(entry);
+            bool isDirectory = (attributes & FileAttributes.Directory) != 0;
+            // Delete the link itself without traversing it or changing its target's attributes.
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                if (isDirectory) Directory.Delete(entry, recursive: false);
+                else File.Delete(entry);
+                continue;
+            }
+            if (isDirectory)
+            {
+                DeleteDirectoryContents(entry, root, options, ref lockedAny);
+                continue;
+            }
+            if (PathUtil.HasReparsePoint(entry)) throw new IOException("The path changed to a symbolic link or junction.");
             try
             {
-                File.SetAttributes(file, FileAttributes.Normal);
-                File.Delete(file);
+                File.SetAttributes(entry, FileAttributes.Normal);
+                File.Delete(entry);
             }
             catch (IOException) when (options.ScheduleLockedForReboot && ElevationHelper.IsElevated)
             {
+                if (!NativeMethods.MoveFileExW(entry, null, NativeMethods.MOVEFILE_DELAY_UNTIL_REBOOT)) throw;
                 lockedAny = true;
-                NativeMethods.MoveFileExW(file, null, NativeMethods.MOVEFILE_DELAY_UNTIL_REBOOT);
             }
         }
-        foreach (var dir in Directory.EnumerateDirectories(path, "*", enumOpts).OrderByDescending(d => d.Length))
-        {
-            try { new DirectoryInfo(dir).Attributes = FileAttributes.Normal; Directory.Delete(dir, false); } catch { lockedAny = true; }
-        }
+        if (PathUtil.HasReparsePoint(directory)) throw new IOException("The directory changed to a symbolic link or junction.");
         try
         {
-            new DirectoryInfo(path).Attributes = FileAttributes.Normal;
-            Directory.Delete(path, recursive: true);
+            new DirectoryInfo(directory).Attributes = FileAttributes.Normal;
+            Directory.Delete(directory, recursive: false);
         }
-        catch (IOException) when (lockedAny && ElevationHelper.IsElevated)
+        catch (IOException) when (lockedAny && options.ScheduleLockedForReboot && ElevationHelper.IsElevated)
         {
-            NativeMethods.MoveFileExW(path, null, NativeMethods.MOVEFILE_DELAY_UNTIL_REBOOT);
-            throw new IOException("Some files are in use – the folder will be removed at the next restart.");
+            if (!NativeMethods.MoveFileExW(directory, null, NativeMethods.MOVEFILE_DELAY_UNTIL_REBOOT)) throw;
         }
     }
 

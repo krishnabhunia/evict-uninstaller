@@ -7,7 +7,12 @@ public sealed class HistoryStore
 {
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true, PropertyNameCaseInsensitive = true };
     private readonly object _gate = new();
+    private readonly string? _file;
     private List<UninstallHistoryEntry> _entries = new();
+
+    public HistoryStore() { }
+    internal HistoryStore(string file) => _file = file;
+    private string FilePath => _file ?? AppPaths.HistoryFile;
 
     public IReadOnlyList<UninstallHistoryEntry> Entries
     {
@@ -20,8 +25,8 @@ public sealed class HistoryStore
         {
             try
             {
-                if (File.Exists(AppPaths.HistoryFile))
-                    _entries = JsonSerializer.Deserialize<List<UninstallHistoryEntry>>(File.ReadAllText(AppPaths.HistoryFile), Options) ?? new();
+                if (File.Exists(FilePath))
+                    _entries = JsonSerializer.Deserialize<List<UninstallHistoryEntry>>(File.ReadAllText(FilePath), Options) ?? new();
             }
             catch { _entries = new(); }
         }
@@ -45,6 +50,17 @@ public sealed class HistoryStore
         }
     }
 
+    /// <summary>Updates the same operation after a retry or restore rather than adding another history row.</summary>
+    public void Upsert(UninstallHistoryEntry entry)
+    {
+        lock (_gate)
+        {
+            var index = _entries.FindIndex(e => e.Id == entry.Id);
+            if (index < 0) _entries.Add(entry); else _entries[index] = entry;
+            Persist();
+        }
+    }
+
     public void Clear()
     {
         lock (_gate)
@@ -56,7 +72,7 @@ public sealed class HistoryStore
 
     private void Persist()
     {
-        try { File.WriteAllText(AppPaths.HistoryFile, JsonSerializer.Serialize(_entries, Options)); }
+        try { File.WriteAllText(FilePath, JsonSerializer.Serialize(_entries, Options)); }
         catch { /* ignore */ }
     }
 }

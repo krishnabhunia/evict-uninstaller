@@ -1,6 +1,7 @@
 using Evict.Core.Models;
 using Evict.Core.Util;
 using Microsoft.Win32;
+using System.ServiceProcess;
 
 namespace Evict.Core.Services;
 
@@ -51,6 +52,8 @@ public sealed class SystemCleanupResult
     public long BytesFreed { get; set; }
     /// <summary>Installer-cache packages moved to the backup folder (still on the disk until that folder is deleted).</summary>
     public long BytesMoved { get; set; }
+    /// <summary>Items moved to the Recycle Bin still occupy disk space.</summary>
+    public long BytesRecycled { get; set; }
     public List<string> Errors { get; } = new();
     public string? BackupFolder { get; set; }
 }
@@ -87,6 +90,23 @@ public static class InstallerCacheLogic
 /// </summary>
 public sealed class SystemCleanupService
 {
+    private readonly Func<bool> _isElevated;
+    private readonly Func<string, bool> _serviceRunning;
+    private readonly Func<string, string, CancellationToken, Task> _serviceControl;
+    private readonly Func<string, bool, CleanupOptions, bool, LeftoverCleaner.PathDeletionResult> _deletePath;
+
+    public SystemCleanupService() : this(() => ElevationHelper.IsElevated, ServiceRunning, ServiceControl) { }
+
+    internal SystemCleanupService(Func<bool> isElevated, Func<string, bool> serviceRunning,
+        Func<string, string, CancellationToken, Task> serviceControl,
+        Func<string, bool, CleanupOptions, bool, LeftoverCleaner.PathDeletionResult>? deletePath = null)
+    {
+        _isElevated = isElevated;
+        _serviceRunning = serviceRunning;
+        _serviceControl = serviceControl;
+        _deletePath = deletePath ?? ((p, d, o, t) => LeftoverCleaner.DeletePathDetailed(p, d, o, t));
+    }
+
     private static string WinDir => Environment.GetFolderPath(Environment.SpecialFolder.Windows);
     private static string SystemDrive => Path.GetPathRoot(WinDir) ?? "C:\\";
     public static string BackupRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Evict", "InstallerCacheBackup");
@@ -591,59 +611,96 @@ public sealed class SystemCleanupService
 
         // Windows Update cache: stop the services first, restart afterwards.
         bool touchesUpdateCache = list.Any(s => s.Group.Category == CleanupCategory.UpdateCache);
-        if (touchesUpdateCache && ElevationHelper.IsElevated)
-        {
-            progress?.Report(new ProgressReport("Stopping Windows Update services…", 2));
-            await ServiceControl("stop", "wuauserv", ct).ConfigureAwait(false);
-            await ServiceControl("stop", "bits", ct).ConfigureAwait(false);
-        }
+        var runningServices = touchesUpdateCache && _isElevated()
+            ? new[] { "wuauserv", "bits" }.Where(_serviceRunning).ToList() : new List<string>();
+        var stopAttempted = new List<string>();
+        Exception? operationError = null;
+        var recoveryErrors = new List<Exception>();
 
-        string? backupDir = null;
-        foreach (var (group, item) in list)
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            done++;
-            progress?.Report(new ProgressReport($"Removing {PathUtil.LeafName(item.Path)}…", 5 + 90.0 * done / Math.Max(1, list.Count)));
-            try
+            foreach (var service in runningServices)
             {
-                if (group.SpecialAction is { } special)
-                {
-                    if (special.StartsWith("powershell:", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var res = await PowerShellRunner.RunScriptAsync(special["powershell:".Length..], ct, TimeSpan.FromMinutes(3)).ConfigureAwait(false);
-                        if (res.Success) { result.Removed++; result.BytesFreed += item.Size; }
-                        else { result.Failed++; result.Errors.Add($"{group.Title}: {res.StdErr.Trim()}"); }
-                    }
-                    // ms-settings: links are opened by the UI, not here.
-                    continue;
-                }
-
-                if (group.Category == CleanupCategory.InstallerCache && moveInstallerCacheToBackup)
-                {
-                    backupDir ??= Path.Combine(BackupRoot, DateTime.Now.ToString("yyyy-MM-dd_HHmm"));
-                    Directory.CreateDirectory(backupDir);
-                    var target = Path.Combine(backupDir, PathUtil.LeafName(item.Path));
-                    if (File.Exists(target)) target = Path.Combine(backupDir, Path.GetFileNameWithoutExtension(target) + "_" + Guid.NewGuid().ToString("N")[..6] + Path.GetExtension(target));
-                    File.Move(item.Path, target);
-                    result.Removed++; result.BytesMoved += item.Size;
-                    result.BackupFolder = backupDir;
-                    continue;
-                }
-
-                // Items inside the fixed cleanup roots may be deleted even though they live under C:\Windows.
-                bool trusted = CleanupRoots.Any(r => PathUtil.IsUnder(item.Path, r));
-                var err = LeftoverCleaner.DeletePath(item.Path, item.IsDirectory, new CleanupOptions { SendToRecycleBin = group.UseRecycleBin, ScheduleLockedForReboot = false }, trustedRoot: trusted);
-                if (err is null) { result.Removed++; result.BytesFreed += item.Size; }
-                else { result.Failed++; result.Errors.Add($"{item.Path}: {err}"); }
+                ct.ThrowIfCancellationRequested();
+                progress?.Report(new ProgressReport("Stopping Windows Update services…", 2));
+                // A failed stop command may already have changed the service, so restore it too.
+                stopAttempted.Add(service);
+                await _serviceControl("stop", service, ct).ConfigureAwait(false);
             }
-            catch (Exception ex) { result.Failed++; result.Errors.Add($"{item.Path}: {ex.Message}"); }
-        }
 
-        if (touchesUpdateCache && ElevationHelper.IsElevated)
+            string? backupDir = null;
+            foreach (var (group, item) in list)
+            {
+                ct.ThrowIfCancellationRequested();
+                done++;
+                progress?.Report(new ProgressReport($"Removing {PathUtil.LeafName(item.Path)}…", 5 + 90.0 * done / Math.Max(1, list.Count)));
+                try
+                {
+                    if (group.SpecialAction is { } special)
+                    {
+                        if (special.StartsWith("powershell:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var res = await PowerShellRunner.RunScriptAsync(special["powershell:".Length..], ct, TimeSpan.FromMinutes(3)).ConfigureAwait(false);
+                            if (res.Success) { result.Removed++; result.BytesFreed += item.Size; }
+                            else { result.Failed++; result.Errors.Add($"{group.Title}: {res.StdErr.Trim()}"); }
+                        }
+                        // ms-settings: links are opened by the UI, not here.
+                        continue;
+                    }
+
+                    if (group.Category == CleanupCategory.InstallerCache && moveInstallerCacheToBackup)
+                    {
+                        backupDir ??= Path.Combine(BackupRoot, DateTime.Now.ToString("yyyy-MM-dd_HHmm"));
+                        Directory.CreateDirectory(backupDir);
+                        var target = Path.Combine(backupDir, PathUtil.LeafName(item.Path));
+                        if (File.Exists(target)) target = Path.Combine(backupDir, Path.GetFileNameWithoutExtension(target) + "_" + Guid.NewGuid().ToString("N")[..6] + Path.GetExtension(target));
+                        File.Move(item.Path, target);
+                        result.Removed++; result.BytesMoved += item.Size;
+                        result.BackupFolder = backupDir;
+                        continue;
+                    }
+
+                    // Items inside the fixed cleanup roots may be deleted even though they live under C:\Windows.
+                    bool trusted = CleanupRoots.Any(r => PathUtil.IsUnder(item.Path, r));
+                    var deletion = _deletePath(item.Path, item.IsDirectory, new CleanupOptions { SendToRecycleBin = group.UseRecycleBin, ScheduleLockedForReboot = false }, trusted);
+                    if (deletion.Error != null) { result.Failed++; result.Errors.Add($"{item.Path}: {deletion.Error}"); }
+                    else if (deletion.Removed)
+                    {
+                        result.Removed++;
+                        if (deletion.Recycled) result.BytesRecycled += item.Size;
+                        else result.BytesFreed += item.Size;
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { result.Failed++; result.Errors.Add($"{item.Path}: {ex.Message}"); }
+            }
+        }
+        catch (Exception ex) { operationError = ex; }
+        finally
         {
-            progress?.Report(new ProgressReport("Starting Windows Update services…", 97));
-            await ServiceControl("start", "bits", ct).ConfigureAwait(false);
-            await ServiceControl("start", "wuauserv", ct).ConfigureAwait(false);
+            foreach (var service in stopAttempted.AsEnumerable().Reverse())
+            {
+                using var recovery = new CancellationTokenSource(TimeSpan.FromSeconds(65));
+                try
+                {
+                    progress?.Report(new ProgressReport($"Restoring {service}…", 97));
+                    await _serviceControl("start", service, recovery.Token).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    var error = $"Could not restore {service}: {ex.Message}";
+                    Log.Warn(error);
+                    result.Failed++;
+                    result.Errors.Add(error);
+                    recoveryErrors.Add(new IOException(error, ex));
+                }
+            }
+        }
+        if (operationError != null)
+        {
+            if (recoveryErrors.Count > 0)
+                throw new AggregateException("Cleanup stopped, and restoring Windows Update services failed. " + string.Join(" ", recoveryErrors.Select(e => e.Message)), new[] { operationError }.Concat(recoveryErrors));
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(operationError).Throw();
         }
         progress?.Report(new ProgressReport("Done", 100));
         Log.Info($"System cleanup: removed {result.Removed}, failed {result.Failed}, freed {SizeFormatter.Format(result.BytesFreed)}");
@@ -652,7 +709,13 @@ public sealed class SystemCleanupService
 
     private static async Task ServiceControl(string verb, string service, CancellationToken ct)
     {
-        try { await ProcessRunner.RunCapturedAsync(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "net.exe"), $"{verb} {service}", ct, TimeSpan.FromSeconds(60)).ConfigureAwait(false); }
-        catch (Exception ex) { Log.Warn($"net {verb} {service}: {ex.Message}"); }
+        var result = await ProcessRunner.RunCapturedAsync(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "net.exe"), $"{verb} {service}", ct, TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        if (!result.Success) throw new IOException($"net {verb} {service} failed: {(result.StdErr + " " + result.StdOut).Trim()}");
+    }
+
+    private static bool ServiceRunning(string name)
+    {
+        using var service = new ServiceController(name);
+        return service.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending;
     }
 }

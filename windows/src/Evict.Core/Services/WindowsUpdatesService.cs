@@ -7,6 +7,26 @@ namespace Evict.Core.Services;
 /// <summary>Lists installed Windows updates (Win32_QuickFixEngineering via Get-HotFix) and uninstalls them with wusa.exe.</summary>
 public sealed class WindowsUpdatesService
 {
+    private readonly Func<bool> _isElevated;
+    private readonly Func<string, string, CancellationToken, Task<int?>> _runUninstaller;
+    private readonly Func<CancellationToken, Task<(List<WindowsUpdateInfo> Updates, string? Error)>> _readUpdates;
+
+    public WindowsUpdatesService()
+    {
+        _isElevated = () => ElevationHelper.IsElevated;
+        _runUninstaller = (exe, args, ct) => ProcessRunner.RunShellAndWaitAsync(exe, args, null, ct);
+        _readUpdates = GetUpdatesAsync;
+    }
+
+    internal WindowsUpdatesService(Func<bool> isElevated,
+        Func<string, string, CancellationToken, Task<int?>> runUninstaller,
+        Func<CancellationToken, Task<(List<WindowsUpdateInfo> Updates, string? Error)>> readUpdates)
+    {
+        _isElevated = isElevated;
+        _runUninstaller = runUninstaller;
+        _readUpdates = readUpdates;
+    }
+
     private sealed class Row
     {
         public string? HotFixID { get; set; }
@@ -39,22 +59,36 @@ public sealed class WindowsUpdatesService
         return (list, error);
     }
 
-    /// <summary>Runs "wusa /uninstall /kb:NNN /quiet /norestart". Exit 3010 = reboot required, 2359303 = not found.</summary>
+    /// <summary>Supported interactive WUSA removal. The user sees Windows' confirmation and restart prompts.</summary>
     public async Task<(bool Ok, string Message, bool RebootRequired)> UninstallAsync(WindowsUpdateInfo update, CancellationToken ct)
     {
-        if (!ElevationHelper.IsElevated) return (false, "Administrator rights are required to uninstall Windows updates.", false);
-        var kb = Regex.Match(update.HotFixId, @"\d+").Value;
+        if (!_isElevated()) return (false, "Administrator rights are required to uninstall Windows updates.", false);
+        var kb = Regex.Match(update.HotFixId, @"^KB([1-9]\d*)$", RegexOptions.IgnoreCase).Groups[1].Value;
         if (kb.Length == 0) return (false, "Invalid KB number.", false);
         var wusa = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wusa.exe");
-        var res = await ProcessRunner.RunCapturedAsync(wusa, $"/uninstall /kb:{kb} /quiet /norestart", ct, TimeSpan.FromMinutes(20)).ConfigureAwait(false);
-        return res.ExitCode switch
+        int? exitCode;
+        try { exitCode = await _runUninstaller(wusa, $"/uninstall /kb:{kb}", ct).ConfigureAwait(false); }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            0 => (true, $"KB{kb} uninstalled.", false),
-            3010 or 1641 => (true, $"KB{kb} uninstalled – a restart is required to finish.", true),
+            return (false, "Windows update removal was cancelled.", false);
+        }
+        if (exitCode == 0)
+        {
+            var (remaining, error) = await _readUpdates(ct).ConfigureAwait(false);
+            if (error != null) return (false, $"The command completed, but removal of KB{kb} could not be verified: {error}", false);
+            if (remaining.Any(u => u.HotFixId.Equals(update.HotFixId, StringComparison.OrdinalIgnoreCase)))
+                return (false, $"KB{kb} still appears installed. Removal was not verified; check Windows Settings and any restart prompt.", false);
+            return (true, $"KB{kb} uninstalled and verified absent.", false);
+        }
+        return exitCode switch
+        {
+            3010 or 1641 => (true, $"Removal of KB{kb} requires a restart to finish; its final state must be checked afterwards.", true),
+            1223 or unchecked((int)0x800704C7) or unchecked((int)0x8024000B) => (false, "Windows update removal was cancelled.", false),
             2359303 or unchecked((int)0x80240017) => (false, $"KB{kb} is not installed or cannot be uninstalled.", false),
             unchecked((int)0x800f0905) => (false, "This update is part of the servicing stack and cannot be removed.", false),
             unchecked((int)0x800f0825) => (false, "This update is permanent and cannot be uninstalled.", false),
-            _ => (false, $"wusa exited with code {res.ExitCode} (0x{res.ExitCode:X8}).", false),
+            null => (false, "Windows did not return an update-removal process to monitor.", false),
+            _ => (false, $"wusa exited with code {exitCode} (0x{exitCode:X8}).", false),
         };
     }
 }

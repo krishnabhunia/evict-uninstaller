@@ -46,8 +46,8 @@ anything survived.
 | Tier | When | Pre-ticked |
 |---|---|---|
 | High | Named after the bundle ID (or a sub-identifier of it), or a launch agent whose program lives inside the app bundle, or a `/usr/local/bin` symlink pointing into it | Yes |
-| Medium | Same vendor prefix (`com.vendor.*`), or a folder named exactly like the app | Yes |
-| Low | Name merely looks like the app's | No — listed with its reason |
+| Medium | Same vendor prefix (`com.vendor.*`), or a folder named exactly like the app | Exact app name: yes; vendor-only/shared match: manual selection required |
+| Low | Name merely looks like the app's | No by default; visibility and preselection follow Settings |
 
 Filler words (`app`, `helper`, `player`, `updater`, `mac`, vendor suffixes like `inc`, `llc`) never
 count as evidence on their own, which is what stops "Media Player" matching "Acme Player".

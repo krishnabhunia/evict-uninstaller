@@ -46,7 +46,8 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     [ObservableProperty] private string? _error;
     [ObservableProperty] private DateTime? _lastChecked;
 
-    public string Summary => Items.Count == 0 ? (LastChecked is null ? "Not checked yet." : "Everything is up to date.") : $"{Items.Count} update(s) available";
+    public string Summary => IsBusy ? "Checking for updates." : Error != null ? "Updates could not be checked."
+        : Items.Count == 0 ? (LastChecked is null ? "Not checked yet." : "Everything is up to date.") : $"{Items.Count} update(s) available";
 
     /// <summary>How many updates run concurrently (setting). MSI-based installers still serialise themselves; winget retries those.</summary>
     public IReadOnlyList<KeyValuePair<int, string>> ParallelOptions { get; } = new[]
@@ -73,13 +74,14 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         if (!_loaded && WingetAvailable) _ = CheckAsync();
     }
 
-    partial void OnIsBusyChanged(bool value) => UpdateSelectedCommand.NotifyCanExecuteChanged();
+    partial void OnIsBusyChanged(bool value) { UpdateSelectedCommand.NotifyCanExecuteChanged(); OnPropertyChanged(nameof(Summary)); }
     partial void OnIsUpdatingChanged(bool value) => UpdateSelectedCommand.NotifyCanExecuteChanged();
+    partial void OnErrorChanged(string? value) => OnPropertyChanged(nameof(Summary));
 
     [RelayCommand]
     public async Task CheckAsync()
     {
-        if (!WingetAvailable) return;
+        if (!WingetAvailable || IsBusy || IsUpdating) return;
         IsBusy = true;
         Error = null;
         StatusText = "Checking for updates with winget… (this can take a minute)";
@@ -95,8 +97,8 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
                 Items.Add(vm);
             }
             Error = err;
-            LastChecked = DateTime.Now;
-            _loaded = true;
+            if (err is null) LastChecked = DateTime.Now;
+            _loaded = err is null;
             UpdateSelection();
             StatusText = "";
         }
@@ -127,6 +129,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     {
         var targets = Items.Where(i => i.IsSelected).ToList();
         if (targets.Count == 0) return;
+        bool includeUnknown = IncludeUnknown;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         IsUpdating = true;
@@ -160,7 +163,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
                         var clean = line.Trim();
                         if (clean.All(c => c is '-' or '\\' or '|' or '/' or ' ' or '█' or '▒')) return;
                         ui.BeginInvoke(() => { LogLines.Add($"[{t.Name}] {clean}"); if (LogLines.Count > 600) LogLines.RemoveAt(0); });
-                    });
+                    }, includeUnknown: includeUnknown);
                     await ui.InvokeAsync(() =>
                     {
                         t.IsUpdating = false;

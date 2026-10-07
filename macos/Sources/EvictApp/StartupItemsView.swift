@@ -4,6 +4,7 @@ import EvictKit
 
 /// launchd agents and daemons – the Mac equivalent of the Windows startup list.
 struct StartupItemsView: View {
+    @EnvironmentObject private var state: AppState
     @State private var items: [StartupItem] = []
     @State private var isLoading = false
     @State private var message: String?
@@ -40,7 +41,8 @@ struct StartupItemsView: View {
             } else {
                 List {
                     ForEach(items) { item in
-                        StartupRow(item: item) { pendingRemoval = item }
+                        StartupRow(item: item) { requestRemoval(item) }
+                            .disabled(state.isRemoving)
                     }
                 }
                 .listStyle(.inset)
@@ -50,7 +52,9 @@ struct StartupItemsView: View {
         .alert("Move this startup item to the Trash?", isPresented: Binding(
             get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } })) {
             Button("Cancel", role: .cancel) { pendingRemoval = nil }
-            Button("Move to Trash", role: .destructive) { remove() }
+            Button("Move to Trash", role: .destructive) {
+                if let item = pendingRemoval { remove(item) }
+            }
         } message: {
             Text(pendingRemoval.map { "\($0.label)\n\($0.path)\n\nThe job is unloaded first, then its file goes to the Trash. You can put it back at any time." } ?? "")
         }
@@ -67,8 +71,13 @@ struct StartupItemsView: View {
         }
     }
 
-    private func remove() {
-        guard let item = pendingRemoval else { return }
+    private func requestRemoval(_ item: StartupItem) {
+        guard !state.isRemoving else { return }
+        if state.settings.confirmBeforeRemoving { pendingRemoval = item }
+        else { remove(item) }
+    }
+
+    private func remove(_ item: StartupItem) {
         pendingRemoval = nil
         launchItems.unload(item)
         do {

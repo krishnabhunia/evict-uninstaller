@@ -91,7 +91,7 @@ public static class Program
     /// also a copy (or Setup) without administrator rights while this one runs as administrator, which the default
     /// security of an elevated process would refuse.
     /// </summary>
-    private static bool AcquireSingleInstance()
+    private static bool AcquireSingleInstance(bool failClosed = false)
     {
         bool createdNew;
         try
@@ -114,7 +114,7 @@ public static class Program
                 return createdNew;
             }
             catch (UnauthorizedAccessException) { return false; }
-            catch { return true; }
+            catch { return !failClosed; }
         }
     }
 
@@ -140,5 +140,18 @@ public static class Program
         try { _mutex?.ReleaseMutex(); } catch { /* not owned */ }
         try { _mutex?.Dispose(); } catch { /* ignore */ }
         _mutex = null;
+    }
+
+    /// <summary>Restores argument forwarding and ownership when a restart or update could not start.</summary>
+    public static bool RestoreSingleInstance()
+    {
+        if (_mutex != null) return true;
+        if (!AcquireSingleInstance(failClosed: true))
+        {
+            ReleaseSingleInstance();
+            return false;
+        }
+        SingleInstance.RestartServer();
+        return true;
     }
 }

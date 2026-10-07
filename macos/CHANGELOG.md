@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Keep vendor-only and shared leftovers unchecked, select the application bundle deliberately and revalidate owned command-line links before moving them to Trash.
+- Correct history date decoding, application deduplication, Apple app eligibility and verified removal counters.
+- Apply scan and review settings, prevent dismissing an active removal, and describe bytes moved to Trash accurately.
+
 ## 0.1.0 — Build 1 (18 Sep 2026)
 
 First build. Nothing here has been run on a Mac yet — it compiles on CI and the core logic is

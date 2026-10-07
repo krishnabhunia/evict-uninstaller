@@ -145,9 +145,11 @@
                 <StackPanel>
                     <TextBlock Text="Updates" Style="{StaticResource Text.Section}" Margin="0,0,0,12" />
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding CheckForUpdates}" Content="Check for a new version on GitHub when Evict starts" />
+                    <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding IncludeBetaUpdates}" Content="Include beta and other prerelease updates (optional)" IsEnabled="{Binding CanChangeUpdateChannel}" />
+                    <TextBlock Style="{StaticResource Hint}" Text="{Binding UpdateChannelText}" TextWrapping="Wrap" />
                     <TextBlock Style="{StaticResource Hint}" Text="{Binding EditionText}" />
                     <StackPanel Orientation="Horizontal">
-                        <Button Style="{StaticResource Button.Secondary}" Content="Check now" Command="{Binding CheckForUpdatesNowCommand}" IsEnabled="{Binding IsCheckingForUpdates, Converter={StaticResource InvBool}}" />
+                        <Button Style="{StaticResource Button.Secondary}" Content="Check now" Command="{Binding CheckForUpdatesNowCommand}" IsEnabled="{Binding CanChangeUpdateChannel}" />
                         <Button Style="{StaticResource Button.Primary}" Content="Install update" Command="{Binding ShowUpdateCommand}" Margin="8,0,0,0" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVis}}" />
                         <Button Style="{StaticResource Button.Link}" Content="All releases on GitHub" Command="{Binding OpenReleasesCommand}" Margin="8,0,0,0" />
                         <ProgressBar IsIndeterminate="True" Width="120" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsCheckingForUpdates, Converter={StaticResource BoolToVis}}" />

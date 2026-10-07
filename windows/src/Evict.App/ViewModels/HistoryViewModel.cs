@@ -29,7 +29,10 @@ public sealed class HistoryItemViewModel
     public string ResultText => Entry.Succeeded ? "Succeeded" : "Check";
     public bool Succeeded => Entry.Succeeded;
     public string LeftoversText => Entry.LeftoversFound == 0 ? "—" : $"{Entry.LeftoversRemoved}/{Entry.LeftoversFound}";
-    public string ReclaimedText => Entry.BytesReclaimed > 0 ? SizeFormatter.Format(Entry.BytesReclaimed) : "—";
+    public string ReclaimedText => Entry.BytesReclaimed > 0 ? SizeFormatter.Format(Entry.BytesReclaimed) : "-";
+    public string SpaceText => Entry.BytesRemoved > 0
+        ? $"{SizeFormatter.Format(Entry.BytesRemoved)} / {SizeFormatter.Format(Entry.BytesReclaimed)}"
+        : Entry.BytesReclaimed > 0 ? SizeFormatter.Format(Entry.BytesReclaimed) + " (recorded)" : "-";
     public string Notes => Entry.Notes ?? "";
     public bool HasLocation => !string.IsNullOrEmpty(Entry.InstallLocation);
 }
@@ -56,7 +59,7 @@ public sealed partial class HistoryViewModel : ObservableObject, IActivatable
         get
         {
             var all = _services.History.Entries;
-            return all.Count == 0 ? "No uninstalls recorded yet." : $"{all.Count} operations · {SizeFormatter.Format(all.Sum(e => e.BytesReclaimed))} reclaimed in total";
+            return all.Count == 0 ? "No uninstalls recorded yet." : $"{all.Count} operations · {SizeFormatter.Format(all.Sum(e => e.BytesRemoved))} removed from original locations";
         }
     }
 
@@ -110,9 +113,9 @@ public sealed partial class HistoryViewModel : ObservableObject, IActivatable
         var dlg = new Microsoft.Win32.SaveFileDialog { FileName = "evict-history.csv", Filter = "CSV file|*.csv" };
         if (dlg.ShowDialog() != true) return;
         var sb = new StringBuilder();
-        sb.AppendLine("Timestamp,Program,Publisher,Version,Method,Succeeded,ExitCode,LeftoversFound,LeftoversRemoved,BytesReclaimed,Notes");
+        sb.AppendLine("Timestamp,Program,Publisher,Version,Method,Succeeded,ExitCode,LeftoversFound,LeftoversRemoved,BytesReclaimed,Notes,BytesRemoved");
         foreach (var e in _services.History.Entries)
-            sb.AppendLine(string.Join(",", Csv(e.Timestamp.ToString("s")), Csv(e.ProgramName), Csv(e.Publisher), Csv(e.Version), Csv(e.Method.ToString()), e.Succeeded, e.ExitCode?.ToString() ?? "", e.LeftoversFound, e.LeftoversRemoved, e.BytesReclaimed, Csv(e.Notes)));
+            sb.AppendLine(string.Join(",", Csv(e.Timestamp.ToString("s")), Csv(e.ProgramName), Csv(e.Publisher), Csv(e.Version), Csv(e.Method.ToString()), e.Succeeded, e.ExitCode?.ToString() ?? "", e.LeftoversFound, e.LeftoversRemoved, e.BytesReclaimed, Csv(e.Notes), e.BytesRemoved));
         File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
         static string Csv(string? s) => "\"" + (s ?? "").Replace("\"", "\"\"") + "\"";
     }

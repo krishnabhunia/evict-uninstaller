@@ -5,7 +5,7 @@ import Foundation
 /// Only the folders in `SearchRoot.all` are looked at, only their direct children are considered,
 /// and every candidate must both match the application *and* pass `SafePaths.check` before it is
 /// ever shown to the user.
-public struct LeftoverScanner {
+public struct LeftoverScanner: Sendable {
 
     public struct SearchRoot: Sendable {
         public let path: String
@@ -95,18 +95,26 @@ public struct LeftoverScanner {
 
     public static var allRoots: [SearchRoot] { userRoots + systemRoots }
 
+    static func configuredRoots(_ roots: [SearchRoot], settings: Settings) -> [SearchRoot] {
+        settings.scanSystemLocations ? roots : roots.filter {
+            !SafePaths.isInside($0.path, root: AppPaths.systemLibrary)
+        }
+    }
+
     /// Everything that looks like it belongs to `target`, sorted strongest evidence first.
-    public func scan(_ target: Target, roots: [SearchRoot] = LeftoverScanner.allRoots) -> [LeftoverItem] {
+    public func scan(_ target: Target, roots: [SearchRoot] = LeftoverScanner.allRoots,
+                     settings: Settings = Settings()) -> [LeftoverItem] {
         var items: [LeftoverItem] = []
         var seen = Set<String>()
 
-        for root in roots {
+        for root in Self.configuredRoots(roots, settings: settings) {
             guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root.path) else { continue }
             for entry in entries where !entry.hasPrefix(".") {
                 if let suffix = root.suffix, !entry.hasSuffix(suffix) { continue }
                 let path = root.path + "/" + entry
                 guard !seen.contains(path) else { continue }
                 guard let match = evaluate(entry: entry, path: path, kind: root.kind, target: target) else { continue }
+                if !settings.showLowConfidenceItems && match.confidence == .low { continue }
                 guard SafePaths.check(path).isAllowed else { continue }
                 seen.insert(path)
                 items.append(match)
@@ -114,7 +122,7 @@ public struct LeftoverScanner {
         }
 
         items.append(contentsOf: commandLineLinks(target, seen: &seen))
-        items.append(contentsOf: target.receiptIdentifiers.map {
+        items.append(contentsOf: (settings.scanSystemLocations ? target.receiptIdentifiers : []).map {
             LeftoverItem(path: "pkgutil:" + $0, kind: .receipt, confidence: .high, sizeBytes: 0,
                          reason: "Installer receipt for this app", receiptIdentifier: $0, needsAdmin: true)
         })
@@ -129,9 +137,10 @@ public struct LeftoverScanner {
         let bare = strippedName(entry)
         let needsAdmin = SafePaths.needsAdmin(path)
 
-        func item(_ confidence: Confidence, _ reason: String) -> LeftoverItem {
+        func item(_ confidence: Confidence, _ reason: String, sharedVendor: Bool = false) -> LeftoverItem {
             LeftoverItem(path: path, kind: kind, confidence: confidence,
-                         sizeBytes: FileSize.measure(path), reason: reason, needsAdmin: needsAdmin)
+                         sizeBytes: FileSize.measure(path), reason: reason, needsAdmin: needsAdmin,
+                         isSharedVendorMatch: sharedVendor)
         }
 
         // 1. A launchd job whose program lives inside the app bundle – the strongest possible link.
@@ -146,11 +155,12 @@ public struct LeftoverScanner {
             return item(.high, "Named after the app's bundle ID (\(bundleID))")
         }
 
-        // 3. Same vendor prefix – likely a helper of the same app, but could be a sibling product.
+        // 3. Same vendor prefix - likely a helper of the same app, but could be a sibling product.
         if let prefix = target.bundleIdentifierPrefix, NameMatching.matchesVendorPrefix(bare, bundleIdentifierPrefix: prefix) {
-            let strong = NameMatching.matchesAppName(bare, appName: target.name)
-            return item(strong ? .high : .medium,
-                        strong ? "Vendor folder that also names the app" : "Belongs to the same vendor (\(prefix))")
+            // App-name matching can reduce to the vendor name when words such as "Desktop"
+            // are discarded. Never upgrade a vendor-only match on that basis.
+            return item(.medium, "Same vendor (\(prefix)); may be shared or belong to another application",
+                        sharedVendor: true)
         }
 
         // 4. Named after the app itself.
@@ -174,13 +184,11 @@ public struct LeftoverScanner {
                 let path = folder + "/" + entry
                 guard !seen.contains(path),
                       let destination = try? fm.destinationOfSymbolicLink(atPath: path) else { continue }
-                let resolved = destination.hasPrefix("/") ? destination : folder + "/" + destination
-                guard SafePaths.isInside(SafePaths.normalize(resolved), root: bundlePath),
-                      SafePaths.check(path).isAllowed else { continue }
+                guard SafePaths.checkOwnedBinaryLink(path, destination: destination, bundlePath: bundlePath).isAllowed else { continue }
                 seen.insert(path)
                 items.append(LeftoverItem(path: path, kind: .binary, confidence: .high, sizeBytes: 0,
                                           reason: "Command-line shortcut pointing into the app",
-                                          needsAdmin: SafePaths.needsAdmin(path)))
+                                          needsAdmin: SafePaths.needsAdmin(path), ownedBundlePath: bundlePath))
             }
         }
         return items

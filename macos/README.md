@@ -17,19 +17,21 @@ so nothing it does is permanent.
 | Uninstall | Finds everything belonging to the app across `~/Library` and `/Library`, groups it by kind, and lets you tick each item before anything moves. |
 | Force Uninstall | For apps that are already gone: search by name, or drop a bundle, and clean up what is left. |
 | Startup Items | Launch agents and daemons, with the ones whose program no longer exists flagged as orphans. |
-| History | What was removed, when, and how much space it freed. |
+| History | What was moved to the Trash, when, and its measured size. Disk space is reclaimed only after the Trash is emptied. |
 | Settings | Appearance, scan scope, confirmation behaviour, Full Disk Access status. |
 
 ## Safety
 
 1. **Nothing is deleted.** Every removal is a move to the Trash, so anything can be put back.
-2. **One gate for every path.** `SafePaths.check` refuses anything outside a known-cleanable folder,
+2. **One safety policy for every path.** `SafePaths` refuses anything outside a known-cleanable folder,
    anything in a SIP-protected location, anything in your own Documents/Desktop/Downloads/Mail, and
    the shared folders themselves (`~/Library/Caches` can be cleaned inside, never removed).
 3. **Verified, not assumed.** After a move, the path is read again. If it is still there, the item is
    reported as failed rather than counted as removed.
-4. **Low-confidence finds are never pre-ticked.** They are listed with the reason they were flagged
-   so you can decide.
+4. **Uncertain finds require review.** Low-confidence items are unchecked by default; their visibility
+   and preselection can be changed in Settings. Vendor-only or shared matches always require manual selection.
+5. **Owned command-line links only.** Shortcuts in `/usr/local/bin` and `/opt/homebrew/bin` must still
+   point inside the selected removable application when they are moved. Other Homebrew files are not allowed.
 
 ## Requirements
 

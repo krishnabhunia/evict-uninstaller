@@ -36,7 +36,7 @@ public sealed class SelfCleanupReport
 /// </summary>
 public static class SelfCleanupService
 {
-    public const string ScheduledTaskName = "Evict Software Health scan";
+    public static string ScheduledTaskName => ScheduledScanTask.TaskNameForUser(ScheduledScanService.CurrentUserSid());
     private const string ContextMenuVerb = "EvictUninstall";
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string SendToShortcut = "Uninstall with Evict.lnk";
@@ -258,9 +258,9 @@ public static class SelfCleanupService
         // Scheduled scan (per user; schtasks needs no admin for the user's own task).
         try
         {
-            var schtasks = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe");
-            var res = ProcessRunner.RunCapturedAsync(schtasks, $"/Delete /F /TN \"{ScheduledTaskName}\"", CancellationToken.None, TimeSpan.FromSeconds(30)).GetAwaiter().GetResult();
-            if (res.ExitCode == 0) r.Removed.Add("Scheduled task: " + ScheduledTaskName);
+            var res = new ScheduledScanService().ApplyAsync("Off", 0, 0, CancellationToken.None).GetAwaiter().GetResult();
+            if (res.Ok) r.Removed.Add("Scheduled scan for this user");
+            else r.Failed.Add("Scheduled scan: " + res.Error);
         }
         catch (Exception ex) { r.Failed.Add($"Scheduled task: {ex.Message}"); }
 

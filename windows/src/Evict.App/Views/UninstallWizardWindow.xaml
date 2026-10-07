@@ -59,7 +59,7 @@
                     <TextBlock Text="{Binding RestorePointHint}" Style="{StaticResource Text.Caption}" Margin="26,2,0,8" />
                     <CheckBox IsChecked="{Binding QuietMode}" Content="Silent uninstall where the installer supports it (MSI, Inno Setup, NSIS…)" Margin="0,0,0,8" />
                     <CheckBox IsChecked="{Binding ScanLeftovers}" Content="Powerful Scan: search for leftover files, folders and registry entries afterwards" Margin="0,0,0,8" />
-                    <CheckBox IsChecked="{Binding AutoClean}" IsEnabled="{Binding ScanLeftovers}" Content="Remove leftovers automatically (skip the review step; only 'Review' items are kept)" Margin="26,0,0,8" />
+                    <CheckBox IsChecked="{Binding AutoClean}" IsEnabled="{Binding ScanLeftovers}" Content="Remove only high-confidence leftovers automatically (force removals always require review)" Margin="26,0,0,8" />
                     <CheckBox IsChecked="{Binding SendToRecycleBin}" Content="Send leftover files to the Recycle Bin instead of deleting permanently (can be undone)" />
                     <Border Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="8" Padding="12,8" Margin="0,10,0,0" Visibility="{Binding RunningNowText, Converter={StaticResource BoolToVis}}">
                         <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Text="{Binding RunningNowText}" />
@@ -174,8 +174,8 @@
                     <TextBlock Style="{StaticResource Text.Subtitle}">
                         <Run Text="{Binding ProgramsUninstalled, Mode=OneWay}" /><Run Text=" program(s) uninstalled ·" />
                         <Run Text="{Binding LeftoversRemoved, Mode=OneWay}" /><Run Text=" leftover item(s) removed ·" />
-                        <Run Text="{Binding BytesReclaimedText, Mode=OneWay}" /><Run Text=" reclaimed" />
                     </TextBlock>
+                    <TextBlock Text="{Binding CleanupSpaceText}" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" MaxWidth="640" Margin="0,4,0,0" />
                 </StackPanel>
             </StackPanel>
 

@@ -44,9 +44,35 @@ final class SafePathsTests: XCTestCase {
         XCTAssertFalse(SafePaths.isAllowed("\(home)/Library/Caches/../../Documents"))
     }
 
-    func testNeedsAdminOutsideHome() {
-        XCTAssertTrue(SafePaths.needsAdmin("/Library/Application Support/Acme"))
+    func testUserLocationsAreNotClassifiedAsAdministratorOnly() {
         XCTAssertFalse(SafePaths.needsAdmin("\(home)/Library/Caches/com.acme.app"))
+    }
+
+    func testWritableParentOutsideHomeDoesNotRequireAdministrator() throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("EvictPermissionTests-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        XCTAssertFalse(SafePaths.needsAdmin(parent.appendingPathComponent("Fixture.app").path))
+    }
+
+    func testOwnedAppleSiliconLinksHaveNarrowPermission() {
+        let path = "/opt/homebrew/bin/acme"
+        XCTAssertFalse(SafePaths.check(path).isAllowed, "Arbitrary Homebrew files must remain protected")
+        XCTAssertTrue(SafePaths.checkOwnedBinaryLink(path,
+                        destination: "/Applications/Acme.app/Contents/MacOS/acme",
+                        bundlePath: "/Applications/Acme.app").isAllowed)
+        XCTAssertTrue(SafePaths.checkOwnedBinaryLink(path,
+                        destination: "../../../Applications/Acme.app/Contents/MacOS/acme",
+                        bundlePath: "/Applications/Acme.app").isAllowed)
+        XCTAssertFalse(SafePaths.checkOwnedBinaryLink(path,
+                         destination: "/Applications/Other.app/Contents/MacOS/acme",
+                         bundlePath: "/Applications/Acme.app").isAllowed)
+        XCTAssertFalse(SafePaths.checkOwnedBinaryLink("/opt/homebrew/lib/acme",
+                         destination: "/Applications/Acme.app/Contents/MacOS/acme",
+                         bundlePath: "/Applications/Acme.app").isAllowed)
+        XCTAssertFalse(SafePaths.checkOwnedBinaryLink(path,
+                         destination: "/System/Applications/Calculator.app/Contents/MacOS/Calculator",
+                         bundlePath: "/System/Applications/Calculator.app").isAllowed)
     }
 
     func testNormalizeAndIsInside() {

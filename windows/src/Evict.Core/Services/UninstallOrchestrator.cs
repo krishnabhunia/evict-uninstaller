@@ -18,6 +18,8 @@ public sealed class UninstallJob
     public List<string> Attempts { get; } = new();
     /// <summary>The user chose Force uninstall after the uninstaller failed: leftovers are scanned although the program is still installed.</summary>
     public bool ForceRemoval { get; set; }
+    /// <summary>True only after reviewed cleanup removed items and the installation was verified absent.</summary>
+    public bool ForceRemovalVerified { get; set; }
     public LeftoverScanResult? Scan { get; set; }
     public JobStatus Status { get; set; } = JobStatus.Pending;
     public string Message { get; set; } = "";
@@ -98,6 +100,36 @@ public sealed class UninstallOrchestrator
     public static void Complete(UninstallJob job)
     {
         bool clean = job.Outcome is UninstallOutcome.Succeeded && !job.ForceRemoval;
-        job.Status = clean || (job.Outcome is null && !job.Program.HasUninstaller) ? JobStatus.Completed : JobStatus.CompletedWithWarnings;
+        job.Status = clean || (job.ForceRemoval && job.ForceRemovalVerified) ? JobStatus.Completed : JobStatus.CompletedWithWarnings;
+    }
+
+    public static bool CanAutoClean(UninstallJob job) =>
+        job.Program.HasUninstaller && !job.ForceRemoval && job.Outcome == UninstallOutcome.Succeeded;
+
+    /// <summary>Conservative completion check after force cleanup. Unreadable or unknown installation state is not success.</summary>
+    public static bool VerifyForcedRemoval(UninstallJob job, bool cleanupChanged)
+    {
+        if (!job.ForceRemoval || !cleanupChanged) return false;
+        try
+        {
+            using var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(job.Program.Hive, job.Program.View);
+            using var key = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" + job.Program.KeyName);
+            if (key != null) return false;
+            var folder = job.Fingerprint?.InstallLocation ?? job.Program.InstallLocation;
+            var exe = job.Fingerprint?.PrimaryExecutable ?? job.Program.PrimaryExecutable;
+            if (string.IsNullOrWhiteSpace(folder) && string.IsNullOrWhiteSpace(exe) && !job.Program.IsBrokenEntry) return false;
+            if (!string.IsNullOrWhiteSpace(folder) && !ConfirmedMissing(folder)) return false;
+            if (!string.IsNullOrWhiteSpace(exe) && !ConfirmedMissing(exe)) return false;
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private static bool ConfirmedMissing(string path)
+    {
+        try { File.GetAttributes(Path.GetFullPath(path.Trim().Trim('"'))); return false; }
+        catch (FileNotFoundException) { return true; }
+        catch (DirectoryNotFoundException) { return true; }
+        catch { return false; }
     }
 }

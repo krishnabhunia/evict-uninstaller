@@ -1,4 +1,6 @@
 using System.Text;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using Evict.Core.Models;
 
 namespace Evict.Core.Services;
@@ -9,6 +11,22 @@ namespace Evict.Core.Services;
 /// </summary>
 public sealed class WingetService
 {
+    private readonly Func<string?> _findWinget;
+    private readonly Func<string, string, CancellationToken, TimeSpan, Action<string>?, Task<ProcessResult>> _runCaptured;
+
+    public WingetService()
+    {
+        _findWinget = FindWinget;
+        _runCaptured = (exe, args, ct, timeout, onLine) => ProcessRunner.RunCapturedAsync(exe, args, ct, timeout, onLine, Encoding.UTF8);
+    }
+
+    internal WingetService(Func<string?> findWinget,
+        Func<string, string, CancellationToken, TimeSpan, Action<string>?, Task<ProcessResult>> runCaptured)
+    {
+        _findWinget = findWinget;
+        _runCaptured = runCaptured;
+    }
+
     public static string? FindWinget()
     {
         try
@@ -33,102 +51,129 @@ public sealed class WingetService
 
     public async Task<(List<UpgradablePackage> Packages, string? Error)> GetUpgradesAsync(bool includeUnknown, CancellationToken ct, Action<string>? onLine = null)
     {
-        var winget = FindWinget();
+        var winget = _findWinget();
         if (winget is null) return (new(), "winget (App Installer) was not found. Install it from the Microsoft Store to use Software Updater.");
         var args = "upgrade --accept-source-agreements --disable-interactivity" + (includeUnknown ? " --include-unknown" : "");
-        var res = await ProcessRunner.RunCapturedAsync(winget, args, ct, TimeSpan.FromMinutes(4), onLine, Encoding.UTF8).ConfigureAwait(false);
+        var res = await _runCaptured(winget, args, ct, TimeSpan.FromMinutes(4), onLine).ConfigureAwait(false);
         if (res.TimedOut) return (new(), "winget did not respond in time.");
-        var list = ParseUpgradeTable(res.StdOut);
-        string? err = null;
-        if (list.Count == 0 && res.ExitCode != 0 && !res.StdOut.Contains("No installed package", StringComparison.OrdinalIgnoreCase))
-            err = DescribeFailure(res.ExitCode, res.StdOut + res.StdErr);
-        return (list, err);
+        var parsed = ParseUpgradeOutput(res.StdOut);
+        // Discovery has no package filter: these exit codes mean there is no matching installed upgrade.
+        bool noUpdates = unchecked((uint)res.ExitCode) is 0x8A150014 or 0x8A15002B;
+        if (noUpdates) return (new(), null);
+        if (!res.Success) return (parsed.Packages, DescribeFailure(res.ExitCode, res.StdOut + res.StdErr));
+        if (parsed.Error != null) return (new(), parsed.Error);
+        if (!parsed.Recognized && !res.StdOut.Contains("No installed package", StringComparison.OrdinalIgnoreCase)
+            && !res.StdOut.Contains("No available upgrade", StringComparison.OrdinalIgnoreCase))
+            return (new(), "winget returned an unrecognized update result. Updates could not be checked; review the winget output or try again.");
+        return (parsed.Packages, null);
     }
 
     private static string FirstUseful(string s) =>
         s.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0 && !l.All(c => c is '-' or '\\' or '|' or '/' or ' ')) ?? "";
 
     /// <summary>
-    /// Parses winget's table. Columns are located from the header line so localisation and
-    /// column width changes do not break us: "Name  Id  Version  Available  Source".
+    /// Parses ordered table columns by position rather than translated labels.
+    /// Offsets use display columns so wide Unicode names do not shift package identities.
     /// </summary>
     public static List<UpgradablePackage> ParseUpgradeTable(string output)
+        => ParseUpgradeOutput(output).Packages;
+
+    internal sealed record UpgradeTableResult(List<UpgradablePackage> Packages, bool Recognized, string? Error = null);
+
+    internal static UpgradeTableResult ParseUpgradeOutput(string output)
     {
         var result = new List<UpgradablePackage>();
-        if (string.IsNullOrWhiteSpace(output)) return result;
-        var lines = output.Replace("\r", "").Split('\n');
-
-        int headerIdx = -1;
-        for (int i = 0; i < lines.Length; i++)
+        if (string.IsNullOrWhiteSpace(output)) return new(result, false);
+        var clean = Regex.Replace(output, @"\x1B\[[0-?]*[ -/]*[@-~]", "");
+        var lines = Regex.Replace(clean, @"\r+\n|\r", "\n").Split('\n');
+        int separator = -1;
+        MatchCollection? columns = null;
+        for (int i = 1; i < lines.Length; i++)
         {
-            var l = lines[i];
-            if (l.Contains(" Id ") && l.Contains("Version") && (l.Contains("Available") || l.Contains("Verfügbar") || l.Contains("Disponible")))
-            {
-                headerIdx = i; break;
-            }
+            var line = lines[i].Trim();
+            if (line.Length < 10 || !line.All(c => c == '-')) continue;
+            var candidate = Regex.Matches(lines[i - 1], @"\S(?:.*?\S)?(?=\s{2,}|$)");
+            if (candidate.Count is not (4 or 5)) candidate = Regex.Matches(lines[i - 1], @"\S+");
+            if (candidate.Count is not (4 or 5)) continue;
+            separator = i;
+            columns = candidate;
+            break;
         }
-        if (headerIdx < 0 || headerIdx + 1 >= lines.Length) return result;
-
-        var header = lines[headerIdx];
-        int idCol = header.IndexOf(" Id ", StringComparison.Ordinal) + 1;
-        int verCol = header.IndexOf("Version", idCol, StringComparison.Ordinal);
-        int availCol = IndexOfAny(header, verCol + 7, "Available", "Verfügbar", "Disponible");
-        int srcCol = IndexOfAny(header, availCol + 5, "Source", "Quelle", "Fuente", "Origine");
-        if (idCol <= 0 || verCol <= idCol || availCol <= verCol) return result;
-
-        for (int i = headerIdx + 1; i < lines.Length; i++)
+        if (separator < 0 || columns is null) return new(result, false);
+        var header = lines[separator - 1];
+        var starts = columns.Select(m => DisplayWidth(header[..m.Index])).ToArray();
+        int idCol = starts[1], verCol = starts[2], availCol = starts[3];
+        int srcCol = starts.Length == 5 ? starts[4] : -1;
+        for (int i = separator + 1; i < lines.Length; i++)
         {
             var line = lines[i];
-            if (line.Trim().Length == 0) continue;
-            if (line.TrimStart().StartsWith("---") || line.Trim().All(c => c == '-')) continue;   // separator
-            if (line.Contains("upgrades available", StringComparison.OrdinalIgnoreCase) || line.Contains("upgrade available", StringComparison.OrdinalIgnoreCase)) break;
-            if (line.StartsWith("The following packages", StringComparison.OrdinalIgnoreCase)) break; // pinned / unknown section
-            if (line.Length < verCol) continue;
-
-            string name = Slice(line, 0, idCol);
-            string id = Slice(line, idCol, verCol);
-            string version = Slice(line, verCol, availCol);
-            string available = srcCol > availCol ? Slice(line, availCol, srcCol) : Slice(line, availCol, line.Length);
-            string source = srcCol > availCol ? Slice(line, srcCol, line.Length) : "";
-
-            if (id.Length == 0 || name.Length == 0) continue;
-            if (id.Contains(' ') && !id.Contains('.')) continue; // misaligned wide-character row; skip rather than mis-parse
+            if (string.IsNullOrWhiteSpace(line)) { if (result.Count > 0) break; continue; }
+            if (line.Trim().All(c => c == '-') || line.Trim() == header.Trim()) break;
+            int width = DisplayWidth(line);
+            if ((width <= availCol && Regex.IsMatch(line, @"^\s*\d+\s"))
+                || line.StartsWith("The following packages", StringComparison.OrdinalIgnoreCase)) break;
+            if (width <= availCol) return new(new(), true, "winget returned an incomplete package row. Updates could not be checked safely.");
+            string name = SliceColumns(line, 0, idCol);
+            string id = SliceColumns(line, idCol, verCol);
+            string version = SliceColumns(line, verCol, availCol);
+            string available = SliceColumns(line, availCol, srcCol > availCol ? srcCol : width);
+            string source = srcCol > availCol ? SliceColumns(line, srcCol, width) : "";
+            if (name.Length == 0 || id.Length == 0 || version.Length == 0 || available.Length == 0)
+                return new(new(), true, "winget returned an incomplete package row. Updates could not be checked safely.");
+            if (id.Contains('\u2026')) return new(new(), true, "winget truncated a package identifier. Updates could not be checked safely; use Windows Package Manager directly.");
+            if (!Regex.IsMatch(id, @"^[A-Za-z0-9][A-Za-z0-9._+-]*$"))
+                return new(new(), true, "winget returned a misaligned package table. Updates could not be checked safely.");
             result.Add(new UpgradablePackage { Name = name, Id = id, InstalledVersion = version, AvailableVersion = available, Source = source });
         }
-        return result;
+        return result.Count > 0 ? new(result, true)
+            : new(result, true, "winget returned a package table with no readable rows. Updates could not be checked safely.");
     }
 
-    private static int IndexOfAny(string s, int start, params string[] needles)
+    private static int RuneWidth(Rune rune)
     {
-        if (start < 0 || start >= s.Length) return -1;
-        foreach (var n in needles)
+        var category = Rune.GetUnicodeCategory(rune);
+        if (category is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark or UnicodeCategory.Format) return 0;
+        int n = rune.Value;
+        return n is >= 0x1100 and <= 0x115F or >= 0x2329 and <= 0x232A or >= 0x2E80 and <= 0xA4CF
+            or >= 0xAC00 and <= 0xD7A3 or >= 0xF900 and <= 0xFAFF or >= 0xFE10 and <= 0xFE19
+            or >= 0xFE30 and <= 0xFE6F or >= 0xFF00 and <= 0xFF60 or >= 0xFFE0 and <= 0xFFE6
+            or >= 0x1F300 and <= 0x1FAFF or >= 0x20000 and <= 0x3FFFD ? 2 : 1;
+    }
+
+    private static int DisplayWidth(string text) => text.EnumerateRunes().Sum(RuneWidth);
+
+    private static string SliceColumns(string line, int start, int end)
+    {
+        var value = new StringBuilder();
+        int column = 0;
+        foreach (var rune in line.EnumerateRunes())
         {
-            int i = s.IndexOf(n, start, StringComparison.Ordinal);
-            if (i >= 0) return i;
+            if (column >= end) break;
+            if (column >= start) value.Append(rune.ToString());
+            column += RuneWidth(rune);
         }
-        return -1;
+        return value.ToString().Trim();
     }
 
-    private static string Slice(string line, int start, int end)
+    internal static string BuildUpgradeArguments(UpgradablePackage pkg, bool includeUnknown)
     {
-        if (start >= line.Length || start < 0) return "";
-        end = Math.Min(end, line.Length);
-        if (end <= start) return "";
-        return line[start..end].Trim().TrimEnd('…');
-    }
-
-    public async Task<(bool Ok, string Message)> UpgradeAsync(UpgradablePackage pkg, CancellationToken ct, Action<string>? onLine = null)
-    {
-        var winget = FindWinget();
-        if (winget is null) return (false, "winget not found.");
         var args = $"upgrade --id \"{pkg.Id}\" --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity";
-        if (!string.IsNullOrEmpty(pkg.Source)) args += $" --source {pkg.Source}";
+        if (includeUnknown) args += " --include-unknown";
+        if (!string.IsNullOrEmpty(pkg.Source)) args += $" --source \"{pkg.Source.Replace("\"", "\\\"")}\"";
+        return args;
+    }
+
+    public async Task<(bool Ok, string Message)> UpgradeAsync(UpgradablePackage pkg, CancellationToken ct, Action<string>? onLine = null, bool includeUnknown = false)
+    {
+        var winget = _findWinget();
+        if (winget is null) return (false, "winget not found.");
+        var args = BuildUpgradeArguments(pkg, includeUnknown);
 
         // Several upgrades run at the same time; Windows Installer allows only one MSI at once (error 1618 /
         // 0x80070652 "another installation is already in progress"), so such failures are retried with a pause.
         for (int attempt = 1; ; attempt++)
         {
-            var res = await ProcessRunner.RunCapturedAsync(winget, args, ct, TimeSpan.FromMinutes(30), onLine, Encoding.UTF8).ConfigureAwait(false);
+            var res = await _runCaptured(winget, args, ct, TimeSpan.FromMinutes(30), onLine).ConfigureAwait(false);
             var text = (res.StdOut + "\n" + res.StdErr);
             bool ok = res.ExitCode == 0 || text.Contains("Successfully installed", StringComparison.OrdinalIgnoreCase);
             if (ok) return (true, "Updated.");

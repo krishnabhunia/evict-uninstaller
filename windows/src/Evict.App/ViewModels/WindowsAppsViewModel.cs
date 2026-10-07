@@ -37,6 +37,7 @@ public sealed partial class WindowsAppsViewModel : ObservableObject, IActivatabl
 {
     private readonly AppServices _services;
     private bool _loaded;
+    private readonly Dictionary<string, string> _lastStatuses = new(StringComparer.OrdinalIgnoreCase);
 
     public WindowsAppsViewModel(AppServices services)
     {
@@ -64,8 +65,10 @@ public sealed partial class WindowsAppsViewModel : ObservableObject, IActivatabl
     [ObservableProperty] private bool? _allSelected = false;
     [ObservableProperty] private AppxItemViewModel? _selectedItem;
     [ObservableProperty] private string? _error;
+    [ObservableProperty] private string _operationResultsText = "";
 
     public bool IsElevated => ElevationHelper.IsElevated;
+    public bool CanChangeScope => IsElevated && !IsBusy;
     public int VisibleCount => View.Cast<object>().Count();
     public int BloatCount => Items.Count(i => i.IsBloat);
     public string Summary => $"{VisibleCount} apps shown · {Items.Count} total · {BloatCount} flagged as bloatware";
@@ -76,7 +79,13 @@ public sealed partial class WindowsAppsViewModel : ObservableObject, IActivatabl
     partial void OnShowFrameworksChanged(bool value) { _services.Settings.Current.HideFrameworkAppx = !value; _services.Settings.Save(); Apply(); }
     partial void OnShowSystemChanged(bool value) { _services.Settings.Current.ShowSystemAppx = value; _services.Settings.Save(); Apply(); }
     partial void OnOnlyBloatwareChanged(bool value) => Apply();
-    partial void OnIsBusyChanged(bool value) => RemoveSelectedCommand.NotifyCanExecuteChanged();
+    partial void OnAllUsersChanged(bool value) { if (!IsBusy) _ = RefreshAsync(); }
+    partial void OnIsBusyChanged(bool value)
+    {
+        RemoveSelectedCommand.NotifyCanExecuteChanged();
+        RefreshCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(CanChangeScope));
+    }
 
     private void Apply()
     {
@@ -96,9 +105,12 @@ public sealed partial class WindowsAppsViewModel : ObservableObject, IActivatabl
         return true;
     }
 
-    [RelayCommand]
+    private bool CanRefresh() => !IsBusy;
+
+    [RelayCommand(CanExecute = nameof(CanRefresh))]
     public async Task RefreshAsync()
     {
+        if (IsBusy) return;
         IsBusy = true;
         Error = null;
         StatusText = "Querying Windows apps (PowerShell)…";
@@ -111,6 +123,7 @@ public sealed partial class WindowsAppsViewModel : ObservableObject, IActivatabl
             foreach (var p in packages)
             {
                 var vm = new AppxItemViewModel(p);
+                if (_lastStatuses.TryGetValue(p.PackageFullName, out var status)) vm.Status = status;
                 vm.PropertyChanged += ItemChanged;
                 Items.Add(vm);
             }
@@ -173,12 +186,18 @@ public sealed partial class WindowsAppsViewModel : ObservableObject, IActivatabl
     {
         var targets = Items.Where(i => i.IsSelected).ToList();
         if (targets.Count == 0) return;
+        bool allUsers = AllUsers;
+        bool removeProvisioned = AlsoRemoveProvisioned && IsElevated;
         var names = string.Join("\n", targets.Take(12).Select(t => "  • " + t.Name)) + (targets.Count > 12 ? $"\n  … and {targets.Count - 12} more" : "");
         if (!Dialogs.Confirm($"Remove {targets.Count} Windows app(s)?\n\n{names}\n\nStore apps can be reinstalled from the Microsoft Store." +
-                             (AlsoRemoveProvisioned && IsElevated ? "\n\nProvisioned copies will also be removed so they do not return for new user accounts." : ""), destructive: true))
+                             (allUsers ? "\n\nRemoval applies to all user accounts." : "\n\nRemoval applies to the current user account.") +
+                             (removeProvisioned ? "\n\nProvisioned copies will also be removed so they do not return for new user accounts." : ""), destructive: true))
             return;
 
         IsBusy = true;
+        _lastStatuses.Clear();
+        OperationResultsText = "";
+        var results = new List<string>();
         int ok = 0, fail = 0;
         try
         {
@@ -186,18 +205,28 @@ public sealed partial class WindowsAppsViewModel : ObservableObject, IActivatabl
             {
                 StatusText = $"Removing {t.Name}…";
                 t.Status = "Removing…";
-                var (success, msg) = await _services.Appx.RemoveAsync(t.Info, AllUsers, CancellationToken.None);
-                if (success && AlsoRemoveProvisioned && IsElevated && !t.Info.IsFramework)
+                bool success;
+                string msg;
+                try
                 {
-                    var (_, pmsg) = await _services.Appx.RemoveProvisionedAsync(t.Info, CancellationToken.None);
-                    msg += " " + pmsg;
+                    (success, msg) = await _services.Appx.RemoveAsync(t.Info, allUsers, CancellationToken.None);
+                    if (success && removeProvisioned && !t.Info.IsFramework)
+                    {
+                        var (provisionedOk, pmsg) = await _services.Appx.RemoveProvisionedAsync(t.Info, CancellationToken.None);
+                        msg += " " + pmsg;
+                        success &= provisionedOk;
+                    }
                 }
+                catch (Exception ex) { success = false; msg = "Failed: " + ex.Message; }
                 t.Status = msg;
+                _lastStatuses[t.Info.PackageFullName] = msg;
+                results.Add(t.Name + ": " + msg);
+                OperationResultsText = string.Join(Environment.NewLine, results);
                 if (success) ok++; else fail++;
                 _services.History.Add(new UninstallHistoryEntry
                 {
                     ProgramName = t.Name, Publisher = t.Publisher, Version = t.Version, Method = UninstallMethod.Standard,
-                    Succeeded = success, Notes = "Windows app: " + msg, InstallLocation = t.Info.InstallLocation, BytesReclaimed = success ? t.Info.SizeBytes ?? 0 : 0,
+                    Succeeded = success, Notes = "Windows app: " + msg, InstallLocation = t.Info.InstallLocation,
                 });
             }
             StatusText = $"Removed {ok} app(s)" + (fail > 0 ? $", {fail} failed." : ".");
@@ -207,7 +236,7 @@ public sealed partial class WindowsAppsViewModel : ObservableObject, IActivatabl
             IsBusy = false;
         }
         await RefreshAsync();
-        StatusText = $"Removed {ok} app(s)" + (fail > 0 ? $", {fail} failed – see the Status column." : ".");
+        StatusText = $"Completed {ok} app removal(s)" + (fail > 0 ? $", {fail} need attention - see Last removal results." : ".");
     }
 
     [RelayCommand]

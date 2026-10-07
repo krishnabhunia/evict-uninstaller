@@ -3,38 +3,60 @@ import Foundation
 /// Removes files – always by moving them to the Trash, never by deleting them.
 ///
 /// Two rules hold for every path that reaches this type:
-/// 1. `SafePaths.check` must allow it, re-checked here even though the scanner already did.
+/// 1. `SafePaths` must allow it (including revalidated ownership for a command-line link).
 /// 2. After the move, the path is read again; if it is still there the item is reported as failed
 ///    instead of counted as removed. (This mirrors the registry verification added to the Windows app.)
-public struct Remover {
+public struct Remover: Sendable {
 
     public enum RemovalError: LocalizedError {
         case refused(String)
         case needsAdmin
+        case notFound
         case system(String)
 
         public var errorDescription: String? {
             switch self {
             case .refused(let reason): return "Not removed – \(reason)"
             case .needsAdmin: return "Administrator rights are required for this location"
+            case .notFound: return "The item is already missing; nothing was moved to the Trash"
             case .system(let message): return message
             }
         }
     }
 
-    public init() {}
+    private let moveToTrash: @Sendable (String) throws -> Void
+
+    public init() {
+        moveToTrash = { path in
+            #if os(macOS)
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+            #else
+            throw RemovalError.system("Moving files to the Trash is only available on macOS")
+            #endif
+        }
+    }
+
+    /// Isolated tests can move their fixtures to a temporary folder without using the real Trash.
+    init(moveToTrash: @escaping @Sendable (String) throws -> Void) { self.moveToTrash = moveToTrash }
+
+    static func entryExists(_ path: String) -> Bool {
+        FileManager.default.fileExists(atPath: path) ||
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil
+    }
 
     /// Moves one path to the Trash and verifies it is gone.
-    public func trash(_ path: String) throws -> Int64 {
-        let verdict = SafePaths.check(path)
+    public func trash(_ path: String, ownedBundlePath: String? = nil) throws -> Int64 {
+        let verdict = ownedBundlePath.map { SafePaths.checkOwnedBinaryLink(path, bundlePath: $0) } ?? SafePaths.check(path)
         if case .refused(let reason) = verdict { throw RemovalError.refused(reason) }
 
-        let size = FileSize.measure(path)
-        guard FileManager.default.fileExists(atPath: path) else { return 0 }
+        // A link is an entry, not the data in its destination. Never walk the app bundle
+        // again when removing its command-line shortcut.
+        let isLink = (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil
+        let size = isLink ? 0 : FileSize.measure(path)
+        guard Self.entryExists(path) else { throw RemovalError.notFound }
 
-        #if os(macOS)
         do {
-            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+            try moveToTrash(path)
         } catch let error as NSError {
             if error.code == NSFileWriteNoPermissionError || error.code == NSFileWriteVolumeReadOnlyError {
                 throw SafePaths.needsAdmin(path) ? RemovalError.needsAdmin : RemovalError.system(error.localizedDescription)
@@ -42,12 +64,9 @@ public struct Remover {
             throw RemovalError.system(error.localizedDescription)
         }
         // Verified, not assumed: if the path is still there the caller must not be told it was removed.
-        if FileManager.default.fileExists(atPath: path) {
+        if Self.entryExists(path) {
             throw RemovalError.system("Still present after being moved to the Trash")
         }
-        #else
-        throw RemovalError.system("Moving files to the Trash is only available on macOS")
-        #endif
         return size
     }
 
@@ -65,14 +84,14 @@ public struct Remover {
                 continue
             }
             do {
-                let freed = try trash(item.path)
+                let freed = try trash(item.path, ownedBundlePath: item.ownedBundlePath)
                 result.trashed.append(item.path)
                 result.bytesFreed += freed
             } catch RemovalError.needsAdmin {
                 result.needsAdminCount += 1
                 result.failed.append((path: item.path, error: RemovalError.needsAdmin.localizedDescription))
             } catch {
-                if FileManager.default.fileExists(atPath: item.path) { result.stillPresent.append(item.path) }
+                if Self.entryExists(item.path) { result.stillPresent.append(item.path) }
                 result.failed.append((path: item.path, error: error.localizedDescription))
                 Log.warn("Could not remove \(item.path): \(error.localizedDescription)")
             }

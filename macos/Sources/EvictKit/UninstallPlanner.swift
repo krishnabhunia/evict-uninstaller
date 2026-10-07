@@ -29,26 +29,41 @@ public struct UninstallPlan: Sendable {
 
     public var totalBytes: Int64 { allItems.reduce(0) { $0 + $1.sizeBytes } }
 
-    /// Ticked by default: the app itself and anything Evict is confident about.
-    /// Low-confidence finds are listed but never pre-selected.
-    public var defaultSelection: Set<String> {
-        Set(allItems.filter { $0.confidence >= .medium && !$0.needsAdmin }.map(\.id))
+    public var defaultSelection: Set<String> { initialSelection(settings: Settings()) }
+
+    /// Select the application explicitly, even when authorization may be needed.
+    /// Shared vendor data always requires a manual choice, including when low-confidence
+    /// preselection is enabled. Authorization errors are reported after the actual attempt.
+    public func initialSelection(settings: Settings) -> Set<String> {
+        Set(allItems.filter { item in
+            guard item.isSharedVendorMatch != true else { return false }
+            if item.kind == .appBundle { return SafePaths.check(item.path).isAllowed }
+            guard !item.needsAdmin, item.receiptIdentifier == nil else { return false }
+            return item.confidence >= .medium ||
+                (settings.showLowConfidenceItems && settings.preselectLowConfidence)
+        }.map(\.id))
+    }
+
+    /// Remove shortcuts before their destination bundle, so they do not become dangling.
+    func removalItems(selection: Set<String>) -> [LeftoverItem] {
+        let selected = allItems.filter { selection.contains($0.id) }
+        return selected.filter { $0.kind == .binary } + selected.filter { $0.kind != .binary }
     }
 }
 
 /// Builds and carries out an uninstall.
-public struct UninstallPlanner {
+public struct UninstallPlanner: Sendable {
     private let scanner = LeftoverScanner()
     private let remover = Remover()
 
     public init() {}
 
-    public func plan(for app: InstalledApp, casks: [String] = []) -> UninstallPlan {
-        let bundleItem = app.source.isRemovable
+    public func plan(for app: InstalledApp, casks: [String] = [], settings: Settings = Settings()) -> UninstallPlan {
+        let bundleItem = app.source.isRemovable && SafePaths.check(app.bundlePath).isAllowed
             ? LeftoverItem(path: app.bundlePath, kind: .appBundle, confidence: .high, sizeBytes: app.sizeBytes,
                            reason: "The application itself", needsAdmin: SafePaths.needsAdmin(app.bundlePath))
             : nil
-        let leftovers = scanner.scan(LeftoverScanner.Target(app: app))
+        let leftovers = scanner.scan(LeftoverScanner.Target(app: app), settings: settings)
         return UninstallPlan(app: app,
                              bundleItem: bundleItem,
                              leftovers: leftovers,
@@ -57,7 +72,9 @@ public struct UninstallPlanner {
 
     /// Force Uninstall: the app bundle may be gone already, so the search is driven by a name
     /// (and, when a bundle is still there, by its identifier).
-    public func plan(forLeftoverName name: String, bundlePath: String?) -> UninstallPlan {
+    public func plan(forLeftoverName name: String, bundlePath: String?, settings: Settings = Settings()) -> UninstallPlan {
+        // A dropped file or ordinary directory must not become a whole-directory removal.
+        let bundlePath = bundlePath.flatMap { AppInventory.validBundlePath($0) }
         var bundleIdentifier: String?
         if let bundlePath, let info = Plist.read(atPath: bundlePath + "/Contents/Info.plist") {
             bundleIdentifier = Plist.string(info, "CFBundleIdentifier")
@@ -71,23 +88,27 @@ public struct UninstallPlanner {
         let target = LeftoverScanner.Target(name: name, bundleIdentifier: bundleIdentifier,
                                             bundleIdentifierPrefix: prefix, bundlePath: bundlePath)
         let bundleItem = bundlePath.flatMap { path -> LeftoverItem? in
-            guard FileManager.default.fileExists(atPath: path) else { return nil }
+            guard SafePaths.check(path).isAllowed,
+                  let described = AppInventory().describe(bundlePath: path, receipts: [], casks: []),
+                  described.source.isRemovable else { return nil }
             return LeftoverItem(path: path, kind: .appBundle, confidence: .high, sizeBytes: FileSize.measure(path),
                                 reason: "The application itself", needsAdmin: SafePaths.needsAdmin(path))
         }
-        return UninstallPlan(app: app, bundleItem: bundleItem, leftovers: scanner.scan(target), homebrewCask: nil)
+        return UninstallPlan(app: app, bundleItem: bundleItem, leftovers: scanner.scan(target, settings: settings), homebrewCask: nil)
     }
 
     /// Carries out the removal for the ticked items and writes a history entry.
     @discardableResult
     public func execute(plan: UninstallPlan, selection: Set<String>, history: HistoryStore? = nil,
                         progress: ((Double, String) -> Void)? = nil) -> RemovalResult {
-        let items = plan.allItems.filter { selection.contains($0.id) }
+        let items = plan.removalItems(selection: selection)
         // Unload launchd jobs before their plists disappear.
         let launchItems = LaunchItems()
         for item in items where item.kind == .launchItem {
             launchItems.unload(StartupItem(path: item.path, label: item.displayName, program: nil,
-                                           isDaemon: false, isSystemScope: item.needsAdmin, runsAtLoad: false, isOrphan: false))
+                                           isDaemon: SafePaths.isInside(item.path, root: "/Library/LaunchDaemons"),
+                                           isSystemScope: SafePaths.isInside(item.path, root: AppPaths.systemLibrary),
+                                           runsAtLoad: false, isOrphan: false))
         }
         let result = remover.remove(items, progress: progress)
         history?.append(HistoryEntry(appName: plan.app.name,
@@ -95,7 +116,7 @@ public struct UninstallPlanner {
                                      itemsRemoved: result.succeededCount,
                                      bytesFreed: result.bytesFreed,
                                      failures: result.failed.count))
-        Log.info("Uninstalled \(plan.app.name): \(result.succeededCount)/\(items.count) items, \(ByteFormat.string(result.bytesFreed)) freed, \(result.failed.count) failures")
+        Log.info("Removal for \(plan.app.name): \(result.succeededCount)/\(items.count) items moved to Trash, \(ByteFormat.string(result.bytesFreed)) moved, \(result.failed.count) failures")
         return result
     }
 }

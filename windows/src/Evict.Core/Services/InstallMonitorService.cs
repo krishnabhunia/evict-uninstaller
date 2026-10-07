@@ -93,7 +93,25 @@ public sealed class InstallMonitorService
         @"SOFTWARE\Microsoft\Windows\Shell\", @"SOFTWARE\Microsoft\Windows\CurrentVersion\PushNotifications\", @"SOFTWARE\Microsoft\Windows\CurrentVersion\Store\",
     };
 
-    private static bool IsNoise(string path) => NoiseFragments.Any(f => path.Contains(f, StringComparison.OrdinalIgnoreCase));
+    private static bool IsNoise(string path) => NoiseFragments.Any(f => path.Contains(f, StringComparison.OrdinalIgnoreCase)) || IsPersonalDocument(path);
+
+    /// <summary>A watcher observes timing, not ownership. Personal data must never become removal candidates.</summary>
+    internal static bool IsPersonalDocument(string path)
+    {
+        foreach (var folder in new[] { Environment.SpecialFolder.MyDocuments, Environment.SpecialFolder.MyPictures,
+                     Environment.SpecialFolder.MyMusic, Environment.SpecialFolder.MyVideos })
+        {
+            var root = Environment.GetFolderPath(folder);
+            if (!string.IsNullOrEmpty(root) && PathUtil.IsUnder(path, root)) return true;
+        }
+        foreach (var folder in new[] { Environment.SpecialFolder.DesktopDirectory, Environment.SpecialFolder.CommonDesktopDirectory })
+        {
+            var root = Environment.GetFolderPath(folder);
+            if (!string.IsNullOrEmpty(root) && PathUtil.IsUnder(path, root)
+                && !path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
 
     // ───────────────────────────── session ─────────────────────────────
 
@@ -410,21 +428,21 @@ public sealed class InstallMonitorService
         var items = new List<LeftoverItem>();
         foreach (var d in log.CreatedDirectories)
         {
-            if (!Directory.Exists(d) || PathUtil.IsProtectedRoot(d, checkProtectedNames: false)) continue;
-            items.Add(new LeftoverItem { Kind = LeftoverKind.Folder, Path = d, SizeBytes = DirectorySizeCalculator.Measure(d) ?? 0, Confidence = LeftoverConfidence.High, Detail = "Created during monitored install", ProgramName = log.Title });
+            if (!Directory.Exists(d) || IsPersonalDocument(d) || PathUtil.IsProtectedRoot(d, checkProtectedNames: false)) continue;
+            items.Add(new LeftoverItem { Kind = LeftoverKind.Folder, Path = PathUtil.NormalizeForCompare(d), SizeBytes = DirectorySizeCalculator.Measure(d) ?? 0, Confidence = LeftoverConfidence.Low, Detail = "Observed during recording; installer ownership is unverified", ProgramName = log.Title });
         }
         foreach (var f in log.CreatedFiles)
         {
-            if (!File.Exists(f)) continue;
+            if (!File.Exists(f) || IsPersonalDocument(f) || PathUtil.IsProtectedRoot(f, checkProtectedNames: false)) continue;
             var kind = f.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ? LeftoverKind.Shortcut : LeftoverKind.File;
             long size = 0; try { size = new FileInfo(f).Length; } catch { /* ignore */ }
-            items.Add(new LeftoverItem { Kind = kind, Path = f, SizeBytes = size, Confidence = LeftoverConfidence.High, Detail = "Created during monitored install", ProgramName = log.Title });
+            items.Add(new LeftoverItem { Kind = kind, Path = PathUtil.NormalizeForCompare(f), SizeBytes = size, Confidence = LeftoverConfidence.Low, Detail = "Observed during recording; installer ownership is unverified", ProgramName = log.Title });
         }
         foreach (var k in log.CreatedRegistryKeys)
         {
             var (hive, view, sub) = ParseSnapshotKey(k);
             if (string.IsNullOrEmpty(sub) || sub.Count(c => c == '\\') < 1) continue;
-            items.Add(new LeftoverItem { Kind = LeftoverKind.RegistryKey, Path = RegistryPaths.Display(hive, view, sub), Hive = hive, RegView = view, SubKey = sub, Confidence = LeftoverConfidence.High, Detail = "Created during monitored install", ProgramName = log.Title });
+            items.Add(new LeftoverItem { Kind = LeftoverKind.RegistryKey, Path = RegistryPaths.Display(hive, view, sub), Hive = hive, RegView = view, SubKey = sub, Confidence = LeftoverConfidence.Low, Detail = "Observed during recording; installer ownership is unverified", ProgramName = log.Title });
         }
         return items;
     }

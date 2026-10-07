@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using Evict.Core.Interop;
 using Evict.Core.Models;
 using Evict.Core.Util;
 
@@ -13,43 +11,20 @@ public sealed class ForceUninstallService
 {
     private readonly LeftoverScanner _scanner = new();
 
-    /// <summary>Processes whose image lives inside the folder (best effort – some system processes cannot be queried).</summary>
-    public static List<(int Pid, string Name, string Path)> FindProcessesUnder(string folder)
+    /// <summary>Only processes in a validated, exclusive scope; shared or protected folders are excluded.</summary>
+    public static List<(int Pid, string Name, string Path)> FindProcessesFor(InstalledProgram? program, string? selectedPath) =>
+        RunningProgramService.Find(program, selectedPath, includeServices: true).Select(p => (p.Pid, p.Name, p.Path)).ToList();
+
+    public static List<(int Pid, string Name, string Path)> FindProcessesUnder(string folder) => FindProcessesFor(null, folder);
+
+    public static int KillProcessesFor(InstalledProgram? program, string? selectedPath, out List<string> errors)
     {
-        var list = new List<(int, string, string)>();
-        if (string.IsNullOrEmpty(folder)) return list;
-        int self = Environment.ProcessId;
-        foreach (var p in Process.GetProcesses())
-        {
-            try
-            {
-                if (p.Id == self) continue;
-                var path = NativeMethods.GetProcessImagePath(p.Id);
-                if (path != null && PathUtil.IsUnder(path, folder)) list.Add((p.Id, p.ProcessName, path));
-            }
-            catch { /* ignore */ }
-            finally { p.Dispose(); }
-        }
-        return list;
+        var running = RunningProgramService.Find(program, selectedPath, includeServices: true);
+        errors = RunningProgramService.ForceClose(running);
+        return running.Count - RunningProgramService.StillRunning(running).Count;
     }
 
-    public static int KillProcessesUnder(string folder, out List<string> errors)
-    {
-        errors = new List<string>();
-        int killed = 0;
-        foreach (var (pid, name, _) in FindProcessesUnder(folder))
-        {
-            try
-            {
-                using var p = Process.GetProcessById(pid);
-                p.Kill(entireProcessTree: true);
-                if (p.WaitForExit(5000)) killed++;
-                else errors.Add($"{name} ({pid}) did not exit.");
-            }
-            catch (Exception ex) { errors.Add($"{name} ({pid}): {ex.Message}"); }
-        }
-        return killed;
-    }
+    public static int KillProcessesUnder(string folder, out List<string> errors) => KillProcessesFor(null, folder, out errors);
 
     /// <summary>
     /// Scans everything belonging to the program or path. Returns the leftover list for the user to review;

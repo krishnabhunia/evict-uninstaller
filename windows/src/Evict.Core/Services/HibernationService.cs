@@ -2,6 +2,8 @@ using System.Text.Json;
 using Evict.Core.Models;
 using Evict.Core.Util;
 using Microsoft.Win32;
+using System.ServiceProcess;
+using System.Text;
 
 namespace Evict.Core.Services;
 
@@ -74,6 +76,7 @@ public sealed class HibernationRecord
 {
     /// <summary>Service name → start type it had ("auto" / "delayed-auto").</summary>
     public Dictionary<string, string> Services { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, bool> ServiceWasRunning { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Full task paths ("\GoogleUpdateTaskMachineUA") Evict disabled.</summary>
     public HashSet<string> Tasks { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
@@ -88,32 +91,67 @@ public sealed class HibernationService : IToggleProvider
     private const string ServicesKey = @"SYSTEM\CurrentControlSet\Services";
     private static string RecordFile => Path.Combine(AppPaths.DataRoot, "hibernation.json");
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+    private static readonly object RecordGate = new();
+    private readonly string _recordFile;
+    private readonly Func<bool> _isElevated;
+    private readonly Func<string, string, string?> _run;
+    private readonly Func<string, bool> _serviceRunning;
+    private readonly Action<HibernationRecord> _saveRecord;
+
+    public HibernationService() : this(RecordFile, () => ElevationHelper.IsElevated, Run, ServiceRunning) { }
+
+    internal HibernationService(string recordFile, Func<bool> isElevated, Func<string, string, string?> run,
+        Func<string, bool> serviceRunning, Action<HibernationRecord>? saveRecord = null)
+    {
+        _recordFile = recordFile;
+        _isElevated = isElevated;
+        _run = run;
+        _serviceRunning = serviceRunning;
+        _saveRecord = saveRecord ?? (r => SaveRecord(recordFile, r));
+    }
 
     public string Title => "Software hibernation";
     public string Subtitle => "Background services and scheduled tasks of your programs (updaters, helpers) that run all the time. Put one to sleep and it stops starting by itself; wake it here any time. A sleeping updater cannot update its program – use Software Updater instead. Security, driver, VPN, audio, backup and sync components are never put to sleep. Needs administrator rights.";
     public string OnLabel => "Awake";
 
-    public static HibernationRecord LoadRecord()
+    public static HibernationRecord LoadRecord() => LoadRecord(RecordFile);
+
+    internal static HibernationRecord LoadRecord(string file)
     {
-        try
-        {
-            if (File.Exists(RecordFile)) return JsonSerializer.Deserialize<HibernationRecord>(File.ReadAllText(RecordFile)) ?? new();
-        }
-        catch (Exception ex) { Log.Warn("Reading hibernation record failed: " + ex.Message); }
-        return new HibernationRecord();
+        if (!File.Exists(file)) return new HibernationRecord();
+        var r = JsonSerializer.Deserialize<HibernationRecord>(File.ReadAllText(file))
+            ?? throw new InvalidDataException("The hibernation recovery record is empty.");
+        if (r.Services is null || r.Tasks is null || r.ServiceWasRunning is null
+            || r.Services.Any(s => string.IsNullOrWhiteSpace(s.Key) || s.Value is not ("auto" or "delayed-auto")))
+            throw new InvalidDataException("The hibernation recovery record is invalid. Keep it for recovery; no state was changed.");
+        r.Services = new Dictionary<string, string>(r.Services, StringComparer.OrdinalIgnoreCase);
+        r.ServiceWasRunning = new Dictionary<string, bool>(r.ServiceWasRunning, StringComparer.OrdinalIgnoreCase);
+        r.Tasks = new HashSet<string>(r.Tasks, StringComparer.OrdinalIgnoreCase);
+        return r;
     }
 
-    private static void SaveRecord(HibernationRecord r)
+    internal static void SaveRecord(string file, HibernationRecord r)
     {
-        try { File.WriteAllText(RecordFile, JsonSerializer.Serialize(r, JsonOpts)); }
-        catch (Exception ex) { Log.Warn("Saving hibernation record failed: " + ex.Message); }
+        Directory.CreateDirectory(Path.GetDirectoryName(file) ?? ".");
+        var temporary = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            {
+                stream.Write(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(r, JsonOpts)));
+                stream.Flush(flushToDisk: true);
+            }
+            // Same-directory replace: readers see the old complete record or the new complete record.
+            File.Move(temporary, file, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
     public List<ToggleItem> Load()
     {
-        var record = LoadRecord();
+        var record = LoadRecord(_recordFile);
         var items = new List<ToggleItem>();
-        bool admin = ElevationHelper.IsElevated;
+        bool admin = _isElevated();
         items.AddRange(LoadServices(record, admin));
         items.AddRange(LoadTasks(record, admin));
         return items;
@@ -150,7 +188,8 @@ public sealed class HibernationService : IToggleProvider
                 {
                     Id = "svc:" + name, Name = display, Group = "Background services",
                     Detail = $"{(company is { Length: > 0 } ? company + " · " : "")}{(updater ? "updater · " : "")}{image}",
-                    IsOn = !sleeping,
+                    // A write-ahead record can survive a failed operation. Show actual startup state.
+                    IsOn = start == 2,
                     RecommendOff = updater && !isProtected,
                     Locked = (isProtected && !sleeping) || !admin,
                     LockedReason = isProtected && !sleeping ? "Security, hardware, VPN, audio, backup and sync components stay awake." : !admin ? "Restart Evict as administrator to change services." : null,
@@ -191,7 +230,7 @@ public sealed class HibernationService : IToggleProvider
             {
                 Id = "task:" + full, Name = t.Name, Group = "Scheduled tasks",
                 Detail = $"{(t.Author is { Length: > 0 } ? t.Author + " · " : "")}{(updater ? "updater · " : "")}{t.Execute}",
-                IsOn = !sleeping,
+                IsOn = t.Enabled,
                 RecommendOff = updater && !isProtected,
                 Locked = isProtected && !sleeping,
                 LockedReason = isProtected && !sleeping ? "Security, hardware, VPN, audio, backup and sync tasks stay awake." : null,
@@ -203,50 +242,114 @@ public sealed class HibernationService : IToggleProvider
     public string? Set(ToggleItem item, bool on)
     {
         if (item.Locked) return item.LockedReason ?? "This item cannot be changed.";
-        var record = LoadRecord();
-        try
+        lock (RecordGate)
         {
-            string? error = item.Data["kind"] == "service" ? SetService(item, on, record) : SetTask(item, on, record);
-            if (error != null) return error;
-            SaveRecord(record);
-            item.IsOn = on;
-            Log.Info($"Hibernation: {item.Id} → {(on ? "awake" : "asleep")}");
-            return null;
+            try
+            {
+                var record = LoadRecord(_recordFile); // Do not overwrite an unreadable recovery record.
+                string? error = item.Data["kind"] == "service" ? SetService(item, on, record) : SetTask(item, on, record);
+                if (error != null) return error;
+                item.IsOn = on;
+                Log.Info($"Hibernation: {item.Id} → {(on ? "awake" : "asleep")}");
+                return null;
+            }
+            catch (Exception ex) { return ex.Message; }
         }
-        catch (Exception ex) { return ex.Message; }
     }
 
-    private static string? SetService(ToggleItem item, bool on, HibernationRecord record)
+    private string? SetService(ToggleItem item, bool on, HibernationRecord record)
     {
-        if (!ElevationHelper.IsElevated) return "Restart Evict as administrator to change services.";
+        if (!_isElevated()) return "Restart Evict as administrator to change services.";
         var name = item.Data["name"];
         var sc = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "sc.exe");
         if (on)
         {
             var original = record.Services.TryGetValue(name, out var o) ? o : HibernationRules.ScStartArgument(item.Data["delayed"] == "1");
-            var r = Run(sc, $"config \"{name}\" start= {original}");
+            var r = _run(sc, $"config \"{name}\" start= {original}");
             if (r != null) return r;
-            Run(sc, $"start \"{name}\""); // best effort – some services start only when needed
+            if (record.ServiceWasRunning.GetValueOrDefault(name, true) && !_serviceRunning(name))
+            {
+                r = _run(sc, $"start \"{name}\"");
+                if (r != null) return "Startup restored, but the service could not start. Its recovery record was kept: " + r;
+            }
             record.Services.Remove(name);
+            record.ServiceWasRunning.Remove(name);
+            try { _saveRecord(record); }
+            catch (Exception ex) { return "Startup restored, but its recovery record could not be cleared. Refresh the list: " + ex.Message; }
         }
         else
         {
-            var r = Run(sc, $"config \"{name}\" start= demand");
-            if (r != null) return r;
-            Run(sc, $"stop \"{name}\"");
-            record.Services[name] = HibernationRules.ScStartArgument(item.Data["delayed"] == "1");
+            var original = record.Services.GetValueOrDefault(name, HibernationRules.ScStartArgument(item.Data["delayed"] == "1"));
+            var currentlyRunning = _serviceRunning(name);
+            var wasRunning = record.ServiceWasRunning.GetValueOrDefault(name, currentlyRunning);
+            record.Services[name] = original;
+            record.ServiceWasRunning[name] = wasRunning;
+            _saveRecord(record); // Durable original state must exist before any service command runs.
+            string? error;
+            try
+            {
+                error = _run(sc, $"config \"{name}\" start= demand");
+                if (error == null && currentlyRunning) error = _run(sc, $"stop \"{name}\"");
+            }
+            catch (Exception ex) { error = ex.Message; }
+            if (error != null)
+            {
+                string? rollback;
+                try
+                {
+                    rollback = _run(sc, $"config \"{name}\" start= {original}");
+                    if (rollback == null && wasRunning && !_serviceRunning(name)) rollback = _run(sc, $"start \"{name}\"");
+                }
+                catch (Exception ex) { rollback = ex.Message; }
+                if (rollback != null) return error + " Rollback failed; the original state is retained for Wake: " + rollback;
+                record.Services.Remove(name);
+                record.ServiceWasRunning.Remove(name);
+                try { _saveRecord(record); }
+                catch (Exception ex) { return error + " State was restored; the recovery record was retained: " + ex.Message; }
+                return error;
+            }
         }
         return null;
     }
 
-    private static string? SetTask(ToggleItem item, bool on, HibernationRecord record)
+    private string? SetTask(ToggleItem item, bool on, HibernationRecord record)
     {
         var full = item.Data["full"];
         var schtasks = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe");
-        var r = Run(schtasks, $"/Change /TN \"{full.TrimStart('\\')}\" {(on ? "/ENABLE" : "/DISABLE")}");
-        if (r != null) return item.Data["admin"] == "1" && !ElevationHelper.IsElevated ? "Restart Evict as administrator to change this task. (" + r + ")" : r;
-        if (on) record.Tasks.Remove(full); else record.Tasks.Add(full);
+        if (!on)
+        {
+            record.Tasks.Add(full);
+            _saveRecord(record); // Preserve the wake path even if the process or machine exits next.
+        }
+        string? r;
+        try { r = _run(schtasks, $"/Change /TN \"{full.TrimStart('\\')}\" {(on ? "/ENABLE" : "/DISABLE")}"); }
+        catch (Exception ex) { r = ex.Message; }
+        if (r != null)
+        {
+            if (!on)
+            {
+                string? rollback;
+                try { rollback = _run(schtasks, $"/Change /TN \"{full.TrimStart('\\')}\" /ENABLE"); }
+                catch (Exception ex) { rollback = ex.Message; }
+                if (rollback != null) return r + " Rollback failed; the wake record was retained: " + rollback;
+                record.Tasks.Remove(full);
+                try { _saveRecord(record); } catch (Exception ex) { return r + " State restored; recovery record retained: " + ex.Message; }
+            }
+            return item.Data["admin"] == "1" && !_isElevated() ? "Restart Evict as administrator to change this task. (" + r + ")" : r;
+        }
+        if (on)
+        {
+            record.Tasks.Remove(full);
+            try { _saveRecord(record); }
+            catch (Exception ex) { return "Task enabled, but the recovery record could not be cleared. Refresh the list: " + ex.Message; }
+        }
         return null;
+    }
+
+    private static bool ServiceRunning(string name)
+    {
+        using var service = new ServiceController(name);
+        return service.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending;
     }
 
     private static string? Run(string exe, string args)

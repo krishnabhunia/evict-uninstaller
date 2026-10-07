@@ -216,11 +216,13 @@ public sealed partial class SystemCleanupViewModel : ObservableObject
             OnPropertyChanged(nameof(BytesFreedText));
             Step = CleanupStep.Done;
             StatusText = $"Removed {Removed:N0} item(s), {Failed:N0} failed, {BytesFreedText} freed" +
+                         (result.BytesRecycled > 0 ? $", {SizeFormatter.Format(result.BytesRecycled)} moved to the Recycle Bin" : "") +
                          (result.BytesMoved > 0 ? $", {SizeFormatter.Format(result.BytesMoved)} of installer packages moved to the backup folder." : ".");
             _services.History.Add(new UninstallHistoryEntry
             {
                 ProgramName = "System Cleanup", Method = UninstallMethod.Force, Succeeded = Failed == 0,
                 LeftoversFound = selection.Count, LeftoversRemoved = Removed, BytesReclaimed = BytesFreed,
+                BytesRemoved = result.BytesFreed + result.BytesRecycled + result.BytesMoved,
                 Notes = StatusText + (BackupFolder != null ? $" Installer-cache backup: {BackupFolder}" : ""),
             });
         }

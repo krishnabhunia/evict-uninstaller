@@ -13,10 +13,12 @@ namespace Evict.App.ViewModels;
 public sealed partial class UpdateViewModel : ObservableObject
 {
     private readonly AppServices _services;
+    private readonly MainViewModel _main;
 
-    public UpdateViewModel(AppServices services, ReleaseInfo release)
+    public UpdateViewModel(AppServices services, ReleaseInfo release, MainViewModel main)
     {
         _services = services;
+        _main = main;
         Release = release;
         InstalledMode = UpdateService.IsInstalledMode();
         Asset = UpdateChecker.PickAsset(release, InstalledMode);
@@ -27,12 +29,24 @@ public sealed partial class UpdateViewModel : ObservableObject
     public ReleaseAsset? Asset { get; private set; }
     public bool InstalledMode { get; }
     public bool FallbackToPortable { get; private set; }
-    public bool CanInstall => Asset != null && !(InstalledMode && FallbackToPortable);
+    public bool CanInstall => Asset != null && !(InstalledMode && FallbackToPortable) && (!IsBetaRelease || IncludeBetaUpdates);
+    public bool IsBetaRelease => Release.IsPreview;
+    public bool IncludeBetaUpdates
+    {
+        get => _main.IncludeBetaUpdates;
+        set
+        {
+            if (IsBusy) return;
+            _main.IncludeBetaUpdates = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanInstall));
+        }
+    }
 
-    public string Title => $"Evict {Release.Version.ToString(3)} is available";
-    public string Subtitle => $"You are running {_services.Updater.CurrentVersion.ToString(3)}." +
+    public string Title => $"Evict {Release.DisplayVersion} is available";
+    public string Subtitle => $"You are running {_services.Updater.CurrentVersionLabel}." +
                               (Release.PublishedAt is { } p ? $"  Released {p.LocalDateTime:d}." : "") +
-                              (Release.Prerelease ? "  This is a pre-release." : "");
+                              (IsBetaRelease ? "  Beta / prerelease." : "");
     public string Notes => string.IsNullOrWhiteSpace(Release.Body) ? "No release notes were published for this version." : Release.Body!.Trim();
     public string ModeText => Asset is null
         ? "This release has no downloadable file for your edition. Use the link below to download it from GitHub."
@@ -54,7 +68,8 @@ public sealed partial class UpdateViewModel : ObservableObject
     [RelayCommand(IncludeCancelCommand = true)]
     private async Task InstallAsync(CancellationToken ct)
     {
-        if (Asset is null || !CanInstall) return;
+        if (Asset is null || !CanInstall || IsBusy) return;
+        if (IsBetaRelease && !Dialogs.Confirm($"Install Evict {Release.DisplayVersion} (beta/prerelease)?\n\nThis build may include unfinished features or regressions. Read the release notes before continuing. Evict will download and verify the update, then restart to install it.")) return;
         Error = null;
         IsBusy = true;
         IsIndeterminate = true;
@@ -77,7 +92,13 @@ public sealed partial class UpdateViewModel : ObservableObject
             StatusText = InstalledMode ? "Starting the installer…" : "Replacing Evict.exe…";
             await Task.Delay(300, ct);
 
-            var (ok, error) = _services.Updater.Apply(path, InstalledMode, beforeRestart: Program.ReleaseSingleInstance);
+            var (ok, error) = _services.Updater.Apply(path, InstalledMode, beforeRestart: Program.ReleaseSingleInstance,
+                restartFailed: () =>
+                {
+                    if (Program.RestoreSingleInstance()) return;
+                    App.Quit();
+                    throw new InvalidOperationException("Another Evict instance opened during the failed update. This instance will close; reopen Evict to continue.");
+                });
             if (ok)
             {
                 _services.Settings.Current.SkippedUpdateVersion = null;

@@ -105,6 +105,11 @@ public struct LeftoverItem: Identifiable, Hashable, Codable, Sendable {
     /// A `pkgutil` receipt identifier rather than a file on disk.
     public let receiptIdentifier: String?
     public let needsAdmin: Bool
+    /// Vendor-only evidence cannot establish ownership of another product's data.
+    /// Optional for compatibility with previously encoded items.
+    public let isSharedVendorMatch: Bool?
+    /// Only command-line symlinks may use this narrowly scoped ownership proof.
+    public let ownedBundlePath: String?
 
     public init(path: String,
                 kind: LeftoverKind,
@@ -112,7 +117,9 @@ public struct LeftoverItem: Identifiable, Hashable, Codable, Sendable {
                 sizeBytes: Int64,
                 reason: String,
                 receiptIdentifier: String? = nil,
-                needsAdmin: Bool = false) {
+                needsAdmin: Bool = false,
+                isSharedVendorMatch: Bool = false,
+                ownedBundlePath: String? = nil) {
         self.path = path
         self.kind = kind
         self.confidence = confidence
@@ -120,6 +127,8 @@ public struct LeftoverItem: Identifiable, Hashable, Codable, Sendable {
         self.reason = reason
         self.receiptIdentifier = receiptIdentifier
         self.needsAdmin = needsAdmin
+        self.isSharedVendorMatch = isSharedVendorMatch
+        self.ownedBundlePath = ownedBundlePath
     }
 
     public var displayName: String { (path as NSString).lastPathComponent }
@@ -129,6 +138,7 @@ public struct LeftoverItem: Identifiable, Hashable, Codable, Sendable {
 public struct RemovalResult: Codable, Sendable {
     public var trashed: [String] = []
     public var failed: [(path: String, error: String)] = []
+    /// Size moved to Trash; retained coding name for compatibility. This is not reclaimed space.
     public var bytesFreed: Int64 = 0
     /// Paths that were still on disk when Evict re-checked after trashing them.
     public var stillPresent: [String] = []
@@ -136,7 +146,7 @@ public struct RemovalResult: Codable, Sendable {
 
     public init() {}
 
-    public var succeededCount: Int { trashed.count - stillPresent.count }
+    public var succeededCount: Int { Set(trashed).subtracting(stillPresent).count }
 
     // Tuples are not Codable, so the failures are stored as a flat pair list.
     private enum CodingKeys: String, CodingKey { case trashed, failedPaths, failedErrors, bytesFreed, stillPresent, needsAdminCount }

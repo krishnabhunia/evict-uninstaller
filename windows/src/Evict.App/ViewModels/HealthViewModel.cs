@@ -146,6 +146,8 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         var parts = Tiles.Where(t => t.Weight > 0 && t.State == TileState.Attention).OrderByDescending(t => t.Penalty).Take(3)
             .Select(t => $"{t.Count:N0} {t.Title.ToLowerInvariant()}");
         var detail = string.Join(" · ", parts);
+        int unavailable = Tiles.Count(t => t.State == TileState.Unavailable);
+        if (unavailable > 0) return $"Scan incomplete: {unavailable} check(s) unavailable" + (detail.Length > 0 ? " · " + detail : " · no findings in the completed checks");
         return $"Score {Score}/100 ({ScoreLabel})" + (detail.Length > 0 ? " · " + detail : " · nothing needs attention");
     }
 
@@ -160,7 +162,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
 
         var programsTask = RunTile("broken", async () =>
         {
-            await programs.EnsureFullyLoadedAsync();
+            await programs.RefreshForScanAsync();
             var list = programs.Items.Select(i => i.Program).ToList();
             var issues = programs.Items.Where(i => i.HasUninstallIssue).GroupBy(i => i.Program.UninstallIssue).ToDictionary(g => g.Key, g => g.Count());
             int CountOf(UninstallIssue k) => issues.TryGetValue(k, out var n) ? n : 0;
@@ -183,11 +185,12 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         var residualTask = RunTile("residual", async () =>
         {
             var list = await programsTask;
-            var result = await _services.Residual.ScanAsync(list ?? new List<InstalledProgram>(), _services.History.Entries,
+            if (list is null) throw new InvalidOperationException("The program inventory is unavailable; leftover ownership cannot be checked safely.");
+            var result = await _services.Residual.ScanAsync(list, _services.History.Entries,
                 new ResidualScanOptions { FromHistory = true, BrokenEntries = true, UnmatchedFolders = false, ScanAllUserProfiles = s.ScanAllUserProfiles }, null, CancellationToken.None);
             _residual = result.Items;
             Tile("residual").Set(result.Items.Count, result.Items.Count == 0 ? "Nothing left behind by the uninstalls Evict knows about." : $"{SizeFormatter.Format(result.TotalBytes)} of files and {result.RegistryCount} registry entries from programs removed earlier.",
-                fix: result.Items.Count(i => i.Confidence != LeftoverConfidence.Low));
+                fix: result.Items.Count(i => i.Confidence == LeftoverConfidence.High));
             return true;
         });
 
@@ -300,6 +303,12 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         ScoreLabel = Score >= 90 ? "Excellent" : Score >= 75 ? "Good" : Score >= 55 ? "Fair" : "Needs attention";
         int issues = IssueCount;
         Summary = issues == 0 ? "Nothing needs your attention right now." : $"{issues} item(s) across {Tiles.Count(t => t.State == TileState.Attention)} area(s) could be cleaned up.";
+        int unavailable = Tiles.Count(t => t.State == TileState.Unavailable);
+        if (unavailable > 0)
+        {
+            ScoreLabel = "Incomplete scan";
+            Summary = $"{unavailable} check(s) could not complete. {issues} item(s) found by the completed checks; review the unavailable checks and rescan.";
+        }
         LastScan = DateTime.Now;
         OnPropertyChanged(nameof(LastScanText));
         OnPropertyChanged(nameof(IssueCount));
@@ -369,13 +378,13 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
                 var group = key == "installfiles" ? _setups! : _redundant!;
                 var sel = group.Items.Where(i => i.Confidence != LeftoverConfidence.Low).Select(i => (group, i)).ToList();
                 var r = await _services.Cleanup.CleanAsync(sel, moveInstallerCacheToBackup: false, null, CancellationToken.None);
-                return $"{group.Title}: {r.Removed} removed ({SizeFormatter.Format(r.BytesFreed)}){(r.Failed > 0 ? $", {r.Failed} failed" : "")}";
+                return $"{group.Title}: {r.Removed} removed; {SizeFormatter.Format(r.BytesRecycled)} recycled (still occupies disk), {SizeFormatter.Format(r.BytesFreed)} permanently deleted{(r.Failed > 0 ? $", {r.Failed} failed" : "")}";
             }
             case "residual":
             case "broken":
             {
                 var items = key == "residual"
-                    ? _residual.Where(i => i.Confidence != LeftoverConfidence.Low).ToList()
+                    ? _residual.Where(i => i.Confidence == LeftoverConfidence.High).ToList()
                     : _programs.Where(p => p.UninstallIssue == UninstallIssue.Broken).Select(p => new LeftoverItem
                     {
                         Kind = LeftoverKind.RegistryKey, Path = p.RegistryPath, Hive = p.Hive, RegView = p.View,
