@@ -170,33 +170,35 @@ public sealed partial class SettingsViewModel : ObservableObject
     public string EditionText => UpdateService.IsInstalledMode() ? "Installed with Setup (updates run the new installer)" : "Portable edition (updates replace Evict.exe in place)";
     public string ReleasesUrl => UpdateChecker.ReleasesUrl;
 
-    [RelayCommand]
-    private async Task CheckForUpdatesNowAsync()
+    public void RefreshUpdateResult(UpdateCheckResult result)
+    {
+        UpdateStatusText = result.Message;
+        UpdateAvailable = result.Status == UpdateStatus.UpdateAvailable;
+    }
+
+    [RelayCommand(IncludeCancelCommand = true)]
+    private async Task CheckForUpdatesNowAsync(CancellationToken ct)
     {
         if (IsCheckingForUpdates || _main.IsCheckingForUpdates) return;
         IsCheckingForUpdates = true;
-        _main.IsCheckingForUpdates = true;
         UpdateStatusText = "Checking GitHub Releases…";
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct, App.ShutdownToken);
         try
         {
-            var includePrereleases = S.IncludeBetaUpdates;
-            var result = await _services.Updater.CheckAsync(CancellationToken.None, includePrereleases);
-            if (includePrereleases != S.IncludeBetaUpdates) { RefreshUpdateChannel(); return; }
-            S.LastUpdateCheckUtc = DateTime.UtcNow;
-            Save();
-            UpdateStatusText = result.Message;
-            UpdateAvailable = result.Status == UpdateStatus.UpdateAvailable;
+            var result = await _main.CheckForUpdatesAsync(cancellation.Token);
+            if (result is null) { RefreshUpdateChannel(); return; }
+            RefreshUpdateResult(result);
             if (UpdateAvailable && result.Release != null)
             {
                 S.SkippedUpdateVersion = null; // the user asked explicitly – show it even if skipped before
                 Save();
                 IsCheckingForUpdates = false;
-                _main.IsCheckingForUpdates = false;
                 _main.OfferUpdate(result.Release, fromUser: true);
             }
         }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { UpdateStatusText = "Update check cancelled."; }
         catch (Exception ex) { UpdateStatusText = "Update check failed: " + ex.Message; }
-        finally { IsCheckingForUpdates = false; _main.IsCheckingForUpdates = false; }
+        finally { IsCheckingForUpdates = false; }
     }
 
     [RelayCommand] private void ShowUpdate() => _main.ShowUpdateCommand.Execute(null);

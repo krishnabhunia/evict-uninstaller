@@ -103,8 +103,35 @@ or run `build/publish.ps1` (Windows) / `build/publish.sh` (Linux/macOS).
 | 1 | `windows/Portable/` | `Evict.exe` + `.sha256` – the stand-alone edition, runs from anywhere | `dotnet publish` (the build scripts) |
 | 2 | `windows/Installed/` | `Evict-Setup-x.y.z.exe` + `.sha256` – the installer, which packs `Portable/Evict.exe` | Inno Setup (`installer/Evict.iss`) |
 
-Both folders are build results (ignored by git). The CI download contains the same two folders; a GitHub Release lists
-the four files side by side.
+Both folders are local build results (ignored by git). The downloadable release ZIP uses this exact layout:
+
+| ZIP folder | Build file | Verification |
+|---|---|---|
+| `portable/` | `Evict.exe` | `Evict.exe.sha256` |
+| `windows-installer/` | `Evict-Setup-<Windows version>.exe` | Matching `.sha256` |
+| `macOS/` | `Evict-macOS-<Mac version>.zip` containing the native `Evict.app` | Matching `.sha256` |
+
+The outer ZIP contains these three folders and six files only. Windows and Mac versions remain independent.
+The native Mac app stays in its own ZIP so its executable permissions, signature files and bundle symlinks survive
+download and extraction on Windows. The release also supplies raw Windows assets for the in-app updater.
+
+To package locally, first build the Windows portable app and installer, then build the native Mac archive on a Mac
+with `Scripts/make-app.sh --universal`. Supply that actual archive; packaging rejects missing or empty Mac placeholders:
+
+```powershell
+build/package.ps1 -MacOSArchive ..\macos\build\Evict-0.2.0.zip
+# For a beta installer, also pass -Version <complete x.y.z-beta.RUN.PR.ATTEMPT version>.
+```
+
+Or call the Python helper directly from `windows/`:
+
+```bash
+python build/release_zip.py 1.10.0 --setup Installed --exe Portable --macos ../macos/build/Evict-0.2.0.zip --out Zip
+python build/release_zip.py --check Zip/Evict-1.10.0.zip
+```
+
+The helper verifies all three payloads and checksums, the Windows PE headers, the Mac bundle version and native
+executable permissions before writing the release ZIP.
 
 ## Command line
 
@@ -125,7 +152,7 @@ If Evict is already running, a second launch hands its arguments to the open win
 
 ## Continuous integration
 
-`.github/workflows/windows.yml` tests and packages Windows changes on `windows-latest`: version-engine tests, .NET tests, XAML checks, single-file publish, optional signing, Inno Setup installer and SHA-256 checksums. The Actions artifact contains `installer/` and `portable/`, each with its payload and checksum.
+`.github/workflows/windows.yml` tests and packages Windows changes on `windows-latest`: version-engine tests, .NET tests, XAML checks, single-file publish, optional signing, Inno Setup installer and SHA-256 checksums. A companion Mac runner tests and builds a universal app from the same release source. The Actions artifact and release ZIP contain exactly `portable/`, `windows-installer/` and `macOS/`, each with its payload and checksum.
 
 Main-branch delivery calculates the next major, minor or patch version from PR and commit metadata, commits the source version and changelog, and builds that exact commit. Stable releases use `win-vX.Y.Z` and are marked latest. PR previews use the same calculated core with a beta suffix and can be installed before merging. Published releases are preserved. See [automatic versioning](../docs/versioning.md).
 

@@ -4,9 +4,9 @@ on:
   push:
     branches: [main]
     tags: ["mac-v*"]
-    paths: ["macos/**", ".github/workflows/macos.yml", "scripts/**", ".github/release-policy.json"]
+    paths: ["macos/**", ".github/workflows/macos.yml", "scripts/**", "windows/build/release_zip.py", ".github/release-policy.json"]
   pull_request:
-    paths: ["macos/**", ".github/workflows/macos.yml", "scripts/**", ".github/release-policy.json"]
+    paths: ["macos/**", ".github/workflows/macos.yml", "scripts/**", "windows/build/release_zip.py", ".github/release-policy.json"]
   workflow_dispatch:
 
 permissions:
@@ -43,9 +43,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python scripts/versioning.py plan --platform macos --mode stable \
-            --event-file "$GITHUB_EVENT_PATH" --ref "$GITHUB_REF" \
-            --github-output "$RUNNER_TEMP/macos-validation-plan.txt"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            python scripts/versioning.py plan --platform macos --mode beta \
+              --event-file "$GITHUB_EVENT_PATH" --ref "$GITHUB_REF" \
+              --beta-sequence "${{ github.run_number }}.${{ github.run_attempt }}" \
+              --github-output "$RUNNER_TEMP/macos-validation-plan.txt"
+          fi
+          # A non-main manual dispatch validates its source and bundle without
+          # planning or publishing a stable release. Mac PR artifacts retain the
+          # committed numeric Mac version; the Windows beta channel is separate.
           python - <<'PY'
           import os, pathlib, re
           source = pathlib.Path("macos/Sources/EvictKit/Version.swift").read_text()
@@ -89,15 +95,50 @@ jobs:
           assert info["CFBundleVersion"] == build, "Bundle/source build mismatch"
           PY
           lipo -info build/Evict.app/Contents/MacOS/Evict
+          lipo -verify_arch arm64 x86_64 build/Evict.app/Contents/MacOS/Evict
           codesign --verify --verbose=2 build/Evict.app
 
-      - name: Upload app
+      - name: Fetch verified Windows stable components from main
+        id: windows_components
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin +refs/heads/main:refs/remotes/origin/main --tags
+          python scripts/fetch_windows_bundle.py \
+            --out "$RUNNER_TEMP/evict-windows-components" --github-output "$GITHUB_OUTPUT"
+
+      - name: Package all installation folders
+        env:
+          MAC_VERSION: ${{ steps.version.outputs.version }}
+          WINDOWS_VERSION: ${{ steps.windows_components.outputs.windows_version }}
+        run: |
+          set -euo pipefail
+          native_archive="$RUNNER_TEMP/Evict-macOS-$MAC_VERSION.zip"
+          cp "macos/build/Evict-$MAC_VERSION.zip" "$native_archive"
+          python windows/build/release_zip.py "$WINDOWS_VERSION" \
+            --setup "$RUNNER_TEMP/evict-windows-components/windows-installer" \
+            --exe "$RUNNER_TEMP/evict-windows-components/portable" \
+            --macos "$native_archive" --out macos/build/distribution \
+            --archive-version "$MAC_VERSION"
+          python windows/build/release_zip.py --check "macos/build/distribution/Evict-$MAC_VERSION.zip"
+          # Upload the three folders themselves so the Actions artifact download
+          # also has the required top-level layout rather than an extra ZIP layer.
+          python - "$MAC_VERSION" "$RUNNER_TEMP/evict-macos-delivery" <<'PY'
+          import pathlib, sys, zipfile
+          archive = pathlib.Path("macos/build/distribution") / f"Evict-{sys.argv[1]}.zip"
+          destination = pathlib.Path(sys.argv[2])
+          destination.mkdir(parents=True, exist_ok=False)
+          with zipfile.ZipFile(archive) as bundle:
+              bundle.extractall(destination)
+          PY
+          python windows/build/release_zip.py --check-folder "$RUNNER_TEMP/evict-macos-delivery"
+
+      - name: Upload installation folders
         uses: actions/upload-artifact@v7
         with:
           name: Evict-macOS-validation
-          path: |
-            macos/build/Evict-*.zip
-            macos/build/Evict-*.zip.sha256
+          path: ${{ runner.temp }}/evict-macos-delivery/
           if-no-files-found: error
 
   release:
@@ -277,15 +318,50 @@ jobs:
           assert info["CFBundleVersion"] == build, "Bundle/source build mismatch"
           PY
           lipo -info build/Evict.app/Contents/MacOS/Evict
+          lipo -verify_arch arm64 x86_64 build/Evict.app/Contents/MacOS/Evict
           codesign --verify --verbose=2 build/Evict.app
 
-      - name: Upload app
+      - name: Fetch verified Windows stable components from main
+        id: windows_components
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin +refs/heads/main:refs/remotes/origin/main --tags
+          python scripts/fetch_windows_bundle.py \
+            --out "$RUNNER_TEMP/evict-windows-components" --github-output "$GITHUB_OUTPUT"
+
+      - name: Package all installation folders
+        env:
+          MAC_VERSION: ${{ steps.prepare.outputs.core_version }}
+          WINDOWS_VERSION: ${{ steps.windows_components.outputs.windows_version }}
+        run: |
+          set -euo pipefail
+          native_archive="$RUNNER_TEMP/Evict-macOS-$MAC_VERSION.zip"
+          cp "macos/build/Evict-$MAC_VERSION.zip" "$native_archive"
+          python windows/build/release_zip.py "$WINDOWS_VERSION" \
+            --setup "$RUNNER_TEMP/evict-windows-components/windows-installer" \
+            --exe "$RUNNER_TEMP/evict-windows-components/portable" \
+            --macos "$native_archive" --out macos/build/distribution \
+            --archive-version "$MAC_VERSION"
+          python windows/build/release_zip.py --check "macos/build/distribution/Evict-$MAC_VERSION.zip"
+          # Upload the three folders themselves so the Actions artifact download
+          # also has the required top-level layout rather than an extra ZIP layer.
+          python - "$MAC_VERSION" "$RUNNER_TEMP/evict-macos-delivery" <<'PY'
+          import pathlib, sys, zipfile
+          archive = pathlib.Path("macos/build/distribution") / f"Evict-{sys.argv[1]}.zip"
+          destination = pathlib.Path(sys.argv[2])
+          destination.mkdir(parents=True, exist_ok=False)
+          with zipfile.ZipFile(archive) as bundle:
+              bundle.extractall(destination)
+          PY
+          python windows/build/release_zip.py --check-folder "$RUNNER_TEMP/evict-macos-delivery"
+
+      - name: Upload installation folders
         uses: actions/upload-artifact@v7
         with:
           name: Evict-app
-          path: |
-            macos/build/Evict-*.zip
-            macos/build/Evict-*.zip.sha256
+          path: ${{ runner.temp }}/evict-macos-delivery/
           if-no-files-found: error
 
       - name: Release notes from CHANGELOG.md
@@ -335,8 +411,8 @@ jobs:
           name: Evict ${{ steps.prepare.outputs.core_version }} for macOS
           body_path: ${{ runner.temp }}/macos-release-notes.md
           files: |
-            macos/build/Evict-*.zip
-            macos/build/Evict-*.zip.sha256
+            macos/build/distribution/Evict-${{ steps.prepare.outputs.core_version }}.zip
+            macos/build/distribution/Evict-${{ steps.prepare.outputs.core_version }}.zip.sha256
           generate_release_notes: true
           draft: false
           prerelease: false

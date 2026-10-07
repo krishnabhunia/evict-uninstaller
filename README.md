@@ -10,8 +10,7 @@ Uninstaller and leftover cleaner for **Windows** and **macOS**. The two apps are
 
 ## Downloads
 
-[Releases](https://github.com/krishnabhunia/evict-uninstaller/releases): `Evict.exe` / `Evict-Setup-x.y.z.exe`
-for Windows, `Evict-x.y.z.zip` for macOS. Only Windows releases are marked *Latest*, because installed Windows copies
+[Releases](https://github.com/krishnabhunia/evict-uninstaller/releases): download the installation ZIP for the three platform folders, or choose the separate `Evict.exe` / `Evict-Setup-x.y.z.exe` Windows updater assets. Only Windows releases are marked *Latest*, because installed Windows copies
 up to 1.3.3 update themselves from `releases/latest`.
 
 ## Building
@@ -21,7 +20,7 @@ up to 1.3.3 update themselves from `releases/latest`.
 | 1 | Windows | `dotnet test tests/Evict.Core.Tests` · `build/publish.sh` or `build/publish.ps1` | [`.github/workflows/windows.yml`](.github/workflows/windows.yml) |
 | 2 | macOS | `swift test` · `Scripts/make-app.sh --universal` | [`.github/workflows/macos.yml`](.github/workflows/macos.yml) |
 
-Each platform workflow runs when its own files or shared release automation change, and publishes only its own tag prefix.
+Each platform workflow runs when its own files or shared release automation change, and publishes only its own tag prefix. Windows packages include a native macOS build; macOS packages include the latest verified Windows stable built from main.
 
 ## Automatic versioning and releases
 
@@ -39,18 +38,23 @@ Use the PR title, a `release:major` / `release:minor` / `release:patch` label, o
 
 After a merge to `main`, the workflow calculates the version, commits the managed version files and changelog, tests that exact source commit, and publishes matching assets. Published releases stay unchanged; failed publication can be retried from Actions on `main`.
 
-Trusted Windows PRs publish optional beta previews such as `1.9.0-beta.11.23.1` before merge. Enable **Settings → Updates → Include beta releases** in a beta-aware Evict installation to receive these through the app.
+Trusted Windows PRs publish optional beta previews such as `1.9.0-beta.23.11.1` before merge. Enable **Settings → Updates → Include beta releases** in a beta-aware Evict installation to receive these through the app.
 
 See [automatic versioning](docs/versioning.md) for intent rules, scoped platform overrides, retry behavior and source provenance, and [beta updates](docs/beta-updates.md) for preview installation.
 
-## Build output
+## Installation ZIP
 
-| SrNo. | Folder | Contains |
-|---|---|---|
-| 1 | `windows/Portable/` | `Evict.exe` – stand-alone, runs from anywhere, nothing installed |
-| 2 | `windows/Installed/` | `Evict-Setup-X.Y.Z.exe` – installs Evict (Start menu, Apps & features, uninstaller) |
+Every final installation ZIP has exactly these top-level folders:
 
-Local builds and the CI download use these two folders; a GitHub Release lists the four files side by side.
+| Folder | Contains |
+| --- | --- |
+| `portable/` | Windows `Evict.exe` and its SHA-256 checksum |
+| `windows-installer/` | `Evict-Setup-<WindowsVersion>.exe` and its SHA-256 checksum |
+| `macOS/` | `Evict-macOS-<MacVersion>.zip` and its SHA-256 checksum |
+
+The nested macOS archive contains the native app bundle and retains its executable permissions and framework symlinks. Each platform keeps its own version. No loose files or extra top-level folders are allowed. CI rejects missing builds, invalid archive contents or incorrect checksums.
+
+The separate Windows installer and portable assets remain available for in-app updates. PR releases are always beta; normal releases publish after merge into `main`. Evict checks GitHub after each application restart when automatic checks are enabled; beta remains optional.
 
 ## History
 
