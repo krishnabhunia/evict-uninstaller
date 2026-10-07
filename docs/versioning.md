@@ -30,12 +30,12 @@ Windows and macOS keep independent version tracks, identified by `win-v` and `ma
 After a change reaches `main`, the platform workflow:
 
 1. Fetches the latest main history and stable platform tags.
-2. Calculates the version from the changes since that platform's last stable tag, ignoring beta tags and automatic version commits.
+2. Calculates intent from changes since that platform's reachable stable tag, ignoring beta tags and automatic version commits. The Windows engine in the update-test PRs uses the highest published stable version as a minimum for version arithmetic, including stable releases published before their PR merges.
 3. Updates the managed source version, installer or app metadata, and changelog.
 4. Pushes a version commit without force. If main advances, it fetches and recalculates instead of overwriting changes.
 5. Tests and packages that exact commit, then publishes its matching release tag.
 
-Every Windows PR validation package has a beta suffix, including documentation-only builds that do not publish a prerelease. It cannot masquerade as a future stable release.
+Ordinary Windows PR validation packages have a beta suffix, including documentation-only builds that do not publish a prerelease. An explicitly requested, trusted update-test PR may publish a stable release before merge, as described in [installed update testing](update-release-test.md). This exception is used for the 1.10.0 stable and 1.11.0 beta checkpoints.
 
 The same workflow continues after committing the version. GitHub does not start another push workflow for a commit made with `GITHUB_TOKEN`.
 
@@ -56,3 +56,11 @@ PR #10 added the Windows beta update feature and fixed macOS behavior before rel
 - [Semantic Versioning](https://semver.org/)
 - [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
 - [GitHub token workflow behavior](https://docs.github.com/en/actions/concepts/security/github_token)
+
+## Explicit installed-update test
+
+The two update-test PRs assert complete source cores `1.10.0` and `1.11.0`. They use `Release-Test-Windows: stable 1.10.0` and `Release-Test-Windows: beta 1.11.0`. The committed core must match the automatically calculated next version; the directive cannot force an arbitrary version. Other test cores need matching live-check scenarios before use.
+
+The stable test remains immutable after publication. A workflow-only verification repair can validate the existing frozen source in tag mode and skip all publication writes. Changes to application, tests, documentation or other non-workflow files cannot reuse that same published stable test identity.
+
+Current main acquires these test-path and published-floor changes when the implementation is merged. During testing, both PRs remain unmerged, and main's existing latest-release guard prevents a lower stable release from replacing the higher test release as latest.

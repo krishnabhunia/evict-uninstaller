@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.11.0 beta — 2026-10-07
+
+- Publish a beta update test above stable 1.10.0 while this PR remains unmerged.
+- Keep beta updates off by default; opt-in selects and verifies the complete 1.11.0-beta.<PR>.<run>.<attempt> installer.
+- Validate the live installed-updater discovery, checksum download and installer handoff against the published beta assets.
+
+## 1.10.0 — 2026-10-07
+
+- Publish an explicitly requested stable release from an unmerged test PR to verify the installed update flow.
+- Verify installer and checksum selection, stable and beta channel behavior, corruption handling and cancelled downloads.
+- Keep source, installer, runtime and release versions consistent; account for published stable test releases when calculating the next version.
+
 ## 1.9.0 — 2026-10-07
 
 <!-- Evict automatic release; base: win-v1.8.0 -->
