@@ -25,12 +25,17 @@ public sealed partial class NavItemViewModel : ObservableObject
 public sealed partial class MainViewModel : ObservableObject
 {
     private readonly AppServices _services;
+    private readonly UpdateCheckCoordinator _updateChecks;
     private readonly Dictionary<PageKey, ObservableObject> _pages = new();
     private EasyUninstallWindow? _widget;
 
     public MainViewModel(AppServices services)
     {
         _services = services;
+        _updateChecks = new UpdateCheckCoordinator(_services.Updater.CheckAsync,
+            () => _services.Settings.Current.CheckForUpdates,
+            () => _services.Settings.Current.IncludeBetaUpdates);
+        _updateChecks.CheckingChanged += value => IsCheckingForUpdates = value;
         NavItems = new ObservableCollection<NavItemViewModel>
         {
             new() { Key = PageKey.Health, Title = "Software Health", Glyph = "" },
@@ -312,28 +317,34 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _showUpdatedNotice;
     public string UpdatedNoticeText => $"Evict was updated to version {_services.Updater.CurrentVersionLabel}.";
 
-    /// <summary>Runs shortly after the window is shown; silent on every failure.</summary>
-    public async Task CheckForUpdatesOnStartupAsync()
+    /// <summary>One background check per application start; shutdown cancellation and failures stay silent.</summary>
+    public async Task CheckForUpdatesOnStartupAsync(CancellationToken ct = default)
     {
-        var s = _services.Settings.Current;
-        if (!s.CheckForUpdates) return;
-        bool checkingStarted = false;
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(4)); // let the first page load first
-            if (IsCheckingForUpdates || AvailableUpdate != null) return;
-            IsCheckingForUpdates = true;
-            checkingStarted = true;
-            var includePrereleases = s.IncludeBetaUpdates;
-            var result = await _services.Updater.CheckAsync(CancellationToken.None, includePrereleases);
-            if (includePrereleases != s.IncludeBetaUpdates) return;
-            s.LastUpdateCheckUtc = DateTime.UtcNow;
-            _services.Settings.Save();
-            Log.Info("Update check: " + result.Message);
+            var result = await _updateChecks.CheckOnStartupAsync(ct);
+            if (result is null) return;
+            RecordUpdateCheck(result);
             if (result.Status == UpdateStatus.UpdateAvailable && result.Release != null) OfferUpdate(result.Release, fromUser: false);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* normal shutdown */ }
         catch (Exception ex) { Log.Warn("Start-up update check failed: " + ex.Message); }
-        finally { if (checkingStarted) IsCheckingForUpdates = false; }
+    }
+
+    /// <summary>A manual check replaces a pending startup check and shares its in-flight request guard.</summary>
+    public async Task<UpdateCheckResult?> CheckForUpdatesAsync(CancellationToken ct)
+    {
+        var result = await _updateChecks.CheckNowAsync(ct);
+        if (result != null) RecordUpdateCheck(result);
+        return result;
+    }
+
+    private void RecordUpdateCheck(UpdateCheckResult result)
+    {
+        _services.Settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
+        _services.Settings.Save();
+        Log.Info("Update check: " + result.Message);
+        if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel vm) vm.RefreshUpdateResult(result);
     }
 
     /// <summary>Shows the banner (start-up) or the dialog directly (user clicked "Check now").</summary>

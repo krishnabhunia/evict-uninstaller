@@ -1,55 +1,50 @@
 # Installed update release test
 
-These two Windows PRs exercise a stable update followed by an optional beta update. Their releases are published for testing while their PRs remain unmerged.
+The open Windows PRs publish beta builds. A normal stable release is published only after merge into `main`; keep the PRs unmerged while testing.
 
-| Stage | Application version | Numeric Windows resource version | Channel |
-| --- | --- | --- | --- |
-| Current stable | 1.9.0 | 1.9.0.0 | Stable |
-| First test PR | 1.10.0 | 1.10.0.0 | Stable |
-| Second test PR | 1.11.0-beta.<PR>.<run>.<attempt> | 1.11.0.0 | Beta |
+| Build | Application label | Windows numeric resources |
+| --- | --- | --- |
+| Main stable | x.y.z | x.y.z.0 |
+| PR beta | x.y.z-beta.<run>.<PR>.<attempt> | x.y.z.0 |
 
-Stable versions always include all three components. Beta application labels additionally identify the PR, workflow run and attempt. The installer filename, installed registry version, application informational version and release tag use the full application version; Windows numeric resources use the numeric version.
+GitHub calculates the core from the change type and synchronizes source, installer and changelog metadata. The workflow run is first in the beta suffix so newer builds sort above older builds across PRs. A final stable version sorts above its beta at the same core.
 
-## Explicit test release metadata
-
-The first PR declares:
+## PR metadata
 
 ```text
 Release-Type-Windows: minor
 Release-Type-Macos: none
-Release-Test-Windows: stable 1.10.0
+Release-Test-Windows: beta
 ```
 
-The second declares:
+The optional beta test directive enables real published-update verification. It cannot make a PR stable or choose an arbitrary core. Test PRs calculate from the latest main stable release. After main released 1.11.0, a new minor PR calculates 1.12.0 automatically.
 
-```text
-Release-Type-Windows: minor
-Release-Type-Macos: none
-Release-Test-Windows: beta 1.11.0
-```
+## Archive layout
 
-The test directive is an assertion about the version calculated by the release engine. Its committed source version must match. Only trusted same-repository Windows PRs can use it. Ordinary PR builds continue to use beta versions. Published assets and tags remain immutable.
+| ZIP folder | Build file |
+| --- | --- |
+| `portable/` | `Evict.exe` and its SHA-256 sidecar |
+| `windows-installer/` | `Evict-Setup-<WindowsVersion>.exe` and its SHA-256 sidecar |
+| `macOS/` | `Evict-macOS-<MacVersion>.zip` and its SHA-256 sidecar |
 
-The first test intentionally publishes to stable users before merge. The second requires beta opt-in. Windows and macOS maintain independent version tracks.
+There are no other top-level files or folders. The macOS app ZIP contains the native `Evict.app` bundle and preserves its executable permissions and framework symlinks. Windows releases build both native components from the frozen source. Mac releases pair their native bundle with the latest published Windows stable whose source is reachable from main.
 
-A published stable test version establishes a minimum version for the release engine in these PRs. Current main acquires that calculation change when the implementation is merged; its existing publication guard prevents a lower release from replacing a higher latest stable release.
+## Check the installed application
 
-## Verify in installed Evict
+1. Leave **Settings → Updates → Include beta releases** off. Exit Evict completely and restart it with automatic checks enabled.
+2. Expect a background GitHub check and only a newer main stable release, if available. Reopening a window while the process is still running is not an application restart.
+3. Enable beta releases, exit and restart again. Expect the newest eligible beta or stable release, with its full version label and release notes.
+4. Download and install the offered update, then confirm the version after restart. Installed Evict uses Setup; portable Evict updates its executable.
+5. Cancel a beta confirmation or download once. The current installation must remain usable.
+6. Disable beta releases and restart. No beta should be offered, and an already installed beta must not be downgraded.
+7. After merge into main publishes the final stable version, check again. The final version is newer than its beta at the same core.
 
-1. Start with the installed 1.9.0 stable release or the earlier beta-aware 1.9.0 beta.
-2. Leave **Settings → Updates → Include beta releases** off and check for updates. Expect **1.10.0**.
-3. Download and install the offered update. Confirm the running application shows **1.10.0** after restart.
-4. After the second PR publishes, leave beta updates off and check again. Expect no 1.11.0 beta offer.
-5. Enable **Include beta releases** and check again. Expect the complete **1.11.0-beta.<PR>.<run>.<attempt>** label and beta confirmation.
-6. Cancel once and confirm the old version remains usable. Check again, accept the beta, and confirm the complete beta version after restart.
-7. Check again. The same beta must not be offered as a newer update. Turning beta updates off must stop future beta offers without downgrading the installed app.
-
-The update downloads the installer for installed Evict. It verifies the published SHA-256 checksum before handing off to Setup. The release ZIP contains only `installer/` and `portable/`, with their checksums.
+The withdrawn historical PR #12 stable test is no longer a stable update source. Preserving its tag and asset bytes prevents version reuse.
 
 ## Automated evidence and limits
 
-Unit scenarios cover stable upgrades, beta opt-out/opt-in, exact installer and checksum selection, verified downloads, installer arguments, corrupt payloads and cancellation. Test launches are captured without running the production app.
+Version tests cover beta-only PRs, exact-main stable delivery, automatic synchronization and major/minor/patch arithmetic. Startup tests cover each process lifetime, saved timestamps, current preferences, manual request deduplication, cancellation and stale channel results.
 
-The explicit test-release verification job checks actual published release metadata, downloaded installer/portable/ZIP bytes and checksums, version resources and ZIP contents, then exercises the downloaded installer in isolated native fixtures. An opted-in live updater check uses the actual GitHub release and download path.
+Packaging checks require all three exact folders, checksum-valid Windows files and a real native macOS app archive. Live CI uses the real GitHub catalog, tests beta opt-out/opt-in, downloads the requested release's exact Setup and verifies its hash and native version. It captures installer handoff arguments without launching the application. Parallel PRs can legitimately make another preview the catalog's newest version.
 
-These checks prove the release and updater code paths in CI. The installed application's visible update banner, restart, retained settings and Bitdefender behavior must also be checked on the user's Windows machine. Keep the Setup log and antivirus detection details if installation fails.
+The downloaded installer also runs in five isolated native fixtures. Actual GUI restarting, retained settings and Bitdefender behavior still require testing on the user's Windows machine.

@@ -10,7 +10,7 @@ For manual testing, download the Windows Actions artifact or the published beta 
 
 ## Version and channel rules
 
-- PR packages use the automatically calculated next major, minor or patch version with a suffix, for example `1.9.0-beta.<PR>.<run>.<attempt>`. See [automatic versioning](versioning.md).
+- PR packages use the automatically calculated next major, minor or patch version with a suffix, for example `1.9.0-beta.<run>.<PR>.<attempt>`. See [automatic versioning](versioning.md).
 - The running application's informational version includes the suffix; installers and update dialogs display it.
 - Beta identifiers are compared numerically, so beta.10 is newer than beta.9.
 - A final release is newer than its beta at the same numeric version.
@@ -20,15 +20,19 @@ For manual testing, download the Windows Actions artifact or the published beta 
 
 ## Publication and provenance
 
-Trusted same-repository Windows PR builds test and package a beta before publishing a GitHub prerelease. Fork and Dependabot PRs can build with read-only access and do not publish releases. Stable main-branch releases use the same automatic major/minor/patch calculation.
+Trusted same-repository Windows PR builds test and package a beta before publishing a GitHub prerelease. Fork and Dependabot PRs can build with read-only access and do not publish releases. Only main-branch sources publish stable releases after merge, using the same automatic major/minor/patch calculation. No test PR can bypass this channel rule.
 
-GitHub requires workflow-write permission when a release target changes workflows relative to the default branch. The publisher creates a source snapshot containing the exact PR app, tests and documentation, with only the workflow subtree matching the default branch. The snapshot's parent is the default-branch commit. Its scoped build reference makes that snapshot available for checkout. This publishes app code with the normal contents-write token while keeping the default branch unchanged.
+GitHub requires workflow-write permission when a release target changes workflows relative to the default branch. The publisher creates a frozen source snapshot preserving the reviewed PR app, tests and documentation, except for the three explicitly managed Windows version files synchronized by the version engine. The workflow subtree matches the default branch. The snapshot's parent is the default-branch commit. Its scoped build reference makes that snapshot available for checkout. This publishes app code with the normal contents-write token while keeping the default branch unchanged.
 
-The original PR head and the tested snapshot SHA are recorded in the release notes. A workflow-subtree consistency check and unchanged non-workflow blob checks run before building. Release assets and their hashes are checked before the draft is published as a prerelease with `make_latest: false`. No merge is performed.
+The original PR head and the tested snapshot SHA are recorded in the release notes. Workflow-subtree and reviewed-source checks verify that all other non-workflow blobs stay unchanged before building. Release assets and their hashes are checked before the draft is published as a prerelease with `make_latest: false`. No merge is performed.
+
+## Startup checks
+
+Automatic checks run silently after every application restart when enabled, even if the settings remember a recent check. Stable releases are the default. Saved beta opt-in controls the startup channel. Manual and startup checks share one request; shutdown cancels pending work.
 
 ## Validation
 
-Automated tests cover stable-default settings, persisted beta opt-in, semantic version ordering, release eligibility, release-list failures and pagination, and verified downloads. Windows CI compiles the app, checks XAML, tests the beta build and packages the installer and portable files.
+Automated tests cover stable-default settings, persisted beta opt-in, semantic version ordering, release eligibility, release-list failures and pagination, and verified downloads. Windows CI compiles the app, checks XAML, tests the beta build, builds the native macOS bundle, and packages exactly `portable/`, `windows-installer/` and `macOS/`. All binaries and nested app archives have SHA-256 sidecars.
 
 After installing the beta-aware build, use disposable installations to check:
 
