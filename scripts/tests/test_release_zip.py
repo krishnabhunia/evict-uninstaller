@@ -49,6 +49,10 @@ def write_zip(path, entries):
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
             for name, data, mode in entries:
                 info = zipfile.ZipInfo(name)
+                # ZipInfo normalizes Windows separators and truncates NULs.
+                # Security fixtures must write the original untrusted filename bytes.
+                info.filename = name
+                info.orig_filename = name
                 info.create_system = 3
                 info.external_attr = mode << 16
                 archive.writestr(info, data)
@@ -64,6 +68,7 @@ class ReleaseZipTests(unittest.TestCase):
         self.output = self.root / "Zip"
         self.setup.mkdir()
         self.portable.mkdir()
+        self.invalid_mac_attempts = 0
         self.version = "1.10.0"
         self.installer = self.setup / f"Evict-Setup-{self.version}.exe"
         self.installer.write_bytes(pe_bytes())
@@ -85,6 +90,8 @@ class ReleaseZipTests(unittest.TestCase):
         return archive
 
     def assert_invalid_mac(self, entries):
+        self.invalid_mac_attempts += 1
+        self.output = self.root / f"RejectedZip-{self.invalid_mac_attempts}"
         write_zip(self.mac, entries)
         with self.assertRaises(release_zip.ZipError):
             self.build()
@@ -227,10 +234,20 @@ class ReleaseZipTests(unittest.TestCase):
             with self.subTest(name=extra[0]):
                 self.assert_invalid_mac(mac_entries() + [extra])
 
+
+    def test_security_fixtures_preserve_raw_archive_names_on_every_platform(self):
+        names = ("Evict.app\\evil", "Evict.app/Contents/evil\0hidden")
+        write_zip(self.mac, [(name, b"unsafe", stat.S_IFREG | 0o644) for name in names])
+        with zipfile.ZipFile(self.mac) as archive:
+            self.assertEqual([entry.orig_filename for entry in archive.infolist()], list(names))
+        with self.assertRaises(release_zip.ZipError):
+            release_zip.check_macos_archive(self.mac)
+
     def test_reject_nested_traversal_backslash_absolute_and_device_entries(self):
         for name, mode in (
             ("Evict.app/../evil", stat.S_IFREG),
             ("Evict.app\\evil", stat.S_IFREG),
+            ("Evict.app/Contents/evil\0hidden", stat.S_IFREG),
             ("/Evict.app/evil", stat.S_IFREG),
             ("Evict.app/Contents/pipe", stat.S_IFIFO),
             ("__MACOSX/Other.app/info", stat.S_IFREG),
@@ -304,6 +321,7 @@ class ReleaseZipTests(unittest.TestCase):
         for new_name, mode in (
             ("portable/../Evict.exe", stat.S_IFREG | 0o644),
             ("portable\\Evict.exe", stat.S_IFREG | 0o644),
+            ("portable/Evict.exe\0hidden", stat.S_IFREG | 0o644),
             ("portable/Evict.exe", stat.S_IFLNK | 0o777),
         ):
             with self.subTest(name=new_name, mode=mode):
