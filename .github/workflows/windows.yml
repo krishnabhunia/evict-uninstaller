@@ -76,7 +76,10 @@ jobs:
           $event = $env:GITHUB_EVENT_NAME
           $isMain = $ref -eq "refs/heads/main" -and $event -in @("push", "workflow_dispatch")
           $isTag = $ref.StartsWith("refs/tags/win-v")
-          $mode = if ($event -eq "pull_request") { "beta" } elseif ($isTag) { "tag" } else { "stable" }
+          $publishedReuse = $event -eq "pull_request" -and "${{ needs.prepare-beta.outputs.published_reuse }}" -eq "true"
+          $mode = if ($publishedReuse) { "tag" } elseif ($event -eq "pull_request") { "beta" } elseif ($isTag) { "tag" } else { "stable" }
+          $tagForPlan = if ($publishedReuse) { "${{ needs.prepare-beta.outputs.published_reuse_tag }}" } elseif ($isTag) { $ref.Substring("refs/tags/".Length) } else { "" }
+          if ($publishedReuse -and $tagForPlan -notmatch '^win-v\d+\.\d+\.\d+$') { throw "Invalid immutable stable-test tag" }
           $allowed = @("windows/Directory.Build.props", "windows/installer/Evict.iss", "windows/CHANGELOG.md")
 
           function Read-Plan([bool] $sync) {
@@ -97,7 +100,7 @@ jobs:
               "--event-file", $env:GITHUB_EVENT_PATH, "--ref", $ref, "--repo-root", $repoRoot,
               "--main-ref", "origin/main", "--github-output", $output)
             if ($mode -eq "beta") { $planArguments += @("--beta-sequence", "$env:GITHUB_RUN_NUMBER.$env:GITHUB_RUN_ATTEMPT") }
-            if ($mode -eq "tag") { $planArguments += @("--tag", $ref.Substring("refs/tags/".Length)) }
+            if ($mode -eq "tag") { $planArguments += @("--tag", $tagForPlan) }
             if ($sync) { $planArguments += "--sync" }
             & python @planArguments | ForEach-Object { Write-Host $_ }
             if ($LASTEXITCODE -ne 0) { throw "Semantic version planning failed" }
@@ -111,7 +114,15 @@ jobs:
                 $result.tag -ne "win-v$($result.version)" -or $result.publish -notin @("true", "false")) {
               throw "Invalid semantic version plan"
             }
-            if ($mode -eq "beta") {
+            if ($publishedReuse) {
+              if ($result.tag -ne $tagForPlan -or $result.source_sha -ne $engineSource -or
+                  $result.release_source_sha -ne $engineSource -or $result.source_version -ne $result.core_version -or
+                  $result.channel -ne "stable" -or $result.prerelease -ne "false" -or $result.version -ne $result.core_version) {
+                throw "Immutable published stable-test validation failed"
+              }
+              $result.publish = "false"; $result.release = "false"; $result.release_test = "true"
+            }
+            if ($mode -eq "beta" -or $publishedReuse) {
               if ($result.channel -notin @("stable", "beta") -or $result.prerelease -notin @("true", "false") -or
                   $result.release_test -notin @("true", "false")) { throw "Invalid PR release channel plan" }
               if ($result.channel -eq "stable" -and ($result.release_test -ne "true" -or
@@ -125,7 +136,7 @@ jobs:
               if ($result.release_test -eq "true") {
                 $payload = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
                 $pr = $payload.pull_request
-                if ($pr.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or
+                if ($pr.base.ref -ne "main" -or $pr.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or
                     $pr.base.repo.full_name -ne $env:GITHUB_REPOSITORY -or
                     $payload.repository.full_name -ne $env:GITHUB_REPOSITORY -or
                     $pr.user.type -ne "User" -or $payload.sender.type -ne "User" -or
@@ -184,7 +195,7 @@ jobs:
           }
 
           $eligible = $isMain -or $isTag
-          if (-not $eligible -and $mode -ne "beta") {
+          if (-not $eligible -and $mode -ne "beta" -and -not $publishedReuse) {
             # A branch dispatch is CI only and leaves source versions untouched.
             $core = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
             $plan.version = $core; $plan.core_version = $core; $plan.numeric_version = "$core.0"; $plan.tag = "win-v$core"
@@ -195,7 +206,10 @@ jobs:
           $global:LASTEXITCODE = 0
           $source = (git -C $repoRoot rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0) { throw "Could not read the checked-out source commit" }
-          $release = if ($eligible) { Read-Release $plan.tag } else { $null }
+          $release = if ($eligible -or $publishedReuse) { Read-Release $plan.tag } else { $null }
+          if ($publishedReuse -and ($null -eq $release -or $release.draft -or $release.prerelease -or $release.tag_name -ne $tagForPlan)) {
+            throw "The immutable stable-test release is no longer published in the expected channel"
+          }
           if ($tagExists) {
             $tagSource = $tagSource.Trim()
             if ($plan.publish -eq "true" -and $tagSource -ne $source) { throw "Version tag already points to different source; refusing to change it" }
@@ -215,7 +229,7 @@ jobs:
             if ($stored -ne $plan.core_version) { throw "Release source version does not match the planned tag" }
           }
           $plan.source_sha = $source
-          if ($mode -eq "beta" -and $plan.release_test -eq "true" -and $plan.publish -eq "false") {
+          if (($mode -eq "beta" -or $publishedReuse) -and $plan.release_test -eq "true" -and $plan.publish -eq "false") {
             if ($plan.release_source_sha -notmatch '^[a-f0-9]{40}$') { throw "Missing immutable release-test source" }
           }
           else { $plan.release_source_sha = $source }
@@ -480,6 +494,8 @@ jobs:
     outputs:
       source_sha: ${{ steps.snapshot.outputs.source_sha }}
       temp_ref: ${{ steps.snapshot.outputs.temp_ref }}
+      published_reuse: ${{ steps.snapshot.outputs.published_reuse }}
+      published_reuse_tag: ${{ steps.snapshot.outputs.published_reuse_tag }}
     steps:
       - name: Prepare beta source without workflow changes
         id: snapshot
@@ -488,6 +504,8 @@ jobs:
           script: |
             const repo = context.repo;
             const pr = context.payload.pull_request;
+            core.setOutput('published_reuse', 'false');
+            core.setOutput('published_reuse_tag', '');
             if (!pr || pr.head.repo.full_name !== process.env.GITHUB_REPOSITORY ||
                 context.actor === 'dependabot[bot]' || pr.user.login === 'dependabot[bot]') {
               throw new Error('Only trusted same-repository PRs can prepare beta sources.');
@@ -508,6 +526,12 @@ jobs:
             if (testLines.length > 1) throw new Error('Duplicate Windows release-test directives.');
             const releaseTest = testLines.length ? testLines[0].match(/^Release-Test-Windows:[ \t]+(stable|beta)[ \t]+(\d+\.\d+\.\d+)[ \t]*$/i) : null;
             if (testLines.length && !releaseTest) throw new Error('Invalid Windows release-test directive.');
+            if (releaseTest && (pr.base.ref !== 'main' || pr.base.repo.full_name !== process.env.GITHUB_REPOSITORY ||
+                context.payload.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+                pr.user.type !== 'User' || context.payload.sender?.type !== 'User' ||
+                /\[bot\]$/.test(pr.user.login) || /\[bot\]$/.test(context.payload.sender.login))) {
+              throw new Error('Release tests require a trusted same-repository human PR targeting main.');
+            }
             if (releaseTest && releaseTest[1].toLowerCase() === 'stable') {
               let reserved;
               try { reserved = (await github.rest.git.getRef({...repo, ref: 'tags/win-v' + releaseTest[2]})).data.object; }
@@ -520,6 +544,29 @@ jobs:
                     JSON.stringify(await applicationEntries(frozen.tree.sha)) ||
                     await workflows(frozen.tree.sha) !== defaultWorkflows) {
                   throw new Error('Reserved release-test source differs from this reviewed PR or default workflows.');
+                }
+                let published;
+                const tag = 'win-v' + releaseTest[2];
+                try { published = (await github.rest.repos.getReleaseByTag({...repo, tag})).data; }
+                catch (error) { if (error.status !== 404) throw error; }
+                if (published && !published.draft) {
+                  const body = (published.body || '').split(/\r?\n/);
+                  const originalLines = body.filter(line => /^Original PR head: /.test(line));
+                  const original = originalLines.length === 1 ? originalLines[0].match(/^Original PR head: ([a-f0-9]{40})$/) : null;
+                  if (published.prerelease || published.tag_name !== tag || !original ||
+                      !body.includes('Release channel: stable') || !body.includes('Release-test request: true') ||
+                      !body.includes('Built and tested release source: ' + frozen.sha) ||
+                      !body.includes('Explicit installed-update release test of [PR #' + pr.number + '](https://github.com/' + process.env.GITHUB_REPOSITORY + '/pull/' + pr.number + ').')) {
+                    throw new Error('The published stable test has incompatible channel or PR/source provenance.');
+                  }
+                  const {data: reviewed} = await github.rest.git.getCommit({...repo, commit_sha: original[1]});
+                  if (JSON.stringify(await applicationEntries(reviewed.tree.sha)) !==
+                      JSON.stringify(await applicationEntries(frozen.tree.sha))) {
+                    throw new Error('The published stable review identity differs from its frozen application source.');
+                  }
+                  // A workflow-only repair validates the immutable tag, without replanning or changing the release.
+                  core.setOutput('published_reuse', 'true');
+                  core.setOutput('published_reuse_tag', tag);
                 }
                 core.setOutput('source_sha', frozen.sha);
                 core.setOutput('temp_ref', '');
@@ -845,7 +892,7 @@ jobs:
             throw "Published release source does not match the reviewed immutable source"
           }
           $names = @("Evict.exe", "Evict.exe.sha256", "Evict-Setup-$v.exe", "Evict-Setup-$v.exe.sha256", "Evict-$v.zip", "Evict-$v.zip.sha256") | Sort-Object
-          $assets = @(Invoke-RestMethod -Uri "$api/releases/$($release.id)/assets?per_page=100" -Headers $headers)
+          $assets = Invoke-RestMethod -Uri "$api/releases/$($release.id)/assets?per_page=100" -Headers $headers
           $actual = @($assets.name | Sort-Object)
           if ($actual.Count -ne $names.Count -or ($actual -join [char]10) -cne ($names -join [char]10)) {
             throw "Published release must contain exactly its six expected assets"
