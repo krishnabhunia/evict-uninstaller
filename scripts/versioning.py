@@ -175,6 +175,34 @@ def release_intent(message: str, metadata: dict[str, Any] | None, platform: str)
     return max(declared) if declared else Bump.PATCH
 
 
+def release_test_request(event: dict[str, Any], repository: str, platform: str, mode: str) -> tuple[str, CoreVersion] | None:
+    """Explicit owner-directed release tests are assertions, never version overrides."""
+    if platform != "windows" or mode != "beta":
+        return None
+    pull = event.get("pull_request") or {}
+    body = str(pull.get("body") or "")
+    directives = [line for line in body.splitlines()
+                  if re.match(r"^\s*Release-Test-Windows\b", line, re.I)]
+    if not directives:
+        return None
+    if len(directives) != 1:
+        raise VersionError("A release test requires exactly one Windows directive.")
+    match = re.fullmatch(r"\s*Release-Test-Windows:\s*(stable|beta)\s+((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\s*", directives[0], re.I)
+    if not match:
+        raise VersionError("Use Release-Test-Windows: stable|beta major.minor.patch.")
+    base = pull.get("base") or {}
+    head = pull.get("head") or {}
+    if ((event.get("repository") or {}).get("full_name") != repository
+            or (base.get("repo") or {}).get("full_name") != repository
+            or (head.get("repo") or {}).get("full_name") != repository or base.get("ref") != "main"):
+        raise VersionError("Release tests require a same-repository PR targeting main.")
+    for identity in (pull.get("user") or {}, event.get("sender") or {}):
+        login = identity.get("login") or ""
+        if identity.get("type") != "User" or not login or login.lower().endswith("[bot]"):
+            raise VersionError("Release tests require a non-bot PR author and event sender.")
+    return match[1].lower(), CoreVersion.parse(match[2])
+
+
 class Git:
     def __init__(self, root: Path):
         self.root = root.resolve()
@@ -222,6 +250,7 @@ class GitHub:
         self.token = token
         self.opener = opener
         self.cache: dict[str, list[dict[str, Any]]] = {}
+        self.release_cache: list[dict[str, Any]] | None = None
 
     def merged_pull_requests(self, sha: str) -> list[dict[str, Any]]:
         if sha in self.cache:
@@ -268,6 +297,48 @@ class GitHub:
                 by_number[pull["number"]] = pull
         self.cache[sha] = list(by_number.values())
         return self.cache[sha]
+
+
+    def published_stable_releases(self, platform: str) -> list[dict[str, Any]]:
+        """Published versions outside main still bound the next public version."""
+        if self.release_cache is None:
+            suffix = "/releases"
+            next_url: str | None = f"https://api.github.com/repos/{self.repository}{suffix}?per_page=100"
+            visited: set[str] = set()
+            releases: list[dict[str, Any]] = []
+            while next_url:
+                parsed = urlsplit(next_url)
+                allowed = [f"/repos/{self.repository}{suffix}"]
+                if self.repository_id:
+                    allowed.append(f"/repositories/{self.repository_id}{suffix}")
+                if (parsed.scheme != "https" or parsed.netloc != "api.github.com" or parsed.path not in allowed
+                        or next_url in visited or len(visited) >= 20):
+                    raise VersionError("GitHub returned incomplete or untrusted release pagination.")
+                visited.add(next_url)
+                headers = {"Accept": "application/vnd.github+json", "User-Agent": "Evict-release-versioning",
+                           "X-GitHub-Api-Version": "2022-11-28"}
+                if self.token:
+                    headers["Authorization"] = "Bearer " + self.token
+                try:
+                    with self.opener(Request(next_url, headers=headers), timeout=20) as response:
+                        page = json.load(response)
+                        link = response.headers.get("Link", "")
+                except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
+                    status = getattr(error, "code", None)
+                    raise VersionError("Could not read the published release version floor"
+                                       + (f" (GitHub HTTP {status})." if status else ".")) from None
+                if not isinstance(page, list) or any(not isinstance(item, dict) for item in page):
+                    raise VersionError("GitHub returned invalid published-release metadata.")
+                releases.extend(page)
+                matches = re.findall(r'<([^>]+)>\s*;\s*rel="next"', link)
+                if "next" in link and not matches:
+                    raise VersionError("GitHub returned incomplete release pagination.")
+                next_url = matches[0] if matches else None
+            self.release_cache = releases
+        return [release for release in self.release_cache
+                if release.get("draft") is False and release.get("prerelease") is False
+                and release.get("published_at")
+                and stable_tag_version(str(release.get("tag_name") or ""), platform) is not None]
 
 
 def safe_path(root: Path, relative: str) -> Path:
@@ -379,6 +450,24 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
     baseline = highest_stable_tag(all_tags, platform)
     base_tag, base = baseline if baseline else ("", source)
     tag_sha = git.resolve(base_tag) if base_tag else ""
+    test_request = release_test_request(event, policy.get("repository") or getattr(github, "repository", ""), platform, mode)
+    channel = test_request[0] if test_request else "beta" if mode == "beta" else "stable"
+    published = github.published_stable_releases(platform) if platform == "windows" and mode != "tag" else []
+    published_baseline = highest_stable_tag([release["tag_name"] for release in published], platform)
+    floor_tag, floor = published_baseline if published_baseline else ("", base)
+    reused_test = None
+    release_source_sha = head
+    if test_request and channel == "stable":
+        matching = [release for release in published if release["tag_name"] == PREFIX[platform] + str(test_request[1])]
+        if matching:
+            original = str((event.get("pull_request") or {}).get("head", {}).get("sha") or "")
+            provenance = rf"(?im)^\s*Original PR head:\s*{re.escape(original)}\s*$"
+            if len(matching) != 1 or not re.fullmatch(r"[0-9a-f]{40}", original) or not re.search(provenance, str(matching[0].get("body") or "")):
+                raise VersionError("The requested stable test version is already published with different or missing PR provenance.")
+            reused_test = test_request[1]
+            release_source_sha = git.resolve(matching[0]["tag_name"])
+            if source_version(git.root, platform, git, release_source_sha) != str(reused_test):
+                raise VersionError("The published release-test tag disagrees with its immutable source version.")
     if mode == "tag":
         if not tag or stable_tag_version(tag, platform) is None:
             raise VersionError("Tag mode requires a stable tag for this platform.")
@@ -435,24 +524,32 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
             if pr_affects:
                 intent = max(intent, release_intent("", pull, platform))
                 notes.extend(change_notes("", [pull]))
-        computed = base.bump(intent)
+        arithmetic_base = max(base, floor)
+        computed = arithmetic_base.bump(intent) if intent != Bump.NONE else base
         reserved_core = max(reservations, default=base)
-        core = max(computed, reserved_core)
+        core = reused_test if reused_test is not None else max(computed, reserved_core)
+        if test_request and (source != test_request[1] or core != test_request[1]):
+            raise VersionError("The release test source and requested core must equal the automatically calculated next core.")
         if source > core:
             raise VersionError("The committed source version is ahead of calculated intent; declare the intended major/minor change instead of downgrading it.")
         if platform == "windows" and any(part > 65535 for part in (core.major, core.minor, core.patch)):
             raise VersionError("The calculated version exceeds Windows numeric version-resource limits.")
         if core > computed:
             intent = Bump.MAJOR if core.major > base.major else Bump.MINOR if core.minor > base.minor else Bump.PATCH
-        publish = core > base and (mode != "beta" or pr_affects)
+        publish = reused_test is None and core > max(base, floor) and (mode != "beta" or pr_affects)
         version_text = str(core)
-        if mode == "beta":
+        if channel == "beta":
             version_text += f"-beta.{number}.{beta_sequence}"
         plan = {"bump": intent.name.lower(), "publish": publish, "core_version": str(core), "version": version_text,
-                "tag": PREFIX[platform] + version_text if mode == "beta" or publish or not base_tag else base_tag,
+                "tag": PREFIX[platform] + version_text if mode == "beta" or core != base or not base_tag else base_tag,
                 "base_tag": base_tag, "base_version": str(base), "tag_source_sha": tag_sha,
-                "source_sha": head, "source_version": str(source), "prerelease": mode == "beta",
+                "source_sha": head, "source_version": str(source), "prerelease": channel == "beta",
                 "notes": list(dict.fromkeys(notes))}
+    plan["release_source_sha"] = release_source_sha
+    plan["channel"] = channel
+    plan["release_test"] = test_request is not None
+    plan["published_floor"] = str(floor)
+    plan["published_floor_tag"] = floor_tag
     plan["release"] = plan["publish"]
     plan["numeric_version"] = plan["core_version"] + ".0"
     plan["notes_path"] = GENERATED[platform][-1]
