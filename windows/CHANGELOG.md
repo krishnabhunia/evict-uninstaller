@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.0 — 2026-10-07
+
+<!-- Evict automatic release; base: win-v1.11.0 -->
+
+- feat(release): enforce beta PRs and automatic main releases
+
 ## 1.11.0 — 2026-10-07
 
 <!-- Evict automatic release; base: win-v1.9.0 -->
