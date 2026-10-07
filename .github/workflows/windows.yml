@@ -3,7 +3,7 @@ name: Windows
 on:
   push:
     branches: [ main ]
-    tags: [ 'win-v*' ]
+    tags: [ 'win-v*', '!win-v*-beta.*' ]
     paths: [ 'windows/**', '.github/workflows/windows.yml' ]
   pull_request:
     branches: [ main ]
@@ -21,6 +21,8 @@ concurrency:
 
 jobs:
   build:
+    # Keep stable delivery on main/tags unchanged; PR code builds in a separate read-only job below.
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     defaults:
       run:
@@ -30,10 +32,12 @@ jobs:
       # SIGN_PFX_BASE64: base64 of a .pfx code-signing certificate, SIGN_PFX_PASSWORD: its password.
       SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
       SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
-    steps:
+    steps: &windows_build_steps
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # tags, to tell whether this version is already released
+          # PR betas test the exact source snapshot that will be tagged, never GitHub's synthetic merge commit.
+          ref: ${{ needs.prepare-beta.outputs.source_sha || github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
@@ -45,8 +49,21 @@ jobs:
         shell: pwsh
         run: |
           $v = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Expected a stable major.minor.patch version, found $v" }
+          $numeric = "$v.0"
+          if ("${{ github.event_name }}" -eq "pull_request") {
+            $parts = $v.Split('.')
+            $next = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
+            $v = "$next-beta.${{ github.event.pull_request.number }}.${{ github.run_number }}.${{ github.run_attempt }}"
+            $numeric = "$next.0"
+          }
+          $source = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Could not read the checked-out source commit" }
           "version=$v" >> $env:GITHUB_OUTPUT
-          Write-Host "Version $v"
+          "numeric_version=$numeric" >> $env:GITHUB_OUTPUT
+          "source_sha=$source" >> $env:GITHUB_OUTPUT
+          "artifact=Evict-$v-$source" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $v from $source (numeric file version $numeric)"
 
       - name: Release needed?
         id: rel
@@ -70,7 +87,7 @@ jobs:
         run: dotnet restore Evict.sln
 
       - name: Unit tests
-        run: dotnet test tests/Evict.Core.Tests/Evict.Core.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=tests.trx"
+        run: dotnet test tests/Evict.Core.Tests/Evict.Core.Tests.csproj -c Release --no-restore -p:Version=${{ steps.ver.outputs.version }} -p:InformationalVersion=${{ steps.ver.outputs.version }} --logger "trx;LogFileName=tests.trx"
 
       - name: XAML sanity checks
         env:
@@ -78,7 +95,7 @@ jobs:
         run: python build/xaml_check.py
 
       - name: Publish single-file EXE
-        run: dotnet publish src/Evict.App/Evict.App.csproj -c Release -o Portable
+        run: dotnet publish src/Evict.App/Evict.App.csproj -c Release -o Portable -p:Version=${{ steps.ver.outputs.version }} -p:InformationalVersion=${{ steps.ver.outputs.version }}
 
       - name: Sign Evict.exe (optional)
         if: env.SIGN_PFX_BASE64 != ''
@@ -95,7 +112,7 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y | Out-Null }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
-          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" "/DSourceDir=$PWD\Portable" installer\Evict.iss
+          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" "/DMyAppNumericVersion=${{ steps.ver.outputs.numeric_version }}" "/DSourceDir=$PWD\Portable" installer\Evict.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
           Get-ChildItem Installed
 
@@ -129,8 +146,17 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Evict-${{ steps.ver.outputs.version }}-${{ github.sha }}
+          name: ${{ steps.ver.outputs.artifact }}
           path: windows/CiDownload/
+          if-no-files-found: error
+
+      # Transport the already checked ZIP without rebuilding it in the privileged publication job.
+      - name: Upload beta ZIP for publication
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.ver.outputs.artifact }}-release-zip
+          path: windows/Zip/
           if-no-files-found: error
 
       - name: Release notes from CHANGELOG.md
@@ -189,3 +215,261 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Couldn't build the zip for $tag" }
           gh release upload $tag --repo $repo "$d\Zip\Evict-$v.zip" "$d\Zip\Evict-$v.zip.sha256"
           Write-Host "Added Evict-$v.zip to $tag"
+
+  # A preview source commit contains every PR file unchanged except .github/workflows, which matches the default
+  # branch. GitHub forbids GITHUB_TOKEN release creation for targets that modify workflows; no PAT is needed here.
+  prepare-beta:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      source_sha: ${{ steps.snapshot.outputs.source_sha }}
+      temp_ref: ${{ steps.snapshot.outputs.temp_ref }}
+    steps:
+      - name: Prepare beta source without workflow changes
+        id: snapshot
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const repo = context.repo;
+            const pr = context.payload.pull_request;
+            if (!pr || pr.head.repo.full_name !== process.env.GITHUB_REPOSITORY ||
+                context.actor === 'dependabot[bot]' || pr.user.login === 'dependabot[bot]') {
+              throw new Error('Only trusted same-repository PRs can prepare beta sources.');
+            }
+            const {data: metadata} = await github.rest.repos.get(repo);
+            const {data: baseRef} = await github.rest.git.getRef({...repo, ref: 'heads/' + metadata.default_branch});
+            const {data: base} = await github.rest.git.getCommit({...repo, commit_sha: baseRef.object.sha});
+            const {data: head} = await github.rest.git.getCommit({...repo, commit_sha: pr.head.sha});
+            async function workflows(treeSha) {
+              const {data: root} = await github.rest.git.getTree({...repo, tree_sha: treeSha});
+              const gh = root.tree.find(entry => entry.path === '.github' && entry.type === 'tree');
+              if (!gh) return null;
+              const {data: config} = await github.rest.git.getTree({...repo, tree_sha: gh.sha});
+              return config.tree.find(entry => entry.path === 'workflows' && entry.type === 'tree')?.sha ?? null;
+            }
+            const defaultWorkflows = await workflows(base.tree.sha);
+            if (await workflows(head.tree.sha) === defaultWorkflows) {
+              core.setOutput('source_sha', head.sha);
+              core.setOutput('temp_ref', '');
+              return;
+            }
+            const {data: tree} = await github.rest.git.createTree({
+              ...repo, base_tree: head.tree.sha,
+              tree: [{path: '.github/workflows', mode: '040000', type: 'tree', sha: defaultWorkflows}]
+            });
+            async function applicationEntries(treeSha) {
+              const {data: result} = await github.rest.git.getTree({...repo, tree_sha: treeSha, recursive: 'true'});
+              if (result.truncated) throw new Error('Cannot verify a truncated source tree.');
+              return result.tree
+                .filter(entry => entry.path !== '.github' && entry.path !== '.github/workflows' &&
+                                 !entry.path.startsWith('.github/workflows/'))
+                .map(({path, mode, type, sha}) => ({path, mode, type, sha}))
+                .sort((a, b) => a.path.localeCompare(b.path));
+            }
+            if (JSON.stringify(await applicationEntries(head.tree.sha)) !==
+                JSON.stringify(await applicationEntries(tree.sha)) ||
+                await workflows(tree.sha) !== defaultWorkflows) {
+              throw new Error('Beta snapshot changed files outside the workflow subtree.');
+            }
+            const {data: snapshot} = await github.rest.git.createCommit({
+              ...repo, tree: tree.sha, parents: [base.sha],
+              message: 'Windows beta source for PR #' + pr.number + '\n\nOriginal PR head: ' + head.sha +
+                       '\nApplication, tests and documentation match the PR exactly. Workflows match default branch ' + base.sha + '.'
+            });
+            const ref = 'heads/beta-build/pr-' + pr.number + '/run-' + context.runId + '-attempt-' + process.env.GITHUB_RUN_ATTEMPT;
+            await github.rest.git.createRef({...repo, ref: 'refs/' + ref, sha: snapshot.sha});
+            core.setOutput('source_sha', snapshot.sha);
+            core.setOutput('temp_ref', ref);
+            await core.summary.addHeading('Windows beta source')
+              .addRaw('Original PR head: ' + head.sha + '\n\nRelease source snapshot: ' + snapshot.sha +
+                      '\n\nAll non-workflow tree entries verified identical.').write();
+
+  pr-build:
+    needs: prepare-beta
+    if: always() && github.event_name == 'pull_request' && (needs.prepare-beta.result == 'success' || github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]')
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: windows
+    env:
+      # Forks and Dependabot keep CI, with read-only credentials and no signing secrets.
+      SIGN_PFX_BASE64: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]' && secrets.SIGN_PFX_BASE64 || '' }}
+      SIGN_PFX_PASSWORD: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]' && secrets.SIGN_PFX_PASSWORD || '' }}
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      source_sha: ${{ steps.ver.outputs.source_sha }}
+      artifact: ${{ steps.ver.outputs.artifact }}
+    steps: *windows_build_steps
+
+  publish-beta:
+    needs: pr-build
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.pr-build.outputs.artifact }}
+          path: Download
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.pr-build.outputs.artifact }}-release-zip
+          path: Zip
+
+      - name: Verify beta assets before publication
+        id: beta_assets
+        shell: pwsh
+        env:
+          BETA_VERSION: ${{ needs.pr-build.outputs.version }}
+        run: |
+          $v = $env:BETA_VERSION
+          $files = @("Download/portable/Evict.exe", "Download/installer/Evict-Setup-$v.exe", "Zip/Evict-$v.zip")
+          $assetSizes = @{}
+          foreach ($file in $files) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing beta asset: $file" }
+            $expected = (Get-Content -LiteralPath "$file.sha256" -Raw).Trim()
+            if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) {
+              throw "Beta checksum mismatch: $file"
+            }
+            $assetSizes[[IO.Path]::GetFileName($file)] = (Get-Item -LiteralPath $file).Length
+            $assetSizes[[IO.Path]::GetFileName("$file.sha256")] = (Get-Item -LiteralPath "$file.sha256").Length
+          }
+          "sizes=$($assetSizes | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath "Zip/Evict-$v.zip"))
+          try {
+            $actual = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') } | Sort-Object)
+            $expected = @("installer/Evict-Setup-$v.exe", "installer/Evict-Setup-$v.exe.sha256", "portable/Evict.exe", "portable/Evict.exe.sha256") | Sort-Object
+            if (@(Compare-Object $expected $actual).Count -ne 0) { throw "Beta ZIP must contain only the installer/ and portable/ assets and checksums" }
+          }
+          finally { $archive.Dispose() }
+
+      - name: Confirm release source workflow permissions
+        uses: actions/github-script@v7
+        env:
+          BETA_SOURCE_SHA: ${{ needs.pr-build.outputs.source_sha }}
+          BETA_VERSION: ${{ needs.pr-build.outputs.version }}
+        with:
+          script: |
+            async function workflows(commitSha) {
+              const {data: commit} = await github.rest.git.getCommit({...context.repo, commit_sha: commitSha});
+              const {data: root} = await github.rest.git.getTree({...context.repo, tree_sha: commit.tree.sha});
+              const gh = root.tree.find(entry => entry.path === '.github' && entry.type === 'tree');
+              if (!gh) return null;
+              const {data: config} = await github.rest.git.getTree({...context.repo, tree_sha: gh.sha});
+              return config.tree.find(entry => entry.path === 'workflows' && entry.type === 'tree')?.sha ?? null;
+            }
+            const {data: repo} = await github.rest.repos.get(context.repo);
+            const {data: base} = await github.rest.git.getRef({...context.repo, ref: 'heads/' + repo.default_branch});
+            if (await workflows(base.object.sha) !== await workflows(process.env.BETA_SOURCE_SHA)) {
+              throw new Error('Default-branch workflows changed during this beta build. Rerun to prepare a fresh source snapshot.');
+            }
+            // Create the tag only after tests, packaging and checksum validation succeeded. Drafts may defer tag creation.
+            const ref = 'tags/win-v' + process.env.BETA_VERSION;
+            let tag;
+            try { tag = (await github.rest.git.getRef({...context.repo, ref})).data; }
+            catch (error) {
+              if (error.status !== 404) throw error;
+              tag = (await github.rest.git.createRef({...context.repo, ref: 'refs/' + ref, sha: process.env.BETA_SOURCE_SHA})).data;
+            }
+            if (tag.object.type !== 'commit' || tag.object.sha !== process.env.BETA_SOURCE_SHA) {
+              throw new Error('The beta tag already identifies another source; refusing to overwrite it.');
+            }
+
+      # Keep the release a draft until every asset is uploaded and its name, size and source tag are verified.
+      - name: Upload beta draft
+        id: beta_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: win-v${{ needs.pr-build.outputs.version }}
+          target_commitish: ${{ needs.pr-build.outputs.source_sha }}
+          name: Evict ${{ needs.pr-build.outputs.version }} for Windows (PR #${{ github.event.pull_request.number }})
+          draft: true
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true
+          body: |
+            Beta preview of [PR #${{ github.event.pull_request.number }}](https://github.com/${{ github.repository }}/pull/${{ github.event.pull_request.number }}).
+            Original PR head: ${{ github.event.pull_request.head.sha }}
+            Built and tested release source: ${{ needs.pr-build.outputs.source_sha }}
+            All application, test and documentation files match the PR head. Only .github/workflows matches the default branch so GitHub Actions can publish without an additional token.
+            The release ZIP contains only installer/ and portable/, each with its SHA-256 checksum.
+          files: |
+            Download/portable/Evict.exe
+            Download/portable/Evict.exe.sha256
+            Download/installer/*.exe
+            Download/installer/*.sha256
+            Zip/Evict-*.zip
+            Zip/Evict-*.zip.sha256
+
+      - name: Publish verified beta without changing latest
+        uses: actions/github-script@v7
+        env:
+          BETA_VERSION: ${{ needs.pr-build.outputs.version }}
+          BETA_SOURCE_SHA: ${{ needs.pr-build.outputs.source_sha }}
+          BETA_RELEASE_ID: ${{ steps.beta_release.outputs.id }}
+          BETA_ASSET_SIZES: ${{ steps.beta_assets.outputs.sizes }}
+        with:
+          script: |
+            const version = process.env.BETA_VERSION;
+            const release_id = Number(process.env.BETA_RELEASE_ID);
+            if (!Number.isSafeInteger(release_id) || release_id <= 0) throw new Error('No draft release was created.');
+            const {data: release} = await github.rest.repos.getRelease({...context.repo, release_id});
+            if (!release.draft || !release.prerelease || release.tag_name !== 'win-v' + version) {
+              throw new Error('The beta draft has unexpected release metadata.');
+            }
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {...context.repo, release_id, per_page: 100});
+            const sizes = JSON.parse(process.env.BETA_ASSET_SIZES);
+            const expected = ['Evict.exe', 'Evict.exe.sha256', 'Evict-Setup-' + version + '.exe',
+              'Evict-Setup-' + version + '.exe.sha256', 'Evict-' + version + '.zip', 'Evict-' + version + '.zip.sha256'].sort();
+            if (JSON.stringify(assets.map(a => a.name).sort()) !== JSON.stringify(expected) ||
+                assets.some(a => a.size <= 0 || a.size !== sizes[a.name] || a.state !== 'uploaded')) {
+              throw new Error('Beta draft assets are incomplete; leaving the release unpublished.');
+            }
+            const {data: tag} = await github.rest.git.getRef({...context.repo, ref: 'tags/win-v' + version});
+            let target = tag.object;
+            while (target.type === 'tag') {
+              const {data: annotated} = await github.rest.git.getTag({...context.repo, tag_sha: target.sha});
+              target = annotated.object;
+            }
+            if (target.type !== 'commit' || target.sha !== process.env.BETA_SOURCE_SHA) {
+              throw new Error('Beta tag does not point to the tested source commit.');
+            }
+            const {data: published} = await github.rest.repos.updateRelease({
+              ...context.repo, release_id, draft: false, prerelease: true, make_latest: 'false'
+            });
+            if (published.draft || !published.prerelease) throw new Error('Beta publication was not confirmed.');
+            await core.summary.addHeading('Windows beta published')
+              .addLink(version, published.html_url).write();
+
+  cleanup-beta-source:
+    needs: [prepare-beta, pr-build, publish-beta]
+    if: always() && needs.prepare-beta.outputs.temp_ref != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Remove this run's temporary source ref
+        uses: actions/github-script@v7
+        env:
+          BETA_TEMP_REF: ${{ needs.prepare-beta.outputs.temp_ref }}
+          BETA_SOURCE_SHA: ${{ needs.prepare-beta.outputs.source_sha }}
+        with:
+          script: |
+            const ref = process.env.BETA_TEMP_REF;
+            const prefix = 'heads/beta-build/pr-' + context.payload.pull_request.number + '/run-' + context.runId + '-attempt-';
+            const attempt = ref.startsWith(prefix) ? ref.slice(prefix.length) : '';
+            if (!/^[1-9]\d*$/.test(attempt) || Number(attempt) > Number(process.env.GITHUB_RUN_ATTEMPT)) {
+              throw new Error('Refusing to remove an unexpected beta source ref.');
+            }
+            let current;
+            try { current = (await github.rest.git.getRef({...context.repo, ref})).data; }
+            catch (error) { if (error.status === 404) return; throw error; }
+            if (current.object.sha !== process.env.BETA_SOURCE_SHA) {
+              throw new Error('Temporary source ref changed; leaving it intact.');
+            }
+            await github.rest.git.deleteRef({...context.repo, ref});

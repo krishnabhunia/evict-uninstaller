@@ -64,9 +64,40 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _adminBannerDismissed;
 
     /// <summary>"Evict Uninstaller 1.5.0" – also what the taskbar and Alt+Tab show.</summary>
-    public string WindowTitle => $"{AppPaths.ProductName} {_services.Updater.CurrentVersion.ToString(3)}" + (IsElevated ? "  (Administrator)" : "");
+    public string WindowTitle => $"{AppPaths.ProductName} {_services.Updater.CurrentVersionLabel}" + (IsElevated ? "  (Administrator)" : "");
     /// <summary>Same source as the update check, so the number shown is the one compared with GitHub Releases.</summary>
-    public string VersionText => "v" + _services.Updater.CurrentVersion.ToString(3);
+    public string VersionText => "v" + _services.Updater.CurrentVersionLabel;
+
+    public bool IncludeBetaUpdates
+    {
+        get => _services.Settings.Current.IncludeBetaUpdates;
+        set
+        {
+            if (value == IncludeBetaUpdates || IsCheckingForUpdates) return;
+            _services.Settings.Current.IncludeBetaUpdates = value;
+            _services.Settings.Save();
+            UpdateChannelChanged();
+        }
+    }
+
+    [ObservableProperty] private bool _isCheckingForUpdates;
+    partial void OnIsCheckingForUpdatesChanged(bool value)
+    {
+        if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel vm) vm.RefreshUpdateCheckState();
+    }
+
+    public void UpdateChannelChanged()
+    {
+        OnPropertyChanged(nameof(IncludeBetaUpdates));
+        if (AvailableUpdate?.IsPreview == true && !IncludeBetaUpdates)
+        {
+            AvailableUpdate = null;
+            ShowUpdateBanner = false;
+        }
+        if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel vm) vm.RefreshUpdateChannel();
+    }
+
+    [RelayCommand] private void OpenUpdateSettings() => Navigate(PageKey.Settings);
 
     public void Navigate(PageKey key)
     {
@@ -279,31 +310,39 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private string? _updateBannerText;
     /// <summary>Green "Evict was updated" notice shown once after a self-update (--updated).</summary>
     [ObservableProperty] private bool _showUpdatedNotice;
-    public string UpdatedNoticeText => $"Evict was updated to version {_services.Updater.CurrentVersion.ToString(3)}.";
+    public string UpdatedNoticeText => $"Evict was updated to version {_services.Updater.CurrentVersionLabel}.";
 
     /// <summary>Runs shortly after the window is shown; silent on every failure.</summary>
     public async Task CheckForUpdatesOnStartupAsync()
     {
         var s = _services.Settings.Current;
         if (!s.CheckForUpdates) return;
+        bool checkingStarted = false;
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(4)); // let the first page load first
-            var result = await _services.Updater.CheckAsync(CancellationToken.None);
+            if (IsCheckingForUpdates || AvailableUpdate != null) return;
+            IsCheckingForUpdates = true;
+            checkingStarted = true;
+            var includePrereleases = s.IncludeBetaUpdates;
+            var result = await _services.Updater.CheckAsync(CancellationToken.None, includePrereleases);
+            if (includePrereleases != s.IncludeBetaUpdates) return;
             s.LastUpdateCheckUtc = DateTime.UtcNow;
             _services.Settings.Save();
             Log.Info("Update check: " + result.Message);
             if (result.Status == UpdateStatus.UpdateAvailable && result.Release != null) OfferUpdate(result.Release, fromUser: false);
         }
         catch (Exception ex) { Log.Warn("Start-up update check failed: " + ex.Message); }
+        finally { if (checkingStarted) IsCheckingForUpdates = false; }
     }
 
     /// <summary>Shows the banner (start-up) or the dialog directly (user clicked "Check now").</summary>
     public void OfferUpdate(ReleaseInfo release, bool fromUser)
     {
+        if (release.IsPreview && !IncludeBetaUpdates) return;
         AvailableUpdate = release;
         var skipped = string.Equals(_services.Settings.Current.SkippedUpdateVersion, release.TagName, StringComparison.OrdinalIgnoreCase);
-        UpdateBannerText = $"Evict {release.Version.ToString(3)} is available (you have {_services.Updater.CurrentVersion.ToString(3)}).";
+        UpdateBannerText = $"Evict {release.DisplayVersion}{(release.IsPreview ? " (beta/prerelease)" : "")} is available (you have {_services.Updater.CurrentVersionLabel}).";
         if (fromUser) ShowUpdate();
         else ShowUpdateBanner = !skipped;
     }
@@ -311,10 +350,10 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ShowUpdate()
     {
-        if (AvailableUpdate is null) return;
-        var vm = new UpdateViewModel(_services, AvailableUpdate);
+        if (AvailableUpdate is null || AvailableUpdate.IsPreview && !IncludeBetaUpdates) return;
+        var vm = new UpdateViewModel(_services, AvailableUpdate, this);
         new UpdateWindow { DataContext = vm, Owner = Application.Current.MainWindow }.ShowDialog();
-        if (string.Equals(_services.Settings.Current.SkippedUpdateVersion, AvailableUpdate.TagName, StringComparison.OrdinalIgnoreCase)) ShowUpdateBanner = false;
+        if (AvailableUpdate != null && string.Equals(_services.Settings.Current.SkippedUpdateVersion, AvailableUpdate.TagName, StringComparison.OrdinalIgnoreCase)) ShowUpdateBanner = false;
     }
 
     [RelayCommand] private void DismissUpdateBanner() => ShowUpdateBanner = false;

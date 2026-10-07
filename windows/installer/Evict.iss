@@ -6,6 +6,10 @@
 #ifndef MyAppVersion
   #define MyAppVersion "1.8.0"
 #endif
+#ifndef MyAppNumericVersion
+  ; Windows version resources require numbers; AppVersion and filenames retain the full beta label.
+  #define MyAppNumericVersion MyAppVersion
+#endif
 #define MyAppPublisher "Krishna Bhunia"
 #define MyAppURL "https://github.com/krishnabhunia/evict-uninstaller"
 #define MyAppExeName "Evict.exe"
@@ -22,7 +26,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
-VersionInfoVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppNumericVersion}
 DefaultDirName={autopf}\Evict
 DefaultGroupName=Evict
 DisableProgramGroupPage=yes

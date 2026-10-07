@@ -1,4 +1,3 @@
-using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Evict.App.Services;
@@ -152,8 +151,21 @@ public sealed partial class SettingsViewModel : ObservableObject
     // ───────────── updates ─────────────
 
     public bool CheckForUpdates { get => S.CheckForUpdates; set { S.CheckForUpdates = value; Save(); OnPropertyChanged(); } }
+    public bool IncludeBetaUpdates { get => _main.IncludeBetaUpdates; set => _main.IncludeBetaUpdates = value; }
+    public string UpdateChannelText => IncludeBetaUpdates ? "Stable releases and optional beta/prerelease builds. Every installation requires your approval." : "Stable releases only. Enable beta updates to try prerelease builds.";
+
+    public void RefreshUpdateChannel()
+    {
+        UpdateAvailable = false;
+        UpdateStatusText = "Update channel changed. Check again to see releases in this channel.";
+        OnPropertyChanged(nameof(IncludeBetaUpdates));
+        OnPropertyChanged(nameof(UpdateChannelText));
+    }
     [ObservableProperty] private string _updateStatusText = "";
     [ObservableProperty] private bool _isCheckingForUpdates;
+    public bool CanChangeUpdateChannel => !IsCheckingForUpdates && !_main.IsCheckingForUpdates;
+    partial void OnIsCheckingForUpdatesChanged(bool value) => RefreshUpdateCheckState();
+    public void RefreshUpdateCheckState() => OnPropertyChanged(nameof(CanChangeUpdateChannel));
     [ObservableProperty] private bool _updateAvailable;
     public string EditionText => UpdateService.IsInstalledMode() ? "Installed with Setup (updates run the new installer)" : "Portable edition (updates replace Evict.exe in place)";
     public string ReleasesUrl => UpdateChecker.ReleasesUrl;
@@ -161,12 +173,15 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task CheckForUpdatesNowAsync()
     {
-        if (IsCheckingForUpdates) return;
+        if (IsCheckingForUpdates || _main.IsCheckingForUpdates) return;
         IsCheckingForUpdates = true;
+        _main.IsCheckingForUpdates = true;
         UpdateStatusText = "Checking GitHub Releases…";
         try
         {
-            var result = await _services.Updater.CheckAsync(CancellationToken.None);
+            var includePrereleases = S.IncludeBetaUpdates;
+            var result = await _services.Updater.CheckAsync(CancellationToken.None, includePrereleases);
+            if (includePrereleases != S.IncludeBetaUpdates) { RefreshUpdateChannel(); return; }
             S.LastUpdateCheckUtc = DateTime.UtcNow;
             Save();
             UpdateStatusText = result.Message;
@@ -174,11 +189,14 @@ public sealed partial class SettingsViewModel : ObservableObject
             if (UpdateAvailable && result.Release != null)
             {
                 S.SkippedUpdateVersion = null; // the user asked explicitly – show it even if skipped before
+                Save();
+                IsCheckingForUpdates = false;
+                _main.IsCheckingForUpdates = false;
                 _main.OfferUpdate(result.Release, fromUser: true);
             }
         }
         catch (Exception ex) { UpdateStatusText = "Update check failed: " + ex.Message; }
-        finally { IsCheckingForUpdates = false; }
+        finally { IsCheckingForUpdates = false; _main.IsCheckingForUpdates = false; }
     }
 
     [RelayCommand] private void ShowUpdate() => _main.ShowUpdateCommand.Execute(null);
@@ -207,7 +225,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         !IsElevated && !ElevationHelper.CanElevateSameUser
             ? "Your Windows account is not an administrator, so Evict starts with your own rights (an administrator password would run it under that administrator's account and clean the wrong profile)."
             : "Windows asks for permission each time the Evict window opens. Starts hidden in the notification area (sign-in, scheduled scans) ask only when you open the window. While Evict runs as administrator, Windows blocks dragging files onto it from Explorer – use the Browse buttons instead.";
-    public string VersionText => "Version " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0");
+    public string VersionText => "Version " + _services.Updater.CurrentVersionLabel;
     public string DataFolder => AppPaths.DataRoot;
     public string RuntimeText => $".NET {Environment.Version} · {(Environment.Is64BitProcess ? "64-bit" : "32-bit")} · {Environment.OSVersion.VersionString}";
     public string ElevationText => IsElevated ? "Running as administrator" : "Running as a standard user – some operations will prompt or be limited";
@@ -269,6 +287,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             (S.ScheduledScan, S.ScheduledScanHour, S.ScheduledScanWeekday) = previousSchedule;
         if (theme != S.Theme) App.ApplyTheme(S.Theme);
         Save();
+        _main.UpdateChannelChanged();
         App.UiState.Scale = UiState.Clamp(S.UiScale);
         ScheduleStatusText = scheduleResult.Ok ? "No scheduled scan." : "Could not remove the scheduled scan: " + scheduleResult.Error;
         App.Background.ApplySettings();

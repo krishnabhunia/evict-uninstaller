@@ -2,11 +2,14 @@
 
 ## 1.8.1 (not published)
 
+- Add an optional beta update channel, full beta version labels, release notes and explicit beta confirmation; stable updates remain the default.
+- Publish tested Windows PR builds as GitHub prereleases with verified installer and portable assets, without merging the PR into main.
+
 - Harden leftover ownership, protected paths and junction handling; keep external browser-extension projects and other installed versions safe.
 - Make recycling, Undo, registry-view restoration and update checks fail safely, with truthful cleanup and history results.
 - Correct force-removal prompts, installation-monitor review, health refresh, package-removal scope, updater errors and filtered selections.
 - Restore update-service state after cancellation; preserve hibernation recovery records; isolate scheduled scans per user and improve antivirus and Windows Update diagnostics.
-- Stop local packaging immediately when tests or publishing fail. Release versions are unchanged by these fixes.
+- Stop local packaging immediately when tests or publishing fail. Stable source versions stay unchanged; PR packages carry their own beta version.
 
 - Every Windows release also comes as **`Evict-x.y.z.zip`** with exactly two folders: **installer** (`Evict-Setup-x.y.z.exe`,
   installs Evict) and **portable** (`Evict.exe`, runs from anywhere). The separate files stay on the release as before,

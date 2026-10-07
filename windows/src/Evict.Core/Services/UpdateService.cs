@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace Evict.Core.Services;
@@ -19,7 +20,12 @@ public sealed record ReleaseInfo(
     string? Body,
     DateTimeOffset? PublishedAt,
     bool Prerelease,
-    IReadOnlyList<ReleaseAsset> Assets);
+    IReadOnlyList<ReleaseAsset> Assets)
+{
+    public UpdateVersion SemanticVersion => UpdateVersion.Parse(TagName) ?? new(UpdateChecker.Normalize(Version));
+    public string DisplayVersion => SemanticVersion.ToString();
+    public bool IsPreview => Prerelease || SemanticVersion.IsPrerelease;
+}
 
 public enum UpdateStatus { UpToDate, UpdateAvailable, Unavailable }
 
@@ -35,19 +41,21 @@ public sealed record UpdateCheckResult(UpdateStatus Status, Version CurrentVersi
 public static class UpdateChecker
 {
     public const string RepoOwner = "krishnabhunia";
+    // GitHub pagination uses this permanent repository identity after /repos redirects.
+    public const string RepositoryId = "1372964211";
     /// <summary>Renamed from "evict" when the macOS app moved into the same repository (GitHub redirects the old name).</summary>
     public const string RepoName = "evict-uninstaller";
     public static string RepoUrl => $"https://github.com/{RepoOwner}/{RepoName}";
     public static string ReleasesUrl => RepoUrl + "/releases";
     public static string LatestApiUrl => $"https://api.github.com/repos/{RepoOwner}/{RepoName}/releases/latest";
+    public static string ReleasesApiUrl => $"https://api.github.com/repos/{RepoOwner}/{RepoName}/releases?per_page=100";
     public static string LatestRedirectUrl => ReleasesUrl + "/latest";
 
     /// <summary>
     /// The repository also publishes the macOS app under "mac-vX.Y.Z" tags. Windows releases use "win-vX.Y.Z"
     /// (and "vX.Y.Z" before the merge); anything tagged for macOS is never offered as a Windows update.
     /// </summary>
-    public static bool IsWindowsTag(string? tag) =>
-        !string.IsNullOrWhiteSpace(tag) && !tag.TrimStart().StartsWith("mac", StringComparison.OrdinalIgnoreCase);
+    public static bool IsWindowsTag(string? tag) => UpdateVersion.Parse(tag) != null;
 
     /// <summary>"v1.2.0", "1.2", "release-1.2.3", "v1.2.0-beta.1" → 1.2.0 (always three parts). Null when there is no version.</summary>
     public static Version? ParseVersion(string? tag)
@@ -75,6 +83,13 @@ public static class UpdateChecker
 
     public static bool IsNewer(Version current, Version candidate) => Normalize(candidate) > Normalize(current);
 
+    public static bool IsNewer(string current, ReleaseInfo candidate) =>
+        UpdateVersion.Parse(current) is { } installed && candidate.SemanticVersion.CompareTo(installed) > 0;
+
+    public static string CurrentVersionLabel =>
+        UpdateVersion.Parse(typeof(UpdateChecker).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion)?.ToString()
+        ?? CurrentVersion.ToString(3);
+
     /// <summary>The version of the running application (from the assembly, normalised to three parts).</summary>
     public static Version CurrentVersion
     {
@@ -91,11 +106,30 @@ public static class UpdateChecker
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
         using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
+        return ParseRelease(doc.RootElement);
+    }
+
+    public static List<ReleaseInfo> ParseReleases(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidDataException("GitHub returned an invalid release list.");
+        return doc.RootElement.EnumerateArray().Select(ParseRelease).OfType<ReleaseInfo>().ToList();
+    }
+
+    public static ReleaseInfo? SelectLatestRelease(IEnumerable<ReleaseInfo> releases, bool includePrereleases = false) =>
+        releases.Where(r => IsWindowsTag(r.TagName) && (includePrereleases || !r.IsPreview))
+            .OrderByDescending(r => r.SemanticVersion)
+            .ThenByDescending(r => r.TagName.StartsWith("win-v", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(r => r.PublishedAt)
+            .FirstOrDefault();
+
+    private static ReleaseInfo? ParseRelease(JsonElement root)
+    {
         if (root.ValueKind != JsonValueKind.Object) return null;
         var tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() : null;
-        var version = ParseVersion(tag);
-        if (version is null || tag is null || !IsWindowsTag(tag)) return null;
+        var semanticVersion = UpdateVersion.Parse(tag);
+        if (semanticVersion is null || tag is null || !IsWindowsTag(tag)) return null;
+        var version = semanticVersion.Core;
         bool draft = root.TryGetProperty("draft", out var d) && d.ValueKind == JsonValueKind.True;
         if (draft) return null;
 
@@ -121,7 +155,7 @@ public static class UpdateChecker
             root.TryGetProperty("html_url", out var h) && h.ValueKind == JsonValueKind.String ? h.GetString() ?? ReleasesUrl : ReleasesUrl,
             root.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null,
             published,
-            root.TryGetProperty("prerelease", out var pr) && pr.ValueKind == JsonValueKind.True,
+            semanticVersion.IsPrerelease || (root.TryGetProperty("prerelease", out var pr) && pr.ValueKind == JsonValueKind.True),
             assets);
     }
 
@@ -142,17 +176,19 @@ public static class UpdateChecker
     /// <summary>Builds a release from just a tag (redirect fallback) with the asset URLs GitHub uses for release downloads.</summary>
     public static ReleaseInfo? ReleaseFromTag(string tag)
     {
-        var v = ParseVersion(tag);
-        if (v is null || !IsWindowsTag(tag)) return null;
+        var semanticVersion = UpdateVersion.Parse(tag);
+        if (semanticVersion is null || !IsWindowsTag(tag)) return null;
+        var v = semanticVersion.Core;
+        var label = semanticVersion.ToString();
         string Dl(string name) => $"{RepoUrl}/releases/download/{Uri.EscapeDataString(tag)}/{name}";
         var assets = new List<ReleaseAsset>
         {
             new("Evict.exe", Dl("Evict.exe"), 0),
             new("Evict.exe.sha256", Dl("Evict.exe.sha256"), 0),
-            new($"Evict-Setup-{v.ToString(3)}.exe", Dl($"Evict-Setup-{v.ToString(3)}.exe"), 0),
-            new($"Evict-Setup-{v.ToString(3)}.exe.sha256", Dl($"Evict-Setup-{v.ToString(3)}.exe.sha256"), 0),
+            new($"Evict-Setup-{label}.exe", Dl($"Evict-Setup-{label}.exe"), 0),
+            new($"Evict-Setup-{label}.exe.sha256", Dl($"Evict-Setup-{label}.exe.sha256"), 0),
         };
-        return new ReleaseInfo(v, tag, tag, $"{RepoUrl}/releases/tag/{Uri.EscapeDataString(tag)}", null, null, false, assets);
+        return new ReleaseInfo(v, tag, tag, $"{RepoUrl}/releases/tag/{Uri.EscapeDataString(tag)}", null, null, semanticVersion.IsPrerelease, assets);
     }
 
     /// <summary>Installed (Setup) → the Evict-Setup-*.exe; portable → the raw Evict.exe.</summary>
@@ -202,6 +238,7 @@ public sealed class UpdateService
     private static readonly HttpClient SharedHttp = CreateClient();
     private readonly HttpClient _http;
     private readonly string? _updatesDirectory;
+    private readonly string? _currentVersionLabel;
     private readonly Action<ProcessStartInfo> _startProcess;
     private readonly bool _logDiagnostics = true;
     public const string OldBinaryName = "Evict.old.exe";
@@ -212,10 +249,11 @@ public sealed class UpdateService
         _startProcess = StartProcess;
     }
 
-    internal UpdateService(HttpClient http, string updatesDirectory, Action<ProcessStartInfo>? startProcess = null)
+    internal UpdateService(HttpClient http, string updatesDirectory, Action<ProcessStartInfo>? startProcess = null, string? currentVersionLabel = null)
     {
         _http = http;
         _updatesDirectory = updatesDirectory;
+        _currentVersionLabel = currentVersionLabel;
         _startProcess = startProcess ?? StartProcess;
         _logDiagnostics = false; // Isolated transports use only their supplied workspace, including diagnostics.
     }
@@ -240,7 +278,8 @@ public sealed class UpdateService
         return c;
     }
 
-    public Version CurrentVersion => UpdateChecker.CurrentVersion;
+    public string CurrentVersionLabel => _currentVersionLabel ?? UpdateChecker.CurrentVersionLabel;
+    public Version CurrentVersion => UpdateVersion.Parse(CurrentVersionLabel)?.Core ?? UpdateChecker.CurrentVersion;
     public string UpdatesDir
     {
         get
@@ -253,59 +292,69 @@ public sealed class UpdateService
 
     // ───────────────────────────── check ─────────────────────────────
 
-    public async Task<UpdateCheckResult> CheckAsync(CancellationToken ct)
+    public async Task<UpdateCheckResult> CheckAsync(CancellationToken ct, bool includePrereleases = false)
     {
         var current = CurrentVersion;
-        ReleaseInfo? release = null;
-        string? failure = null;
-
+        var channel = includePrereleases ? "stable and beta" : "stable";
         try
         {
-            using var resp = await _http.GetAsync(UpdateChecker.LatestApiUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            if (resp.IsSuccessStatusCode)
+            var releases = new List<ReleaseInfo>();
+            string? next = UpdateChecker.ReleasesApiUrl;
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            for (int page = 0; next != null; page++)
             {
-                var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                release = UpdateChecker.ParseRelease(json);
-                if (release is null) failure = "The latest release has no Windows version tag.";
+                if (page >= 20 || !visited.Add(next))
+                    return UpdateCheckResult.Unavailable(current, "The release list is incomplete. Please try again or open GitHub Releases.");
+                using var response = await _http.GetAsync(next, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var reason = response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests
+                        ? "GitHub API rate limit reached. Please try again later."
+                        : response.StatusCode == HttpStatusCode.NotFound
+                            ? "No published release was found."
+                            : $"GitHub answered {(int)response.StatusCode} {response.ReasonPhrase}.";
+                    return UpdateCheckResult.Unavailable(current, reason);
+                }
+                var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                releases.AddRange(UpdateChecker.ParseReleases(json));
+                next = NextReleasePage(response);
             }
-            else if (resp.StatusCode == HttpStatusCode.NotFound)
-            {
-                failure = "No published release was found (the repository may be private or has no releases yet).";
-            }
-            else if (resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
-            {
-                failure = "GitHub API rate limit reached – trying the release page instead.";
-                release = await CheckViaRedirectAsync(ct).ConfigureAwait(false);
-                if (release != null) failure = null;
-            }
-            else failure = $"GitHub answered {(int)resp.StatusCode} {resp.ReasonPhrase}.";
+            var release = UpdateChecker.SelectLatestRelease(releases, includePrereleases);
+            if (release is null)
+                return UpdateCheckResult.Unavailable(current, $"No published Windows release is available on the {channel} channel.");
+            if (UpdateChecker.IsNewer(CurrentVersionLabel, release))
+                return new(UpdateStatus.UpdateAvailable, current, release, $"Version {release.DisplayVersion} is available (you have {CurrentVersionLabel}).");
+            return new(UpdateStatus.UpToDate, current, release, $"No newer Windows release is available on the {channel} channel (you have {CurrentVersionLabel}).");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             LogWarn("Update check failed: " + ex.Message);
-            failure = "Could not reach GitHub: " + (ex.InnerException?.Message ?? ex.Message);
-            try { release = await CheckViaRedirectAsync(ct).ConfigureAwait(false); if (release != null) failure = null; } catch { /* keep first failure */ }
+            return UpdateCheckResult.Unavailable(current, "Could not check GitHub releases: " + (ex.InnerException?.Message ?? ex.Message));
         }
-
-        if (release is null) return UpdateCheckResult.Unavailable(current, failure ?? "Update information is not available.");
-        if (UpdateChecker.IsNewer(current, release.Version))
-            return new UpdateCheckResult(UpdateStatus.UpdateAvailable, current, release, $"Version {release.Version.ToString(3)} is available (you have {current.ToString(3)}).");
-        return new UpdateCheckResult(UpdateStatus.UpToDate, current, release, $"You have the latest version ({current.ToString(3)}).");
     }
 
-    /// <summary>Fallback without the API: /releases/latest redirects to /releases/tag/win-vX.Y.Z.</summary>
-    private static async Task<ReleaseInfo?> CheckViaRedirectAsync(CancellationToken ct)
+    private static string? NextReleasePage(HttpResponseMessage response)
     {
-        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Evict-Uninstaller");
-        using var req = new HttpRequestMessage(HttpMethod.Head, UpdateChecker.LatestRedirectUrl);
-        using var resp = await client.SendAsync(req, ct).ConfigureAwait(false);
-        if ((int)resp.StatusCode is >= 300 and < 400 && resp.Headers.Location != null)
+        if (!response.Headers.TryGetValues("Link", out var headers)) return null;
+        foreach (var part in headers.SelectMany(h => h.Split(',')))
         {
-            var tag = UpdateChecker.ParseTagFromRedirect(resp.Headers.Location.ToString());
-            if (tag != null) return UpdateChecker.ReleaseFromTag(tag);
+            var relation = Regex.Match(part, @"(?:^|;)\s*rel\s*=\s*(?:""([^""]+)""|([^;""\s]+))", RegexOptions.IgnoreCase);
+            if (!relation.Success)
+            {
+                if (Regex.IsMatch(part, @"\brel\s*=.*\bnext\b", RegexOptions.IgnoreCase))
+                    throw new InvalidDataException("GitHub returned an incomplete release-list page link.");
+                continue;
+            }
+            var names = (relation.Groups[1].Success ? relation.Groups[1].Value : relation.Groups[2].Value).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (!names.Contains("next", StringComparer.OrdinalIgnoreCase)) continue;
+            var link = Regex.Match(part, @"<([^>]+)>");
+            if (!link.Success || !Uri.TryCreate(link.Groups[1].Value, UriKind.Absolute, out var uri)
+                || uri.Scheme != Uri.UriSchemeHttps || uri.Host != "api.github.com" || !uri.IsDefaultPort
+                || (uri.AbsolutePath != $"/repos/{UpdateChecker.RepoOwner}/{UpdateChecker.RepoName}/releases"
+                    && uri.AbsolutePath != $"/repositories/{UpdateChecker.RepositoryId}/releases"))
+                throw new InvalidDataException("GitHub returned an invalid release-list page link.");
+            return uri.AbsoluteUri;
         }
         return null;
     }
@@ -315,7 +364,7 @@ public sealed class UpdateService
     /// <summary>Downloads an asset only when its published SHA-256 checksum can be verified. Returns the local path.</summary>
     public async Task<string> DownloadAsync(ReleaseInfo release, ReleaseAsset asset, IProgress<(long Done, long Total)>? progress, CancellationToken ct)
     {
-        var target = Path.Combine(UpdatesDir, SafeFileName(asset.Name.Equals("Evict.exe", StringComparison.OrdinalIgnoreCase) ? $"Evict-{release.Version.ToString(3)}.exe" : asset.Name));
+        var target = Path.Combine(UpdatesDir, SafeFileName(asset.Name.Equals("Evict.exe", StringComparison.OrdinalIgnoreCase) ? $"Evict-{release.DisplayVersion}.exe" : asset.Name));
         var partial = target + ".partial";
         try { if (File.Exists(partial)) File.Delete(partial); } catch { /* ignore */ }
 

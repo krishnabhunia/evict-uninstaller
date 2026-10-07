@@ -1,6 +1,6 @@
 # Audit fixes and validation
 
-The October 2026 review covered Windows and macOS. This change keeps the existing release versions and addresses the findings below. Ambiguous ownership now requires review; an unavailable recovery or verification step reports a failure instead of silently continuing.
+The October 2026 review covered Windows and macOS. This change keeps the stable source versions and addresses the findings below. Windows PR packages receive a separate beta version; see [Beta updates](beta-updates.md). Ambiguous ownership now requires review; an unavailable recovery or verification step reports a failure instead of silently continuing.
 
 ## Coverage
 

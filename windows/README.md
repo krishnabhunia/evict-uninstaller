@@ -79,13 +79,13 @@ through Task Scheduler (task `Evict Software Health scan`, per user); the result
 
 ## Updates
 
-On start (Settings → *Updates*, on by default) Evict asks `api.github.com/repos/krishnabhunia/evict-uninstaller/releases/latest`
-for the newest tag (only Windows releases are ever marked *latest*; `mac-v*` tags are ignored); if the API is rate-limited it falls back to the `releases/latest` redirect. A newer version shows a
-blue banner → *Update now* opens a dialog with the release notes. The download is verified against the `.sha256`
-asset published by CI. Installed copies start `Evict-Setup-x.y.z.exe /SILENT /CLOSEAPPLICATIONS /NORESTART /EVICTUPDATE=1`
-(which relaunches Evict); portable copies rename the running `Evict.exe` to `Evict.old.exe`, move the new file in and
-restart with `--updated`. The check needs the repository (or at least its releases) to be public — a private repository
-answers 404 and the status reads "no published release".
+On start (Settings → *Updates*, enabled by default), Evict checks the public GitHub Releases list for a newer Windows version. Stable releases are the default. Enable **Include beta releases** to also receive tested PR betas. macOS releases, drafts and older versions are excluded; beta build numbers are compared numerically and a stable release outranks a beta of the same version.
+
+A newer version shows the update banner. **Update now** opens release notes and the full version label; a beta requires an explicit confirmation before downloading and installing. The SHA-256 checksum is required and verified before any installer starts. Installed copies run the new Setup and restart; portable copies replace their own `Evict.exe`. Update checks do not install anything automatically. An unavailable or incomplete release-list request reports an error.
+
+Trusted Windows PR builds can publish a GitHub prerelease after tests, packaging and checksum checks pass. The tag and installer use a full version such as `1.8.1-beta.10.22.1`, and the release is never marked as the latest stable release. The PR can remain unmerged.
+
+Installed Evict 1.8.0 does not contain the beta option. Install a beta-aware build once to gain it; future beta updates then use the normal in-app update flow. Actions artifacts remain available for manual testing. See [Beta updates](../docs/beta-updates.md) for release provenance and validation.
 
 ## Building from source
 
