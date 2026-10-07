@@ -1,19 +1,22 @@
 """Offline release-policy and temporary-repository regression tests."""
 from __future__ import annotations
 
-from io import BytesIO
+from contextlib import redirect_stderr, redirect_stdout
+from io import BytesIO, StringIO
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from versioning import (Bump, CoreVersion, Git, GitHub, VersionError, affects_platform,
                         build_plan, conventional_intent, generated_release_commit,
-                        highest_stable_tag, release_intent, source_version,
+                        highest_stable_tag, main, release_intent, retired_stable_reservation, source_version,
+                        RETIRED_STABLE_RESERVATIONS, RETIRED_RESERVATION_MARKER,
                         sync_sources, update_changelog, write_outputs)
 
 
@@ -29,7 +32,14 @@ class FakeApi:
         return self.mapping.get(sha, [])
 
     def published_stable_releases(self, platform):
-        return self.releases
+        return [release for release in self.releases
+                if release.get("draft") is False and release.get("prerelease") is False
+                and release.get("published_at")
+                and highest_stable_tag([release.get("tag_name", "")], platform)]
+
+    def retired_stable_reservations(self, platform):
+        return [release for release in self.releases
+                if retired_stable_reservation(release, self.repository, platform) is not None]
 
 
 def published(version, body="", **overrides):
@@ -60,6 +70,7 @@ class RepositoryFixture:
         self.write("macos/Sources/EvictKit/Version.swift", 'public enum Version {\npublic static let current = "0.1.0"\npublic static let build = "1"\n}\n')
         self.write("macos/Sources/App.swift", "original application\n")
         self.write("macos/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Preserve reviewed Mac fixes.\n\n## 0.1.0 — Build 1\n\nOld notes.\n")
+        self.write(".github/workflows/windows.yml", "name: default workflow\n")
         self.base = self.commit("feat: first applications")
         self.git.run("tag", "win-v1.8.0")
         self.git.run("tag", "mac-v0.1.0")
@@ -73,7 +84,10 @@ class RepositoryFixture:
     def commit(self, message):
         self.git.run("add", ".")
         self.git.run("commit", "-m", message)
-        return self.git.resolve("HEAD")
+        sha = self.git.resolve("HEAD")
+        if self.git.run("branch", "--show-current") == "main":
+            self.git.run("update-ref", "refs/remotes/origin/main", sha)
+        return sha
 
     def plan(self, platform="windows", mode="stable", api=None, policy=None, **arguments):
         return build_plan(self.git, api or FakeApi(), policy or {}, platform, mode, **arguments)
@@ -223,6 +237,9 @@ class RepositoryPlanTests(unittest.TestCase):
             def published_stable_releases(self, platform):
                 return []
 
+            def retired_stable_reservations(self, platform):
+                return []
+
         with self.assertRaisesRegex(VersionError, "403"):
             self.fixture.plan(api=BrokenApi())
 
@@ -323,6 +340,7 @@ class RepositoryPlanTests(unittest.TestCase):
         self.fixture.git.run("tag", "win-v1.9.0")
         self.fixture.git.run("checkout", "main")
         self.fixture.git.run("merge", "--no-ff", "tagged-feature", "-m", "Merge feature")
+        self.fixture.git.run("update-ref", "refs/remotes/origin/main", self.fixture.git.resolve("HEAD"))
         self.assertFalse(self.fixture.plan()["publish"])
 
     def test_legacy_pr10_metadata_seeds_correct_platform_intent(self):
@@ -344,7 +362,7 @@ class RepositoryPlanTests(unittest.TestCase):
                  "base": {"sha": main_head}, "head": {"sha": pr_head}}}
         beta = self.fixture.plan(mode="beta", event=event, beta_sequence="42.1")
         self.assertEqual(beta["core_version"], "1.9.0")
-        self.assertEqual(beta["version"], "1.9.0-beta.12.42.1")
+        self.assertEqual(beta["version"], "1.9.0-beta.42.12.1")
         self.assertEqual(beta["bump"], "minor")
         self.assertEqual(beta["source_version"], "1.8.0")
         stable = CoreVersion(1, 8, 0).bump(max(Bump.PATCH, Bump.MINOR))
@@ -368,8 +386,8 @@ class RepositoryPlanTests(unittest.TestCase):
         beta = self.fixture.plan(mode="beta", event=event, beta_sequence="42.1")
         self.assertFalse(beta["publish"])
         self.assertEqual(beta["core_version"], "1.8.1")
-        self.assertEqual(beta["version"], "1.8.1-beta.12.42.1")
-        self.assertEqual(beta["tag"], "win-v1.8.1-beta.12.42.1")
+        self.assertEqual(beta["version"], "1.8.1-beta.42.12.1")
+        self.assertEqual(beta["tag"], "win-v1.8.1-beta.42.12.1")
         self.assertTrue(beta["prerelease"])
 
     def test_beta_docs_only_pr_does_not_publish_main_pending_feature(self):
@@ -387,8 +405,8 @@ class RepositoryPlanTests(unittest.TestCase):
         self.assertFalse(beta["publish"])
         self.assertFalse(beta["release"])
         self.assertEqual(beta["core_version"], "1.9.0")
-        self.assertEqual(beta["version"], "1.9.0-beta.12.42.1")
-        self.assertEqual(beta["tag"], "win-v1.9.0-beta.12.42.1")
+        self.assertEqual(beta["version"], "1.9.0-beta.42.12.1")
+        self.assertEqual(beta["tag"], "win-v1.9.0-beta.42.12.1")
         self.assertEqual(beta["base_tag"], "win-v1.8.0")
         self.assertTrue(beta["prerelease"])
 
@@ -401,12 +419,12 @@ class RepositoryPlanTests(unittest.TestCase):
                  "base": {"sha": self.fixture.base}, "head": {"sha": pr_head}}}
         beta = self.fixture.plan(mode="beta", event=event, beta_sequence="42.1")
         self.assertFalse(beta["publish"])
-        self.assertEqual(beta["version"], "1.8.0-beta.12.42.1")
-        self.assertEqual(beta["tag"], "win-v1.8.0-beta.12.42.1")
+        self.assertEqual(beta["version"], "1.8.0-beta.42.12.1")
+        self.assertEqual(beta["tag"], "win-v1.8.0-beta.42.12.1")
         self.assertTrue(beta["prerelease"])
 
     def test_beta_requires_valid_sequence(self):
-        for sequence in ("", "42.x", "042.1", "42.01"):
+        for sequence in ("", "42", "42.0", "42.x", "042.1", "42.01", "42.1.2"):
             with self.subTest(sequence=sequence), self.assertRaises(VersionError):
                 self.fixture.plan(mode="beta", event={"number": 12, "pull_request": {"title": "feat: option", "base": {"sha": self.fixture.base}, "head": {"sha": self.fixture.base}}}, beta_sequence=sequence)
 
@@ -419,67 +437,98 @@ class ReleaseTestPlanTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.close()
 
-    def request(self, channel="stable", core="1.10.0", number=12, source=None, title="feat: update validation"):
+    def request(self, directive="beta", number=12, source=None, title="feat: update validation"):
         self.fixture.git.run("checkout", "-b", "preview")
-        path = self.fixture.root / "windows/Directory.Build.props"
-        path.write_text(path.read_text().replace("1.8.0", source or core), encoding="utf-8")
+        if source:
+            path = self.fixture.root / "windows/Directory.Build.props"
+            path.write_text(path.read_text().replace("1.8.0", source), encoding="utf-8")
         self.fixture.write("windows/src/test-option.cs", "visible update-validation option\n")
         sha = self.fixture.commit("neutral preview source")
         event = {"number": number, "repository": {"full_name": "fixtures/repository"},
                  "sender": {"login": "maintainer", "type": "User"},
                  "pull_request": {"number": number, "title": title,
-                                  "body": f"Release-Test-Windows: {channel} {core}",
+                                  "body": f"Release-Test-Windows: {directive}" if directive else "",
                                   "user": {"login": "maintainer", "type": "User"},
                                   "base": {"sha": self.fixture.base, "ref": "main", "repo": {"full_name": "fixtures/repository"}},
                                   "head": {"sha": sha, "repo": {"full_name": "fixtures/repository"}}}}
         return event, sha
 
-    def test_explicit_stable_test_uses_calculated_core_without_beta_suffix(self):
+    def test_pr_release_is_beta_with_an_automatically_calculated_core(self):
         event, sha = self.request()
         plan = self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
                                  api=FakeApi(releases=[published("1.9.0")]))
-        self.assertEqual(plan["version"], "1.10.0")
-        self.assertEqual(plan["tag"], "win-v1.10.0")
+        self.assertEqual(plan["version"], "1.10.0-beta.29.12.1")
+        self.assertEqual(plan["tag"], "win-v1.10.0-beta.29.12.1")
         self.assertEqual(plan["numeric_version"], "1.10.0.0")
-        self.assertEqual(plan["channel"], "stable")
-        self.assertTrue(plan["release_test"])
-        self.assertFalse(plan["prerelease"])
-        self.assertTrue(plan["publish"])
-        self.assertEqual(plan["release_source_sha"], sha)
-        self.assertEqual(plan["source_version"], "1.10.0")
-
-    def test_explicit_beta_after_published_test_stable_uses_next_minor_core(self):
-        event, _ = self.request("beta", "1.11.0", number=13)
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="30.2",
-                                 api=FakeApi(releases=[published("1.10.0")]))
-        self.assertEqual(plan["version"], "1.11.0-beta.13.30.2")
-        self.assertEqual(plan["tag"], "win-v1.11.0-beta.13.30.2")
-        self.assertEqual(plan["core_version"], "1.11.0")
         self.assertEqual(plan["channel"], "beta")
         self.assertTrue(plan["release_test"])
         self.assertTrue(plan["prerelease"])
         self.assertTrue(plan["publish"])
-        self.assertEqual(plan["published_floor"], "1.10.0")
-        self.assertEqual(plan["base_tag"], "win-v1.8.0")
+        self.assertEqual(plan["release_source_sha"], sha)
+        self.assertEqual(plan["source_version"], "1.8.0")
 
-    def test_requested_core_is_an_assertion_not_an_override(self):
-        event, _ = self.request(core="2.0.0")
+    def test_stable_directive_can_never_publish_a_stable_pr_release(self):
+        event, _ = self.request("stable 1.10.0", source="1.10.0")
+        with self.assertRaisesRegex(VersionError, "stable releases are published only from main"):
+            self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
+                              api=FakeApi(releases=[published("1.9.0")]))
+
+    def test_legacy_stable_test_provenance_cannot_reenable_stable_pr_delivery(self):
+        event, head = self.request("stable 1.10.0", source="1.10.0")
+        self.fixture.git.run("tag", "win-v1.10.0")
+        api = FakeApi(releases=[published("1.10.0", body=f"Original PR head: {head}\n")])
+        with self.assertRaisesRegex(VersionError, "stable releases are published only from main"):
+            self.fixture.plan(mode="beta", event=event, beta_sequence="29.2", api=api)
+
+    def test_requested_beta_core_is_an_assertion_not_an_override(self):
+        event, _ = self.request("beta 2.0.0")
         with self.assertRaisesRegex(VersionError, "automatically calculated"):
             self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
                               api=FakeApi(releases=[published("1.9.0")]))
 
-    def test_committed_test_core_must_match_the_calculated_request(self):
-        event, _ = self.request(source="1.8.0")
-        with self.assertRaisesRegex(VersionError, "source and requested core"):
-            self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
-                              api=FakeApi(releases=[published("1.9.0")]))
+    def test_beta_assertion_does_not_require_a_manually_committed_matching_core(self):
+        event, _ = self.request("beta 1.10.0")
+        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
+                                 api=FakeApi(releases=[published("1.9.0")]))
+        self.assertEqual(plan["core_version"], "1.10.0")
+        self.assertEqual(plan["source_version"], "1.8.0")
+
+    def test_old_manual_pr_core_does_not_override_the_automatic_beta_core(self):
+        event, _ = self.request(source="9.99.0")
+        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
+                                 api=FakeApi(releases=[published("1.9.0")]))
+        self.assertEqual(plan["core_version"], "1.10.0")
+        self.assertEqual(plan["source_version"], "9.99.0")
+        self.assertEqual(plan["channel"], "beta")
+
+    def test_cli_beta_sync_updates_metadata_without_manual_version_edits(self):
+        event, _ = self.request(source="1.11.0")
+        self.fixture.write(".github/release-policy.json", json.dumps({"repository": "fixtures/repository"}))
+        event_path = self.fixture.root / "event.json"
+        event_path.write_text(json.dumps(event), encoding="utf-8")
+        output = StringIO()
+        with patch("versioning.GitHub", return_value=FakeApi(releases=[published("1.9.0")])), redirect_stdout(output):
+            status = main(["plan", "--platform", "windows", "--mode", "beta",
+                           "--repo-root", str(self.fixture.root), "--event-file", str(event_path),
+                           "--beta-sequence", "29.1", "--sync"])
+        self.assertEqual(status, 0)
+        plan = json.loads(output.getvalue())
+        self.assertEqual(plan["version"], "1.10.0-beta.29.12.1")
+        self.assertEqual(plan["source_version"], "1.10.0")
+        self.assertEqual(source_version(self.fixture.root, "windows"), "1.10.0")
+        installer = (self.fixture.root / "windows/installer/Evict.iss").read_text()
+        self.assertIn('#define MyAppVersion "1.10.0"', installer)
+        self.assertIn('#define MyAppNumericVersion "1.10.0.0"', installer)
+        self.assertEqual(set(plan["sync_files"]), {
+            "windows/Directory.Build.props", "windows/installer/Evict.iss", "windows/CHANGELOG.md"})
+        self.assertEqual(source_version(self.fixture.root, "macos"), "0.1.0")
 
     def test_malformed_or_ambiguous_test_directives_are_rejected(self):
         event, _ = self.request()
         for body in ("Release-Test-Windows: stable 1.10",
                      "Release-Test-Windows: production 1.10.0",
                      "Release-Test-Windows: beta 01.11.0",
-                     "Release-Test-Windows: stable 1.10.0\nRelease-Test-Windows: beta 1.11.0"):
+                     "Release-Test-Windows: beta\nRelease-Test-Windows: beta 1.10.0"):
             event["pull_request"]["body"] = body
             with self.subTest(body=body), self.assertRaises(VersionError):
                 self.fixture.plan(mode="beta", event=event, beta_sequence="29.1")
@@ -507,52 +556,278 @@ class ReleaseTestPlanTests(unittest.TestCase):
             event["pull_request"]["user"] = old_author
             event["sender"] = old_sender
 
-    def test_test_directive_does_not_activate_on_non_pr_stable_plan(self):
-        self.fixture.write("windows/src/change.cs", "main feature\n")
-        self.fixture.commit("feat: main change")
-        event = {"pull_request": {"body": "Release-Test-Windows: stable 2.0.0"}}
-        plan = self.fixture.plan(event=event)
-        self.assertFalse(plan["release_test"])
-        self.assertEqual(plan["version"], "1.9.0")
-        self.assertEqual(plan["channel"], "stable")
-
     def test_ordinary_pr_remains_beta_after_published_floor(self):
-        event, _ = self.request(core="1.11.0")
-        event["pull_request"]["body"] = ""
+        event, _ = self.request(directive="")
         plan = self.fixture.plan(mode="beta", event=event, beta_sequence="30.1",
                                  api=FakeApi(releases=[published("1.10.0")]))
-        self.assertEqual(plan["version"], "1.11.0-beta.12.30.1")
+        self.assertEqual(plan["version"], "1.11.0-beta.30.12.1")
         self.assertFalse(plan["release_test"])
         self.assertEqual(plan["channel"], "beta")
 
-    def test_same_stable_test_rerun_reuses_published_version_and_immutable_source(self):
-        event, head = self.request()
-        self.fixture.git.run("tag", "win-v1.10.0")
-        # A later normalized snapshot can have a new commit SHA with exactly the same tree.
-        self.fixture.git.run("commit", "--allow-empty", "-m", "fresh normalized snapshot")
-        snapshot = self.fixture.git.resolve("HEAD")
-        api = FakeApi(releases=[published("1.10.0", body=f"Original PR head: {head}\n")])
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="29.2", api=api)
-        self.assertEqual(plan["version"], "1.10.0")
-        self.assertFalse(plan["publish"])
-        self.assertFalse(plan["release"])
-        self.assertTrue(plan["release_test"])
-        self.assertEqual(plan["release_source_sha"], head)
-        self.assertEqual(plan["source_sha"], snapshot)
-
-    def test_published_test_version_with_foreign_or_missing_provenance_is_rejected(self):
+    def test_two_unmerged_minor_prs_share_next_core_but_have_unique_beta_identity(self):
         event, _ = self.request()
-        for body in ("", "Original PR head: " + "f" * 40, "Original PR head: " + event["pull_request"]["head"]["sha"] + "extra"):
-            with self.subTest(body=body), self.assertRaisesRegex(VersionError, "provenance"):
-                self.fixture.plan(mode="beta", event=event, beta_sequence="29.2",
-                                  api=FakeApi(releases=[published("1.10.0", body=body)]))
+        api = FakeApi(releases=[published("1.9.0"), published("1.11.0-beta.13.32.1", prerelease=True)])
+        first = self.fixture.plan(mode="beta", event=event, beta_sequence="33.1", api=api)
+        event["number"] = event["pull_request"]["number"] = 13
+        second = self.fixture.plan(mode="beta", event=event, beta_sequence="34.1", api=api)
+        self.assertEqual(first["core_version"], "1.10.0")
+        self.assertEqual(second["core_version"], first["core_version"])
+        self.assertNotEqual(first["version"], second["version"])
+        self.assertTrue(first["prerelease"] and second["prerelease"])
 
-    def test_published_test_tag_source_version_must_match(self):
-        event, head = self.request()
-        self.fixture.git.run("tag", "win-v1.10.0", self.fixture.base)
-        with self.assertRaisesRegex(VersionError, "immutable source"):
-            self.fixture.plan(mode="beta", event=event, beta_sequence="29.2",
-                              api=FakeApi(releases=[published("1.10.0", body=f"Original PR head: {head}")]))
+    def test_new_run_first_beta_orders_above_legacy_pr_first_published_beta(self):
+        event, _ = self.request(directive="")
+        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="40.1",
+                                 api=FakeApi(releases=[published("1.10.0")]))
+        legacy = "1.11.0-beta.13.32.1"
+        numeric_identifiers = lambda version: tuple(int(part) for part in version.split("-beta.", 1)[1].split("."))
+        self.assertEqual(plan["version"], "1.11.0-beta.40.12.1")
+        self.assertGreater(numeric_identifiers(plan["version"]), numeric_identifiers(legacy))
+
+    def test_newer_build_of_older_pr_orders_above_previous_newer_pr_and_retry(self):
+        event, _ = self.request(directive="", number=13)
+        api = FakeApi(releases=[published("1.10.0")])
+        previous = self.fixture.plan(mode="beta", event=event, beta_sequence="40.1", api=api)
+        retry = self.fixture.plan(mode="beta", event=event, beta_sequence="40.2", api=api)
+        event["number"] = event["pull_request"]["number"] = 12
+        newer = self.fixture.plan(mode="beta", event=event, beta_sequence="41.1", api=api)
+        numeric_identifiers = lambda version: tuple(int(part) for part in version.split("-beta.", 1)[1].split("."))
+        self.assertGreater(numeric_identifiers(retry["version"]), numeric_identifiers(previous["version"]))
+        self.assertGreater(numeric_identifiers(newer["version"]), numeric_identifiers(retry["version"]))
+        self.assertEqual(newer["version"], "1.11.0-beta.41.12.1")
+
+    def test_retired_pr_stable_is_excluded_from_the_published_stable_floor(self):
+        event, _ = self.request()
+        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="33.1",
+                                 api=FakeApi(releases=[published("1.9.0"), published("1.10.0", draft=True)]))
+        self.assertEqual(plan["core_version"], "1.10.0")
+        self.assertEqual(plan["published_floor"], "1.9.0")
+
+    def test_pr_event_cannot_be_planned_as_stable_or_tag(self):
+        event, _ = self.request()
+        for mode in ("stable", "tag"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(VersionError, "only beta"):
+                self.fixture.plan(mode=mode, event=event, tag="win-v1.8.0")
+
+    def test_stable_plan_requires_current_main_even_without_pr_metadata(self):
+        self.request()
+        with self.assertRaisesRegex(VersionError, "exact current main"):
+            self.fixture.plan()
+
+    def test_stable_tag_cannot_point_to_an_unmerged_pr_commit(self):
+        _, head = self.request(source="1.10.0")
+        self.fixture.git.run("tag", "win-v1.10.0", head)
+        with self.assertRaisesRegex(VersionError, "source from main"):
+            self.fixture.plan(mode="tag", tag="win-v1.10.0")
+
+    def test_caller_cannot_substitute_a_feature_branch_as_main(self):
+        self.request()
+        with self.assertRaisesRegex(VersionError, "repository main branch"):
+            self.fixture.plan(main_ref="HEAD")
+
+    def test_beta_tag_cannot_be_validated_as_a_stable_tag(self):
+        self.fixture.git.run("tag", "win-v1.8.0-beta.12.29.1")
+        with self.assertRaisesRegex(VersionError, "stable tag"):
+            self.fixture.plan(mode="tag", tag="win-v1.8.0-beta.12.29.1")
+
+    def test_main_release_stays_stable_and_never_consumes_a_pr_test_directive(self):
+        self.fixture.write("windows/src/change.cs", "main feature\n")
+        self.fixture.commit("feat: main change\n\nRelease-Test-Windows: beta 99.0.0")
+        plan = self.fixture.plan(event={"ref": "refs/heads/main"})
+        self.assertFalse(plan["release_test"])
+        self.assertEqual(plan["version"], "1.9.0")
+        self.assertEqual(plan["channel"], "stable")
+        self.assertFalse(plan["prerelease"])
+
+    def test_cli_tag_sync_cannot_modify_immutable_release_source(self):
+        before = (self.fixture.root / "windows/Directory.Build.props").read_text()
+        errors = StringIO()
+        with patch("versioning.GitHub", return_value=FakeApi()), redirect_stderr(errors):
+            status = main(["plan", "--platform", "windows", "--mode", "tag",
+                           "--repo-root", str(self.fixture.root), "--tag", "win-v1.8.0", "--sync"])
+        self.assertEqual(status, 1)
+        self.assertIn("immutable source", errors.getvalue())
+        self.assertEqual((self.fixture.root / "windows/Directory.Build.props").read_text(), before)
+
+
+class RetiredReservationTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = RepositoryFixture()
+        self.fixture.git.run("checkout", "-b", "historical-pr")
+        path = self.fixture.root / "windows/Directory.Build.props"
+        path.write_text(path.read_text().replace("1.8.0", "1.10.0"), encoding="utf-8")
+        self.fixture.write("windows/src/pr-option.cs", "previously shipped PR application\n")
+        self.fixture.write(".github/workflows/windows.yml", "name: reviewed PR workflow\n")
+        original = self.fixture.commit("reviewed historical PR application")
+        # GitHub's workflow-normalized release source is a sibling, not a descendant, of the PR.
+        self.fixture.git.run("checkout", "--detach", self.fixture.base)
+        self.fixture.git.run("checkout", original, "--", "windows/Directory.Build.props", "windows/src/pr-option.cs")
+        frozen = self.fixture.commit("workflow-normalized historical snapshot of " + original)
+        self.fixture.git.run("tag", "win-v1.10.0", frozen)
+        self.fixture.git.run("checkout", "main")
+        self.descriptor = {"pull_number": 12, "original_pr_sha": original, "source_sha": frozen}
+        self.pin = patch.dict(RETIRED_STABLE_RESERVATIONS, {
+            "fixtures/repository": {"windows": {"win-v1.10.0": self.descriptor}}})
+        self.pin.start()
+        self.release = published("1.10.0", draft=True, body="\n".join([
+            "Explicit installed-update release test of [PR #12](https://github.com/fixtures/repository/pull/12).",
+            "Release channel: stable",
+            "Release-test request: true",
+            "Original PR head: " + original,
+            "Built and tested release source: " + frozen,
+            RETIRED_RESERVATION_MARKER + "windows 1.10.0",
+        ]))
+        self.api = FakeApi(releases=[published("1.9.0"), self.release])
+
+    def tearDown(self):
+        self.pin.stop()
+        self.fixture.close()
+
+    def preview(self):
+        self.fixture.git.run("checkout", "-b", "new-preview")
+        self.fixture.write("windows/src/new-option.cs", "new update option\n")
+        after = self.fixture.commit("new PR feature source")
+        return {"number": 13, "pull_request": {
+            "number": 13, "title": "feat: restart update check", "body": "",
+            "base": {"sha": self.fixture.base}, "head": {"sha": after}}}
+
+    def test_pinned_retired_release_reserves_next_beta_core_without_becoming_stable(self):
+        event = self.preview()
+        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="40.1", api=self.api)
+        self.assertEqual(plan["core_version"], "1.11.0")
+        self.assertEqual(plan["version"], "1.11.0-beta.40.13.1")
+        self.assertEqual(plan["published_floor"], "1.9.0")
+        self.assertEqual(plan["release_floor"], "1.10.0")
+        self.assertEqual(plan["release_floor_tag"], "win-v1.10.0")
+        self.assertEqual(plan["retired_reservations"], ["win-v1.10.0"])
+        self.assertTrue(plan["prerelease"])
+        self.assertEqual(plan["channel"], "beta")
+
+    def test_read_only_hidden_draft_still_reserves_exact_pinned_shipped_core(self):
+        event = self.preview()
+        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="40.1",
+                                 api=FakeApi(releases=[published("1.9.0")]))
+        self.assertEqual(plan["core_version"], "1.11.0")
+        self.assertEqual(plan["published_floor"], "1.9.0")
+        self.assertEqual(plan["release_floor"], "1.10.0")
+
+    def test_main_feature_skips_preserved_historical_tag_and_publishes_stable(self):
+        self.fixture.write("windows/src/new-option.cs", "merged feature\n")
+        self.fixture.commit("feat: restart update check")
+        plan = self.fixture.plan(api=self.api)
+        self.assertEqual(plan["version"], "1.11.0")
+        self.assertTrue(plan["publish"])
+        self.assertFalse(plan["prerelease"])
+        self.assertEqual(plan["channel"], "stable")
+
+    def test_main_fix_respects_historical_floor_without_claiming_a_minor_change(self):
+        self.fixture.write("windows/src/app.cs", "merged fix\n")
+        self.fixture.commit("fix: updater download")
+        plan = self.fixture.plan(api=self.api)
+        self.assertEqual(plan["version"], "1.10.1")
+        self.assertEqual(plan["bump"], "patch")
+
+    def test_pinned_retired_tag_never_publishes_docs_only_changes(self):
+        self.fixture.write("windows/README.md", "release documentation\n")
+        self.fixture.commit("feat: document updates")
+        plan = self.fixture.plan(api=self.api)
+        self.assertFalse(plan["publish"])
+
+    def test_higher_unreachable_unpublished_tag_does_not_expand_the_pinned_floor(self):
+        self.fixture.git.run("checkout", "historical-pr")
+        self.fixture.write("windows/src/future.cs", "unreleased future source\n")
+        self.fixture.commit("feat!: future change")
+        self.fixture.git.run("tag", "win-v9.0.0")
+        self.fixture.git.run("checkout", "main")
+        self.fixture.write("windows/src/app.cs", "merged fix\n")
+        self.fixture.commit("fix: updater download")
+        plan = self.fixture.plan(api=self.api)
+        self.assertEqual(plan["version"], "1.10.1")
+        self.assertEqual(plan["release_floor"], "1.10.0")
+
+    def test_retired_reservation_marker_cannot_authorize_an_arbitrary_core(self):
+        release = published("9.0.0", draft=True, body=RETIRED_RESERVATION_MARKER + "windows 9.0.0")
+        with self.assertRaisesRegex(VersionError, "Untrusted"):
+            retired_stable_reservation(release, "fixtures/repository", "windows")
+
+    def test_retired_marker_and_provenance_must_be_exact_unique_and_withdrawn(self):
+        bodies = [self.release["body"] + "\n" + RETIRED_RESERVATION_MARKER + "windows 1.10.0",
+                  self.release["body"].replace("Original PR head: ", "Original PR head: " + "f" * 40),
+                  self.release["body"].replace("Release channel: stable", "Release channel: beta"),
+                  self.release["body"].replace("/pull/12", "/pull/13"),
+                  self.release["body"].replace("Built and tested release source: ", "Built and tested release source: " + "f" * 40),
+                  self.release["body"] + "\nOriginal PR head: " + self.descriptor["original_pr_sha"]]
+        for body in bodies:
+            with self.subTest(body=body), self.assertRaises(VersionError):
+                retired_stable_reservation(dict(self.release, body=body), "fixtures/repository", "windows")
+        for flags in ({"draft": False}, {"prerelease": True}):
+            with self.subTest(flags=flags), self.assertRaises(VersionError):
+                retired_stable_reservation(dict(self.release, **flags), "fixtures/repository", "windows")
+
+    def test_retired_pin_does_not_apply_to_other_repositories(self):
+        self.assertIsNone(retired_stable_reservation(self.release, "foreign/repository", "macos"))
+        with self.assertRaisesRegex(VersionError, "Untrusted"):
+            retired_stable_reservation(self.release, "foreign/repository", "windows")
+
+    def test_pinned_tag_mismatch_fails_closed_even_when_draft_metadata_is_hidden(self):
+        self.fixture.git.run("tag", "-f", "win-v1.10.0", self.fixture.base)
+        with self.assertRaisesRegex(VersionError, "pinned immutable reviewed source"):
+            self.fixture.plan(api=FakeApi(releases=[published("1.9.0")]))
+
+    def test_missing_pinned_tag_cannot_fall_back_to_the_lower_published_floor(self):
+        self.fixture.git.run("tag", "-d", "win-v1.10.0")
+        with self.assertRaisesRegex(VersionError, "not fetched"):
+            self.fixture.plan(api=FakeApi(releases=[published("1.9.0")]))
+
+    def test_retired_pin_requires_exact_reviewed_nonworkflow_leaf_tree(self):
+        self.descriptor["original_pr_sha"] = self.fixture.base
+        # Visible draft metadata must still match the exact original reviewed identity.
+        with self.assertRaisesRegex(VersionError, "provenance"):
+            self.fixture.plan(api=self.api)
+        self.fixture.write("windows/src/unrelated.cs", "different reviewed source\n")
+        unrelated = self.fixture.commit("fix: separate main source")
+        self.descriptor["original_pr_sha"] = unrelated
+        with self.assertRaisesRegex(VersionError, "pinned immutable reviewed source"):
+            self.fixture.plan(api=FakeApi(releases=[published("1.9.0")]))
+
+    def test_sibling_normalized_snapshot_with_different_workflows_preserves_review_identity(self):
+        original = self.descriptor["original_pr_sha"]
+        frozen = self.descriptor["source_sha"]
+        self.assertEqual(self.fixture.git.merge_base(original, frozen), self.fixture.base)
+        self.assertNotEqual(original, self.fixture.git.merge_base(original, frozen))
+        self.assertEqual(self.fixture.git.application_entries(original), self.fixture.git.application_entries(frozen))
+        self.assertNotEqual(self.fixture.git.run("show", original + ":.github/workflows/windows.yml"),
+                            self.fixture.git.run("show", frozen + ":.github/workflows/windows.yml"))
+        self.assertEqual(self.fixture.plan(api=self.api)["release_floor"], "1.10.0")
+
+    def test_pinned_source_with_a_changed_application_leaf_is_rejected(self):
+        self.fixture.git.run("checkout", "--detach", self.descriptor["source_sha"])
+        self.fixture.write("windows/src/pr-option.cs", "different unreviewed application\n")
+        changed = self.fixture.commit("changed frozen application")
+        self.fixture.git.run("tag", "-f", "win-v1.10.0", changed)
+        self.descriptor["source_sha"] = changed
+        self.fixture.git.run("checkout", "main")
+        with self.assertRaisesRegex(VersionError, "pinned immutable reviewed source"):
+            self.fixture.plan(api=FakeApi(releases=[published("1.9.0")]))
+
+    def test_retired_floor_is_isolated_from_macos_versions(self):
+        self.fixture.write("macos/Sources/App.swift", "Mac fix\n")
+        self.fixture.commit("fix(macos): startup")
+        plan = self.fixture.plan(platform="macos", api=self.api)
+        self.assertEqual(plan["version"], "0.1.1")
+        self.assertEqual(plan["retired_reservations"], [])
+
+    def test_draft_retirement_metadata_reuses_authenticated_complete_release_pagination(self):
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            return Response([published("1.9.0"), self.release])
+
+        api = GitHub("fixtures/repository", token="test-read-token", opener=opener)
+        self.assertEqual(api.published_stable_releases("windows")[0]["tag_name"], "win-v1.9.0")
+        self.assertEqual(api.retired_stable_reservations("windows")[0]["tag_name"], "win-v1.10.0")
+        self.assertEqual(len(calls), 1)
 
 
 class PublishedFloorTests(unittest.TestCase):

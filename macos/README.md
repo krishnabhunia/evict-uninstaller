@@ -43,9 +43,11 @@ so nothing it does is permanent.
 
 Builds are not signed with an Apple Developer ID yet, so Gatekeeper will complain on first launch:
 
-1. Download `Evict-<version>.zip` from the Actions run (or a Release) and unzip it.
-2. Move `Evict.app` to `/Applications`.
+1. Download the installation ZIP from the Actions run or a Release and unzip it. Its only top-level folders are `portable`, `windows-installer` and `macOS`.
+2. Open `macOS/Evict-macOS-<MacVersion>.zip` to extract the native `Evict.app` bundle, then move it to `/Applications`.
 3. **Right-click the app → Open → Open.** After that it starts normally.
+
+The inner macOS archive preserves executable permissions and bundle symlinks. Its SHA-256 sidecar is next to it. The other two folders contain the verified Windows portable program and installer; platform versions are independent.
 
 ## Building it yourself
 
@@ -73,4 +75,4 @@ SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" Scripts/make-app.sh
 
 ## Release versions
 
-GitHub Actions automatically maintains numeric `x.y.z` versions and the bundle build number from PR and commit release intent. The macOS 15 workflow tests the exact version commit and verifies the universal bundle metadata before publishing a `mac-vX.Y.Z` release. PR validation has read-only repository access. See [automatic versioning](../docs/versioning.md).
+GitHub Actions automatically maintains numeric `x.y.z` versions and the bundle build number from PR and commit release intent. The macOS 15 workflow tests the exact version commit and verifies the universal bundle metadata before publishing a `mac-vX.Y.Z` release. PR validation has read-only repository access. Installation ZIPs include the latest published Windows stable whose source is reachable from main, with downloaded hashes verified before packaging. See [automatic versioning](../docs/versioning.md).
