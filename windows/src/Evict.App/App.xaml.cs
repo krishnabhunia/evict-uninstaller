@@ -71,6 +71,9 @@ public partial class App : Application
         if (StartedHeadless && !Background.HasTray) { Log.Warn("No tray icon available – showing the window instead of running invisibly."); main.Show(); }
         if (Services.Settings.Current.StartWithWindows) StartupRegistration.RefreshIfStale();
 
+        // Initialize schedule status/migration even for a hidden launch that never visits Settings.
+        _ = mainVm.GetPage<SettingsViewModel>(PageKey.Settings);
+
         SingleInstance.StartServer(args => HandleArgs(mainVm, args));
         if (!startOptions.IsEmpty || startOptions.Unknown.Count > 0) HandleArgs(mainVm, Program.StartupArgs, activate: !startOptions.Headless);
         else if (Services.Settings.Current.EasyUninstallWidgetVisible) mainVm.ShowWidgetCommand.Execute(null);

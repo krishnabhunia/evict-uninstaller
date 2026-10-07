@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Xml;
+using System.Xml.Linq;
 using Evict.Core.Models;
 using Evict.Core.Util;
 using Microsoft.Win32;
@@ -14,6 +16,17 @@ namespace Evict.Core.Services;
 public sealed class LeftoverScanner
 {
     private const string UninstallSubKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+    private readonly Func<IReadOnlyList<InstalledProgram>> _installedPrograms;
+    private readonly IReadOnlyList<string>? _fileSystemRoots;
+
+    public LeftoverScanner() : this(() => new InstalledProgramsService().Enumerate(new ProgramsQueryOptions
+        { IncludeSystemComponents = true, IncludeUpdates = true, MeasureMissingSizes = false, ReadUsageData = false, RequireCompleteInventory = true })) { }
+
+    internal LeftoverScanner(Func<IReadOnlyList<InstalledProgram>> installedPrograms, IReadOnlyList<string>? fileSystemRoots = null)
+    {
+        _installedPrograms = installedPrograms;
+        _fileSystemRoots = fileSystemRoots;
+    }
 
     // ───────────────────────────── fingerprint ─────────────────────────────
 
@@ -84,6 +97,9 @@ public sealed class LeftoverScanner
     /// <summary>Fingerprint for Force Uninstall of an arbitrary folder / executable.</summary>
     public static ProgramFingerprint FingerprintFromPath(string path, string? displayName = null)
     {
+        if (!PathUtil.TryCanonicalizeAbsolute(path, out var canonical) || PathUtil.IsProtectedRoot(canonical, checkProtectedNames: false))
+            throw new ArgumentException("Choose an absolute application path outside protected locations and junctions.", nameof(path));
+        path = canonical;
         string? folder = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
         var name = displayName ?? Path.GetFileNameWithoutExtension(Directory.Exists(path) ? path.TrimEnd('\\') : path);
         var exes = new List<string>();
@@ -121,7 +137,7 @@ public sealed class LeftoverScanner
     {
         var sw = Stopwatch.StartNew();
         var result = new LeftoverScanResult();
-        var ctx = new ScanContext(fp, options, result, ct);
+        var ctx = new ScanContext(fp, options, result, ct, _installedPrograms(), _fileSystemRoots);
 
         try
         {
@@ -187,15 +203,33 @@ public sealed class LeftoverScanner
         public IReadOnlyList<CandidateKey> Keys => Fp.NameKeys;
         public string PublisherKey => Fp.PublisherToken ?? "";
         public bool HasPublisher => PublisherKey.Length >= 3 && !NameNormalizer.StopWords.Contains(PublisherKey);
+        private readonly IReadOnlyList<InstalledProgram> _installedPrograms;
+        private readonly HashSet<string> _remainingNameKeys;
+        public IReadOnlyList<string>? FileSystemRootOverride { get; }
 
-        public ScanContext(ProgramFingerprint fp, LeftoverScanOptions options, LeftoverScanResult result, CancellationToken ct)
+        public ScanContext(ProgramFingerprint fp, LeftoverScanOptions options, LeftoverScanResult result, CancellationToken ct, IReadOnlyList<InstalledProgram> installedPrograms, IReadOnlyList<string>? fileSystemRoots)
         {
             Fp = fp; Options = options; Result = result; Ct = ct;
+            _installedPrograms = installedPrograms;
+            FileSystemRootOverride = fileSystemRoots;
+            _remainingNameKeys = installedPrograms.Where(p =>
+                    !(Fp.KeyName != null && Fp.Scope == p.Scope && string.Equals(Fp.KeyName, p.KeyName, StringComparison.OrdinalIgnoreCase)))
+                .Select(p => NameNormalizer.ToKey(p.DisplayName)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
+
+        public bool CanNameMatch(string leaf) => !_remainingNameKeys.Contains(NameNormalizer.ToKey(leaf));
+
+        public bool HasSharedInstallFolder => !string.IsNullOrEmpty(Fp.InstallLocation)
+            && IsOwnedByAnotherProgram(Fp.InstallLocation, Fp, _installedPrograms, isFolder: true);
 
         public bool AddFolder(string path, LeftoverConfidence confidence, string detail, bool isInstallLocation = false)
         {
             var norm = PathUtil.NormalizeForCompare(path);
+            if (IsOwnedByAnotherProgram(norm, Fp, _installedPrograms, isFolder: true))
+            {
+                Result.Warnings.Add($"Skipped a folder owned by another installed program: {norm}");
+                return false;
+            }
             if (!SeenPaths.Add(norm)) return false;
             if (IncludedFolders.Any(f => PathUtil.IsUnder(norm, f))) return false;
 
@@ -227,6 +261,7 @@ public sealed class LeftoverScanner
         public void AddFile(string path, LeftoverKind kind, LeftoverConfidence confidence, string detail)
         {
             var norm = PathUtil.NormalizeForCompare(path);
+            if (norm.Length == 0 || PathUtil.HasReparsePoint(norm) || IsOwnedByAnotherProgram(norm, Fp, _installedPrograms, isFolder: false)) return;
             if (!SeenPaths.Add(norm)) return;
             if (IncludedFolders.Any(f => PathUtil.IsUnder(norm, f))) return;
             long size = 0;
@@ -308,6 +343,11 @@ public sealed class LeftoverScanner
 
     private static IEnumerable<string> FileSystemRoots(ScanContext ctx)
     {
+        if (ctx.FileSystemRootOverride is { } roots)
+        {
+            foreach (var root in roots) yield return root;
+            yield break;
+        }
         yield return Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         yield return Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
         yield return Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
@@ -342,7 +382,8 @@ public sealed class LeftoverScanner
                 var match = NameNormalizer.Match(leaf, ctx.Keys);
                 if (match is { } m)
                 {
-                    ctx.AddFolder(dir, m, $"Folder name matches \"{ctx.Fp.DisplayName}\"");
+                    if (ctx.CanNameMatch(leaf) && !NameNormalizer.HasConflictingVersion(leaf, ctx.Fp.DisplayName))
+                        ctx.AddFolder(dir, NameMatchConfidence(m), $"Folder name matches \"{ctx.Fp.DisplayName}\"; ownership requires review");
                     continue;
                 }
 
@@ -359,7 +400,8 @@ public sealed class LeftoverScanner
                         var sm = NameNormalizer.Match(subLeaf, ctx.Keys, allowFuzzy: isPublisherFolder);
                         if (sm is { } smv)
                         {
-                            var conf = isPublisherFolder && smv == LeftoverConfidence.Low ? LeftoverConfidence.Medium : smv;
+                            if (!ctx.CanNameMatch(subLeaf) || NameNormalizer.HasConflictingVersion(subLeaf, ctx.Fp.DisplayName)) continue;
+                            var conf = NameMatchConfidence(smv);
                             ctx.AddFolder(sub, conf, isPublisherFolder ? $"Under publisher folder \"{leaf}\"" : $"Folder name matches \"{ctx.Fp.DisplayName}\"");
                         }
                     }
@@ -416,7 +458,7 @@ public sealed class LeftoverScanner
                     foreach (var dir in Directory.EnumerateDirectories(Path.Combine(root, "Programs"), "*", new EnumerationOptions { IgnoreInaccessible = true }))
                     {
                         var m = NameNormalizer.Match(Path.GetFileName(dir), ctx.Keys, allowFuzzy: false);
-                        if (m is { } mv) ctx.AddFolder(dir, mv, "Start menu folder");
+                        if (m is { } mv && ctx.CanNameMatch(Path.GetFileName(dir))) ctx.AddFolder(dir, NameMatchConfidence(mv), "Start menu folder name requires ownership review");
                     }
                 }
                 catch { /* ignore */ }
@@ -462,6 +504,11 @@ public sealed class LeftoverScanner
             if (KeyExists(hive, view, RegistryPaths.Join(UninstallSubKey, ctx.Fp.KeyName)))
                 ctx.AddRegistryKey(hive, view, RegistryPaths.Join(UninstallSubKey, ctx.Fp.KeyName), LeftoverConfidence.High, "Orphaned Programs & Features entry");
         }
+        if (ctx.HasSharedInstallFolder)
+        {
+            ctx.Result.Warnings.Add("Registry path matching was skipped because another installed program shares this install folder.");
+            return;
+        }
 
         // 2. Vendor / product keys under HKLM\SOFTWARE (64 + 32) and HKCU\Software.
         foreach (var (hive, view) in SoftwareRoots())
@@ -479,7 +526,8 @@ public sealed class LeftoverScanner
                     var m = NameNormalizer.Match(name, ctx.Keys);
                     if (m is { } mv)
                     {
-                        ctx.AddRegistryKey(hive, view, "SOFTWARE\\" + name, mv, "Key name matches the program");
+                        if (ctx.CanNameMatch(name))
+                            ctx.AddRegistryKey(hive, view, "SOFTWARE\\" + name, NameMatchConfidence(mv), "Key name matches the program; ownership requires review");
                         continue;
                     }
                     if (ctx.HasPublisher && NameNormalizer.ToKey(name) == ctx.PublisherKey)
@@ -492,7 +540,8 @@ public sealed class LeftoverScanner
                             var sm = NameNormalizer.Match(sub, ctx.Keys);
                             if (sm is { } smv)
                             {
-                                var conf = smv == LeftoverConfidence.Low ? LeftoverConfidence.Medium : smv;
+                                if (!ctx.CanNameMatch(sub)) continue;
+                                var conf = NameMatchConfidence(smv);
                                 ctx.AddRegistryKey(hive, view, $"SOFTWARE\\{name}\\{sub}", conf, $"Under publisher key \"{name}\"");
                             }
                         }
@@ -502,7 +551,8 @@ public sealed class LeftoverScanner
             catch (Exception ex) { ctx.Result.Warnings.Add($"Registry {hive}/{view}: {ex.Message}"); }
         }
 
-        var loc = ctx.Fp.InstallLocation;
+        var loc = !string.IsNullOrEmpty(ctx.Fp.InstallLocation) && !PathUtil.IsProtectedRoot(ctx.Fp.InstallLocation, checkProtectedNames: false)
+            ? PathUtil.NormalizeForCompare(ctx.Fp.InstallLocation) : null;
         var exeNames = ctx.Fp.ExecutableNames.Where(e => !ShortcutInspector.IsGenericExeName(e)).ToList();
 
         // 3. App Paths, Run / RunOnce, Applications, AppCompat stores, MuiCache, Installer\Folders.
@@ -902,7 +952,7 @@ public sealed class LeftoverScanner
     private static void ScanServices(ScanContext ctx)
     {
         var loc = ctx.Fp.InstallLocation;
-        if (string.IsNullOrEmpty(loc)) return;
+        if (string.IsNullOrEmpty(loc) || PathUtil.IsProtectedRoot(loc, checkProtectedNames: false) || ctx.HasSharedInstallFolder) return;
         try
         {
             using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
@@ -921,7 +971,8 @@ public sealed class LeftoverScanner
                 if (string.IsNullOrEmpty(imagePath)) continue;
                 var parsed = UninstallCommandParser.Parse(imagePath);
                 var exe = parsed?.FileName ?? imagePath;
-                if (PathUtil.IsUnder(exe, loc) || (parsed != null && parsed.Arguments.Contains(loc, StringComparison.OrdinalIgnoreCase) && exe.Contains("svchost", StringComparison.OrdinalIgnoreCase) == false))
+                var confidence = CommandOwnership(exe, parsed?.Arguments, loc);
+                if (confidence is { } owned)
                 {
                     var display = RegistryPaths.Display(RegistryHive.LocalMachine, RegistryView.Registry64, @"SYSTEM\CurrentControlSet\Services\" + name);
                     if (!ctx.SeenPaths.Add("SVC:" + name)) continue;
@@ -930,7 +981,7 @@ public sealed class LeftoverScanner
                         Kind = LeftoverKind.Service,
                         Path = display,
                         Detail = $"Service \"{name}\" → {imagePath}",
-                        Confidence = LeftoverConfidence.High,
+                        Confidence = owned,
                         ServiceName = name,
                         Hive = RegistryHive.LocalMachine,
                         RegView = RegistryView.Registry64,
@@ -949,7 +1000,7 @@ public sealed class LeftoverScanner
     private static void ScanScheduledTasks(ScanContext ctx)
     {
         var loc = ctx.Fp.InstallLocation;
-        if (string.IsNullOrEmpty(loc)) return;
+        if (string.IsNullOrEmpty(loc) || PathUtil.IsProtectedRoot(loc, checkProtectedNames: false) || ctx.HasSharedInstallFolder) return;
         var tasksRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "Tasks");
         if (!Directory.Exists(tasksRoot)) return;
         try
@@ -965,7 +1016,8 @@ public sealed class LeftoverScanner
                     xml = File.ReadAllText(file);
                 }
                 catch { continue; }
-                if (!xml.Contains(loc, StringComparison.OrdinalIgnoreCase)) continue;
+                var confidence = TaskOwnership(xml, loc);
+                if (confidence is null) continue;
 
                 var taskName = "\\" + Path.GetRelativePath(tasksRoot, file).Replace('/', '\\');
                 if (!ctx.SeenPaths.Add("TASK:" + taskName)) continue;
@@ -974,7 +1026,7 @@ public sealed class LeftoverScanner
                     Kind = LeftoverKind.ScheduledTask,
                     Path = "Task Scheduler" + taskName,
                     Detail = "Scheduled task runs a file inside the program folder",
-                    Confidence = LeftoverConfidence.High,
+                    Confidence = confidence.Value,
                     TaskName = taskName,
                     ProgramName = ctx.Fp.DisplayName,
                 });
@@ -982,5 +1034,50 @@ public sealed class LeftoverScanner
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { ctx.Result.Warnings.Add("Scheduled tasks: " + ex.Message); }
+    }
+
+    private static LeftoverConfidence NameMatchConfidence(LeftoverConfidence confidence) =>
+        confidence == LeftoverConfidence.High ? LeftoverConfidence.Medium : confidence;
+
+    internal static bool IsOwnedByAnotherProgram(string path, ProgramFingerprint target, IReadOnlyList<InstalledProgram> installedPrograms, bool isFolder)
+    {
+        // An explicitly selected Force folder may correspond to a single registered program. Shared install
+        // directories remain protected; never infer identity from a version-stripped display name.
+        var exactForceOwners = target.KeyName is null
+            ? installedPrograms.Where(p => PathUtil.IsUnder(p.InstallLocation, target.InstallLocation) && PathUtil.IsUnder(target.InstallLocation, p.InstallLocation)).ToList()
+            : new List<InstalledProgram>();
+        foreach (var p in installedPrograms)
+        {
+            if (target.KeyName != null && target.Scope == p.Scope && string.Equals(target.KeyName, p.KeyName, StringComparison.OrdinalIgnoreCase)) continue;
+            if (exactForceOwners.Count == 1 && ReferenceEquals(exactForceOwners[0], p)) continue;
+            if (!PathUtil.TryCanonicalizeAbsolute(p.InstallLocation, out var root) || PathUtil.Depth(root) <= 1) continue;
+            if (PathUtil.IsUnder(path, root) || isFolder && PathUtil.IsUnder(root, path)) return true;
+        }
+        return false;
+    }
+
+    internal static LeftoverConfidence? CommandOwnership(string? executable, string? arguments, string folder)
+    {
+        if (PathUtil.IsUnder(executable, folder)) return LeftoverConfidence.High;
+        // A wrapper referencing an app-owned file is only a suggestion. Metadata and substring matches
+        // are insufficient to establish ownership of an entire service or task.
+        return RegistryLeftoverRules.ReferencesFolder(arguments, folder) ? LeftoverConfidence.Low : null;
+    }
+
+    internal static LeftoverConfidence? TaskOwnership(string xml, string folder)
+    {
+        try
+        {
+            using var reader = XmlReader.Create(new StringReader(xml), new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
+            var doc = XDocument.Load(reader);
+            var actions = doc.Root?.Elements().FirstOrDefault(e => e.Name.LocalName == "Actions")?.Elements().ToList();
+            if (actions is null || actions.Count == 0 || actions.Any(a => a.Name.LocalName != "Exec")) return null;
+            var matches = actions.Select(a => CommandOwnership(
+                a.Elements().FirstOrDefault(e => e.Name.LocalName == "Command")?.Value,
+                a.Elements().FirstOrDefault(e => e.Name.LocalName == "Arguments")?.Value, folder)).ToList();
+            if (matches.Any(c => c is null)) return null; // deleting a mixed-purpose task would remove unrelated actions
+            return matches.Any(c => c == LeftoverConfidence.Low) ? LeftoverConfidence.Low : LeftoverConfidence.High;
+        }
+        catch { return null; }
     }
 }

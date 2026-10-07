@@ -193,14 +193,42 @@ public static class UpdateChecker
 }
 
 /// <summary>
-/// Checks GitHub Releases for a newer version, downloads the matching asset (verifying its SHA-256 when the
-/// release ships one) and applies it: installed copies run the new Setup silently, portable copies replace
+/// Checks GitHub Releases for a newer version, downloads the matching asset only after verifying its published
+/// SHA-256 checksum and applies it: installed copies run the new Setup silently, portable copies replace
 /// Evict.exe in place and restart. Every network failure is reported as "unavailable", never thrown.
 /// </summary>
 public sealed class UpdateService
 {
-    private static readonly HttpClient Http = CreateClient();
+    private static readonly HttpClient SharedHttp = CreateClient();
+    private readonly HttpClient _http;
+    private readonly string? _updatesDirectory;
+    private readonly Action<ProcessStartInfo> _startProcess;
+    private readonly bool _logDiagnostics = true;
     public const string OldBinaryName = "Evict.old.exe";
+
+    public UpdateService()
+    {
+        _http = SharedHttp;
+        _startProcess = StartProcess;
+    }
+
+    internal UpdateService(HttpClient http, string updatesDirectory, Action<ProcessStartInfo>? startProcess = null)
+    {
+        _http = http;
+        _updatesDirectory = updatesDirectory;
+        _startProcess = startProcess ?? StartProcess;
+        _logDiagnostics = false; // Isolated transports use only their supplied workspace, including diagnostics.
+    }
+
+    private void LogInfo(string message) { if (_logDiagnostics) Log.Info(message); }
+    private void LogWarn(string message) { if (_logDiagnostics) Log.Warn(message); }
+    private void LogError(string message, Exception ex) { if (_logDiagnostics) Log.Error(message, ex); }
+
+    private static void StartProcess(ProcessStartInfo info)
+    {
+        using var process = Process.Start(info);
+        if (process is null) throw new InvalidOperationException("The updated application could not be started.");
+    }
 
     private static HttpClient CreateClient()
     {
@@ -217,7 +245,7 @@ public sealed class UpdateService
     {
         get
         {
-            var d = Path.Combine(AppPaths.DataRoot, "updates");
+            var d = _updatesDirectory ?? Path.Combine(AppPaths.DataRoot, "updates");
             try { Directory.CreateDirectory(d); } catch { /* ignore */ }
             return d;
         }
@@ -233,7 +261,7 @@ public sealed class UpdateService
 
         try
         {
-            using var resp = await Http.GetAsync(UpdateChecker.LatestApiUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            using var resp = await _http.GetAsync(UpdateChecker.LatestApiUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (resp.IsSuccessStatusCode)
             {
                 var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -255,7 +283,7 @@ public sealed class UpdateService
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            Log.Warn("Update check failed: " + ex.Message);
+            LogWarn("Update check failed: " + ex.Message);
             failure = "Could not reach GitHub: " + (ex.InnerException?.Message ?? ex.Message);
             try { release = await CheckViaRedirectAsync(ct).ConfigureAwait(false); if (release != null) failure = null; } catch { /* keep first failure */ }
         }
@@ -284,57 +312,59 @@ public sealed class UpdateService
 
     // ───────────────────────────── download ─────────────────────────────
 
-    /// <summary>Downloads the asset into the updates folder, verifying SHA-256 when a checksum asset exists. Returns the local path.</summary>
+    /// <summary>Downloads an asset only when its published SHA-256 checksum can be verified. Returns the local path.</summary>
     public async Task<string> DownloadAsync(ReleaseInfo release, ReleaseAsset asset, IProgress<(long Done, long Total)>? progress, CancellationToken ct)
     {
         var target = Path.Combine(UpdatesDir, SafeFileName(asset.Name.Equals("Evict.exe", StringComparison.OrdinalIgnoreCase) ? $"Evict-{release.Version.ToString(3)}.exe" : asset.Name));
         var partial = target + ".partial";
         try { if (File.Exists(partial)) File.Delete(partial); } catch { /* ignore */ }
 
-        string? expectedHash = null;
         var checksum = UpdateChecker.PickChecksumAsset(release, asset);
-        if (checksum != null)
+        if (checksum is null)
+            throw new InvalidDataException("This release has no SHA-256 checksum for the update. Download a verified release from GitHub instead.");
+        string? expectedHash;
+        try
         {
-            try
-            {
-                var text = await Http.GetStringAsync(checksum.DownloadUrl, ct).ConfigureAwait(false);
-                expectedHash = UpdateChecker.ParseSha256(text);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex) { Log.Warn("Checksum download failed (continuing without verification): " + ex.Message); }
+            var text = await _http.GetStringAsync(checksum.DownloadUrl, ct).ConfigureAwait(false);
+            expectedHash = UpdateChecker.ParseSha256(text);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { throw new InvalidDataException("The update checksum could not be downloaded. The update was stopped; please try again.", ex); }
+        if (expectedHash is null) throw new InvalidDataException("The published update checksum is invalid. The update was stopped.");
 
-        using (var resp = await Http.GetAsync(asset.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
+        try
         {
-            resp.EnsureSuccessStatusCode();
-            long total = resp.Content.Headers.ContentLength ?? asset.Size;
-            await using var src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            await using var dst = new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);
-            var buffer = new byte[1 << 16];
-            long done = 0;
-            int read;
-            while ((read = await src.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+            using (var resp = await _http.GetAsync(asset.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
             {
-                await dst.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-                done += read;
-                progress?.Report((done, total));
+                resp.EnsureSuccessStatusCode();
+                long total = resp.Content.Headers.ContentLength ?? asset.Size;
+                await using var src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                await using var dst = new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);
+                var buffer = new byte[1 << 16];
+                long done = 0;
+                int read;
+                while ((read = await src.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                {
+                    await dst.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                    done += read;
+                    progress?.Report((done, total));
+                }
             }
-        }
 
-        if (expectedHash != null)
-        {
             var actual = await ComputeSha256Async(partial, ct).ConfigureAwait(false);
             if (!string.Equals(actual, expectedHash, StringComparison.OrdinalIgnoreCase))
-            {
-                try { File.Delete(partial); } catch { /* ignore */ }
                 throw new InvalidDataException("The downloaded file is corrupt (SHA-256 mismatch). Please try again.");
-            }
-        }
 
-        try { if (File.Exists(target)) File.Delete(target); } catch { /* ignore */ }
-        File.Move(partial, target);
-        Log.Info($"Downloaded update {asset.Name} → {target}" + (expectedHash != null ? " (checksum OK)" : " (no checksum published)"));
-        return target;
+            try { if (File.Exists(target)) File.Delete(target); } catch { /* ignore */ }
+            File.Move(partial, target);
+            LogInfo($"Downloaded update {asset.Name} → {target} (checksum OK)");
+            return target;
+        }
+        catch
+        {
+            try { File.Delete(partial); } catch { /* keep the original download failure */ }
+            throw;
+        }
     }
 
     private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)
@@ -378,19 +408,27 @@ public sealed class UpdateService
     /// Portable: rename the running Evict.exe to Evict.old.exe, move the new file in, start it.
     /// Returns true when the caller must now shut the application down.
     /// </summary>
-    public (bool Ok, string? Error) Apply(string downloadedPath, bool installedMode, Action beforeRestart)
+    public (bool Ok, string? Error) Apply(string downloadedPath, bool installedMode, Action beforeRestart, Action? restartFailed = null)
     {
+        bool ownershipReleased = false;
+        string? RestoreOwnership()
+        {
+            if (!ownershipReleased || restartFailed is null) return null;
+            try { restartFailed(); return null; }
+            catch (Exception ex) { LogError("Could not resume after the update handoff failed", ex); return " Evict could not resume safely: " + ex.Message; }
+        }
         try
         {
             if (installedMode)
             {
                 beforeRestart();
-                Process.Start(new ProcessStartInfo(downloadedPath, "/SILENT /CLOSEAPPLICATIONS /NORESTART /EVICTUPDATE=1")
+                ownershipReleased = true;
+                _startProcess(new ProcessStartInfo(downloadedPath, "/SILENT /CLOSEAPPLICATIONS /NORESTART /EVICTUPDATE=1")
                 {
                     UseShellExecute = true, // honours the installer's own UAC request (all-users installs)
                     WorkingDirectory = Path.GetDirectoryName(downloadedPath) ?? UpdatesDir,
                 });
-                Log.Info("Started installer for update: " + downloadedPath);
+                LogInfo("Started installer for update: " + downloadedPath);
                 return (true, null);
             }
 
@@ -409,19 +447,20 @@ public sealed class UpdateService
             }
 
             beforeRestart();
-            Process.Start(new ProcessStartInfo(exe, "--updated") { UseShellExecute = true, WorkingDirectory = dir });
-            Log.Info($"Replaced {exe} (previous build kept as {Path.GetFileName(old)} until next start).");
+            ownershipReleased = true;
+            _startProcess(new ProcessStartInfo(exe, "--updated") { UseShellExecute = true, WorkingDirectory = dir });
+            LogInfo($"Replaced {exe} (previous build kept as {Path.GetFileName(old)} until next start).");
             return (true, null);
         }
         catch (UnauthorizedAccessException ex)
         {
-            Log.Error("Applying update failed", ex);
-            return (false, $"No permission to replace {ExePath}. Restart Evict as administrator or download the new version manually from {UpdateChecker.ReleasesUrl}.");
+            LogError("Applying update failed", ex);
+            return (false, $"No permission to replace {ExePath}. Restart Evict as administrator or download the new version manually from {UpdateChecker.ReleasesUrl}." + RestoreOwnership());
         }
         catch (Exception ex)
         {
-            Log.Error("Applying update failed", ex);
-            return (false, ex.Message);
+            LogError("Applying update failed", ex);
+            return (false, ex.Message + RestoreOwnership());
         }
     }
 
@@ -432,7 +471,7 @@ public sealed class UpdateService
         {
             foreach (var f in Directory.EnumerateFiles(ExeDirectory, "Evict.old*.exe"))
             {
-                try { File.Delete(f); Log.Info("Removed previous build " + f); } catch { /* still locked – next time */ }
+                try { File.Delete(f); LogInfo("Removed previous build " + f); } catch { /* still locked – next time */ }
             }
         }
         catch { /* ignore */ }

@@ -60,6 +60,8 @@ public sealed class UninstallHistoryEntry
     public int LeftoversFound { get; init; }
     public int LeftoversRemoved { get; init; }
     public long BytesReclaimed { get; init; }
+    /// <summary>Measured data removed from original locations, including data still held in the Recycle Bin.</summary>
+    public long BytesRemoved { get; init; }
     public string? Notes { get; init; }
     public string? InstallLocation { get; init; }
 }

@@ -12,6 +12,8 @@ public sealed class ProgramsQueryOptions
     public bool IncludeUpdates { get; set; }
     public bool MeasureMissingSizes { get; set; } = true;
     public bool ReadUsageData { get; set; } = true;
+    /// <summary>Safety decisions must not treat unreadable registrations as an empty inventory.</summary>
+    public bool RequireCompleteInventory { get; set; }
 }
 
 /// <summary>
@@ -91,12 +93,14 @@ public sealed class InstalledProgramsService
                     }
                     catch (Exception ex)
                     {
+                        if (options.RequireCompleteInventory) throw;
                         Log.Warn($"Skipping registry key {keyName}: {ex.Message}");
                     }
                 }
             }
             catch (Exception ex)
             {
+                if (options.RequireCompleteInventory) throw;
                 Log.Warn($"Cannot open uninstall root {hive}/{view}: {ex.Message}");
             }
         }

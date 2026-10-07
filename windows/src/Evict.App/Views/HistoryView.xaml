@@ -71,8 +71,8 @@
                         <DataGridTemplateColumn Header="Leftovers" Width="90" SortMemberPath="Entry.LeftoversFound">
                             <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:HistoryItemViewModel}"><TextBlock Text="{Binding LeftoversText}" Style="{StaticResource Cell.Secondary}" ToolTip="removed / found" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Reclaimed" Width="100" SortMemberPath="Entry.BytesReclaimed">
-                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:HistoryItemViewModel}"><TextBlock Text="{Binding ReclaimedText}" Style="{StaticResource Cell.Primary}" HorizontalAlignment="Right" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                        <DataGridTemplateColumn Header="Removed / permanent" Width="170" SortMemberPath="Entry.BytesRemoved">
+                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:HistoryItemViewModel}"><TextBlock Text="{Binding SpaceText}" Style="{StaticResource Cell.Primary}" HorizontalAlignment="Right" ToolTip="Measured data removed from original locations / data permanently deleted. Recycled data still occupies disk space. Earlier records do not distinguish the two." /></DataTemplate></DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
                         <DataGridTemplateColumn Header="Notes" Width="1.2*" MinWidth="160">
                             <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:HistoryItemViewModel}"><TextBlock Text="{Binding Notes}" Style="{StaticResource Cell.Secondary}" ToolTip="{Binding Notes}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>

@@ -25,13 +25,13 @@ struct SettingsView: View {
                         .help("System apps are listed for reference only – they can never be removed.")
                     Toggle("Also search the shared /Library folder", isOn: binding(\.scanSystemLocations))
                     Toggle("Show low-confidence finds", isOn: binding(\.showLowConfidenceItems))
-                        .help("Items whose name only looks like the app's. They are never ticked automatically.")
+                        .help("Items whose name only looks like the app's. They remain unchecked unless you enable pre-ticking below.")
                 }
 
                 Section("Removing") {
                     Toggle("Ask before moving anything to the Trash", isOn: binding(\.confirmBeforeRemoving))
                     Toggle("Pre-tick low-confidence finds", isOn: binding(\.preselectLowConfidence))
-                        .help("Off by default on purpose – a wrong tick removes another app's data.")
+                        .help("Off by default. Vendor-only or shared matches still require a manual choice; a wrong tick removes another app's data.")
                     Label("Everything Evict removes goes to the Trash. Nothing is deleted permanently.",
                           systemImage: "trash.slash")
                         .font(.callout).foregroundStyle(.secondary)

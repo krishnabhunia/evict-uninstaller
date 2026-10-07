@@ -11,6 +11,7 @@ struct ForceUninstallView: View {
     @State private var name = ""
     @State private var bundlePath: String?
     @State private var isTargeted = false
+    @State private var dropError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,6 +40,10 @@ struct ForceUninstallView: View {
                 }
 
                 if state.isPlanning { ProgressView().controlSize(.small) }
+                if let dropError {
+                    Label(dropError, systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(.orange)
+                }
 
                 Label("Evict searches only your Library folders and the shared /Library. Anything it finds is listed for you to tick before it moves to the Trash.",
                       systemImage: "shield")
@@ -67,7 +72,12 @@ struct ForceUninstallView: View {
             .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
                 DropReader.firstFileURL(providers) { url in
                     Task { @MainActor in
-                        bundlePath = url.path
+                        guard let validated = AppInventory.validBundlePath(url.path) else {
+                            dropError = "Drop an application bundle (.app), or search for its name below."
+                            return
+                        }
+                        dropError = nil
+                        bundlePath = validated
                         name = url.deletingPathExtension().lastPathComponent
                         scan()
                     }
@@ -76,6 +86,7 @@ struct ForceUninstallView: View {
     }
 
     private func scan() {
+        guard !state.isPlanning, !state.isRemoving else { return }
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard trimmed.count >= 3 else { return }
         Task { await state.prepareForcePlan(name: trimmed, bundlePath: bundlePath) }

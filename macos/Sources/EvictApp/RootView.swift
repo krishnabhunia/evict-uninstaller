@@ -33,6 +33,7 @@ struct RootView: View {
         .sheet(item: Binding(get: { state.plan.map(PlanBox.init) }, set: { if $0 == nil { state.dismissPlan() } })) { box in
             UninstallSheet(plan: box.plan)
                 .environmentObject(state)
+                .interactiveDismissDisabled(state.isRemoving)
         }
     }
 }

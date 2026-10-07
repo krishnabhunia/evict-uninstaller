@@ -86,9 +86,9 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--updated"; Flags: nowait skipifnotsilent; Check: IsSelfUpdate
 
 [UninstallRun]
-; Safety net if Evict.exe could not run its own clean-up (see [Code]): release the exe, drop the scheduled scan + autostart entry.
+; Safety net if Evict.exe could not run its own clean-up (see [Code]): release the exe and remove the autostart entry.
+; Scheduled tasks are removed only by the owner-aware self-cleanup above.
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F"; Flags: runhidden; RunOnceId: "KillEvict"
-Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /F /TN ""Evict Software Health scan"""; Flags: runhidden; RunOnceId: "DelTask"
 Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Evict /f"; Flags: runhidden; RunOnceId: "DelRun"
 
 [Code]

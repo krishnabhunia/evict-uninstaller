@@ -53,7 +53,7 @@
             <StackPanel>
                 <TextBlock Text="Registry Cleaner" Style="{StaticResource Text.Title}" />
                 <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" TextWrapping="Wrap"
-                           Text="Finds registry entries that point to programs, files and folders which no longer exist. An entry is listed only when its file is provably gone from a fixed drive – nothing on USB sticks or network drives. Every removal is backed up to a .reg file first and can be restored." />
+                           Text="Finds registry entries that point to programs, files and folders which no longer exist. An entry is listed only when its file is provably gone from a fixed drive - nothing on USB sticks or network drives. Every removal is backed up first. Use Restore in Evict to put entries back in their original 32-bit or 64-bit registry view." />
             </StackPanel>
             <Border Grid.Column="1" Style="{StaticResource Pill}" Background="{DynamicResource Brush.Warning.Subtle}" VerticalAlignment="Top" Margin="16,4,0,0"
                     Visibility="{Binding IsElevated, Converter={StaticResource InvBoolToVis}}">

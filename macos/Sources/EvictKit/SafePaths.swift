@@ -118,9 +118,43 @@ public enum SafePaths {
 
     public static func isAllowed(_ path: String) -> Bool { check(path).isAllowed }
 
-    /// True when removing this path needs administrator rights (anything outside the user's home).
+    /// Moving an item needs write access to its parent, not administrator rights merely
+    /// because it is outside the home folder. Actual failures remain authoritative.
     public static func needsAdmin(_ path: String) -> Bool {
-        !isInside(normalize(path), root: NSHomeDirectory())
+        let parent = (normalize(path) as NSString).deletingLastPathComponent
+        return !isInside(normalize(path), root: NSHomeDirectory()) &&
+            !FileManager.default.isWritableFile(atPath: parent)
+    }
+
+    /// Allows only a direct symlink in a command-line folder whose destination belongs
+    /// to the selected removable application. This does not allow arbitrary Homebrew files.
+    public static func checkOwnedBinaryLink(_ path: String, bundlePath: String) -> Verdict {
+        guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: path) else {
+            return .refused("The command-line shortcut is no longer a symbolic link")
+        }
+        return checkOwnedBinaryLink(path, destination: destination, bundlePath: bundlePath)
+    }
+
+    static func checkOwnedBinaryLink(_ rawPath: String, destination: String, bundlePath: String) -> Verdict {
+        let path = normalize(rawPath)
+        let parent = (path as NSString).deletingLastPathComponent
+        let leaf = (path as NSString).lastPathComponent
+        let bundle = URL(fileURLWithPath: normalize(bundlePath)).standardizedFileURL.path
+        guard ["/usr/local/bin", "/opt/homebrew/bin"].contains(parent),
+              !leaf.isEmpty, leaf != ".", leaf != ".." else {
+            return .refused("Outside the command-line shortcut folders")
+        }
+        guard !path.contains("/../"), !path.contains("/./"),
+              (bundlePath as NSString).pathExtension.lowercased() == "app",
+              check(bundle).isAllowed else {
+            return .refused("The shortcut does not identify a removable application")
+        }
+        let resolved = URL(fileURLWithPath: destination.hasPrefix("/") ? destination : parent + "/" + destination)
+            .standardizedFileURL.path
+        guard isInside(resolved, root: bundle) else {
+            return .refused("The shortcut no longer points inside the selected application")
+        }
+        return .allowed
     }
 
     private static func shortName(_ path: String) -> String { (path as NSString).lastPathComponent }

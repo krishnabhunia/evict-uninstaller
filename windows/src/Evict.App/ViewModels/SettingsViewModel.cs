@@ -91,7 +91,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public IReadOnlyList<KeyValuePair<string, string>> InstallerDetectionOptions { get; } = new[]
     {
         new KeyValuePair<string, string>("Off", "Off – never watch for installers"),
-        new KeyValuePair<string, string>("Ask", "Ask – show a notification, record when I click it"),
+        new KeyValuePair<string, string>("Ask", "Record and notify - keep the log unless I discard it"),
         new KeyValuePair<string, string>("Auto", "Automatic – record every detected installation"),
     };
     public string InstallerDetection
@@ -130,12 +130,18 @@ public sealed partial class SettingsViewModel : ObservableObject
         ScheduleStatusText = "Updating Task Scheduler…";
         var (ok, error) = await _services.Scheduler.ApplyAsync(ScheduledScan, ScheduledScanHour, ScheduledScanWeekday, CancellationToken.None);
         ScheduleStatusText = ok
-            ? (IsScheduledScanOn ? $"Scheduled: {ScheduledScanTask.Describe(ScheduledScan, ScheduledScanHour, ScheduledScanWeekday)} (Task Scheduler library → 'Evict Software Health scan'). You get a notification with the result; nothing is deleted automatically." : "No scheduled scan.")
+            ? (IsScheduledScanOn ? $"Scheduled: {ScheduledScanTask.Describe(ScheduledScan, ScheduledScanHour, ScheduledScanWeekday)} (for this Windows user). You get a notification with the result; nothing is deleted automatically." : "No scheduled scan.")
             : "Task Scheduler refused the change: " + error;
     }
 
     public async Task RefreshScheduleStatusAsync()
     {
+        var migration = await _services.Scheduler.MigrateLegacyAsync(ScheduledScan, ScheduledScanHour, ScheduledScanWeekday, CancellationToken.None);
+        if (!migration.Ok)
+        {
+            ScheduleStatusText = "Could not update the old scheduled scan: " + migration.Error;
+            return;
+        }
         if (!IsScheduledScanOn) { ScheduleStatusText = "No scheduled scan."; return; }
         var exists = await _services.Scheduler.ExistsAsync(CancellationToken.None);
         ScheduleStatusText = exists
@@ -237,25 +243,37 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand] private void OpenLogFile() => Dialogs.OpenFolder(AppPaths.LogFile);
 
     [RelayCommand]
-    private void ResetDefaults()
+    private async Task ResetDefaultsAsync()
     {
         if (!Dialogs.Confirm("Reset all settings to their defaults?\n\nThis also removes the Explorer context-menu entry, the Windows start-up entry and the scheduled scan.")) return;
         var theme = S.Theme;
-        bool hadContextMenu = S.ExplorerContextMenu, hadAutostart = S.StartWithWindows, hadSchedule = IsScheduledScanOn;
+        bool hadContextMenu = ExplorerContextMenu, hadAutostart = StartWithWindows;
+        var previousSchedule = (S.ScheduledScan, S.ScheduledScanHour, S.ScheduledScanWeekday);
+        var errors = new List<string>();
+        var contextResult = hadContextMenu ? ShellIntegration.Unregister() : (true, (string?)null);
+        if (!contextResult.Item1) errors.Add("Explorer context menu: " + contextResult.Item2);
+        var startupResult = hadAutostart ? StartupRegistration.Set(false) : (true, (string?)null);
+        if (!startupResult.Item1) errors.Add("Windows start-up entry: " + startupResult.Item2);
+        // Query actual Task Scheduler state even if the settings file says Off (Setup or an older copy may own it).
+        var scheduleResult = await _services.Scheduler.ApplyAsync("Off", 0, 0, CancellationToken.None);
+        if (!scheduleResult.Ok) errors.Add("Scheduled scan: " + scheduleResult.Error);
         var fresh = new AppSettings();
         foreach (var p in typeof(AppSettings).GetProperties())
         {
             if (p.Name == nameof(AppSettings.SettingsVersion) || !p.CanWrite) continue;
             p.SetValue(S, p.GetValue(fresh));
         }
+        if (!contextResult.Item1) S.ExplorerContextMenu = ShellIntegration.IsRegistered();
+        if (!startupResult.Item1) S.StartWithWindows = StartupRegistration.IsEnabled();
+        if (!scheduleResult.Ok)
+            (S.ScheduledScan, S.ScheduledScanHour, S.ScheduledScanWeekday) = previousSchedule;
         if (theme != S.Theme) App.ApplyTheme(S.Theme);
         Save();
         App.UiState.Scale = UiState.Clamp(S.UiScale);
-        if (hadContextMenu) ShellIntegration.Unregister();
-        if (hadAutostart) StartupRegistration.Set(false);
-        if (hadSchedule) _ = ApplyScheduleAsync(); else ScheduleStatusText = "No scheduled scan.";
+        ScheduleStatusText = scheduleResult.Ok ? "No scheduled scan." : "Could not remove the scheduled scan: " + scheduleResult.Error;
         App.Background.ApplySettings();
         ProgramsChanged = true;
         OnPropertyChanged(string.Empty);
+        if (errors.Count > 0) Dialogs.Error("Settings were reset, but some Windows integrations could not be removed:\n\n" + string.Join("\n", errors));
     }
 }

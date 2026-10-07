@@ -59,7 +59,7 @@ public static class RegistryBackupService
                     var raw = NativeMethods.ReadRawRegistryValue(key, item.ValueName);
                     if (raw is null) continue; // value already gone
                     itemBlocks.Add(new RegKeyBlock(RegFileFormat.KeyPath(item.Hive.Value, item.RegView, item.SubKey),
-                        new[] { new RegRawValue(item.ValueName, raw.Value.Type, raw.Value.Data) }));
+                        new[] { new RegRawValue(item.ValueName, raw.Value.Type, raw.Value.Data) }) { View = ExplicitView(item.RegView) });
                     result.ValuesExported++;
                 }
                 blocks.AddRange(itemBlocks);
@@ -93,7 +93,7 @@ public static class RegistryBackupService
             values.Add(new RegRawValue(name, raw.Value.Type, raw.Value.Data));
             if (++valueCount > MaxValuesPerItem) throw new InvalidOperationException("The key is too large to back up safely.");
         }
-        blocks.Add(new RegKeyBlock(RegFileFormat.KeyPath(hive, view, subKey), values));
+        blocks.Add(new RegKeyBlock(RegFileFormat.KeyPath(hive, view, subKey), values) { View = ExplicitView(view) });
         foreach (var child in key.GetSubKeyNames())
         {
             using var sub = key.OpenSubKey(child);
@@ -128,24 +128,48 @@ public static class RegistryBackupService
     {
         if (!File.Exists(file)) return (false, "The backup file no longer exists.");
         bool hklm;
-        try { hklm = File.ReadAllText(file).Contains("[HKEY_LOCAL_MACHINE", StringComparison.OrdinalIgnoreCase); }
+        IReadOnlyList<RegistryRestoreDocument> documents;
+        try
+        {
+            var content = File.ReadAllText(file);
+            hklm = content.Contains("[HKEY_LOCAL_MACHINE", StringComparison.OrdinalIgnoreCase)
+                || content.Contains("[HKEY_USERS", StringComparison.OrdinalIgnoreCase);
+            documents = RegFileFormat.RestoreDocuments(content);
+        }
         catch (Exception ex) { return (false, "Could not read the backup: " + ex.Message); }
         if (hklm && !ElevationHelper.IsElevated)
-            return (false, "This backup contains machine-wide entries (HKEY_LOCAL_MACHINE). Restart Evict as administrator to restore it.");
+            return (false, "This backup contains machine-wide or other-user entries. Restart Evict as administrator to restore it.");
         try
         {
             var reg = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "reg.exe");
-            var r = await ProcessRunner.RunCapturedAsync(reg, $"import \"{file}\"", ct, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
-            if (r.ExitCode == 0)
+            foreach (var document in documents)
             {
-                Log.Info("Registry backup restored: " + file);
-                return (true, "The registry entries were restored.");
+                // Import each logical path through its original registry view. This preserves shared-key exceptions.
+                var temporary = Path.Combine(Path.GetTempPath(), "Evict-registry-restore-" + Guid.NewGuid().ToString("N") + ".reg");
+                try
+                {
+                    await File.WriteAllBytesAsync(temporary, RegFileFormat.Encode(document.Document), ct).ConfigureAwait(false);
+                    var r = await ProcessRunner.RunCapturedAsync(reg, ImportArguments(temporary, document.View), ct, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+                    if (!r.Success)
+                    {
+                        var text = (r.StdErr + " " + r.StdOut).Trim().Replace("ERROR: ", "");
+                        return (false, $"reg import failed ({r.ExitCode}){(text.Length > 0 ? ": " + text : ".")}");
+                    }
+                }
+                finally { try { File.Delete(temporary); } catch { /* temporary import document only */ } }
             }
-            var text = (r.StdErr + " " + r.StdOut).Trim().Replace("ERROR: ", "");
-            return (false, $"reg import failed ({r.ExitCode}){(text.Length > 0 ? ": " + text : ".")}");
+            Log.Info("Registry backup restored: " + file);
+            return (true, "The registry entries were restored using their recorded registry views.");
         }
         catch (Exception ex) { return (false, ex.Message); }
     }
+
+    internal static string ImportArguments(string file, RegistryView view) => $"import \"{file}\"" +
+        (view switch { RegistryView.Registry32 => " /reg:32", RegistryView.Registry64 => " /reg:64", _ => "" });
+
+    private static RegistryView ExplicitView(RegistryView view) => view == RegistryView.Default
+        ? Environment.Is64BitProcess ? RegistryView.Registry64 : RegistryView.Registry32
+        : view;
 
     public static void Delete(string file)
     {

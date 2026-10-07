@@ -170,7 +170,8 @@ public sealed partial class MainViewModel : ObservableObject
             _services.Settings.Current.LastScheduledScanUtc = DateTime.UtcNow;
             _services.Settings.Save();
             int issues = health.IssueCount;
-            var title = issues == 0 ? $"Software Health {health.Score}/100 – all good" : $"Software Health {health.Score}/100 – {issues} item(s) need attention";
+            var title = health.Tiles.Any(t => t.State == TileState.Unavailable) ? "Software Health scan incomplete"
+                : issues == 0 ? $"Software Health {health.Score}/100 - all good" : $"Software Health {health.Score}/100 - {issues} item(s) need attention";
             Log.Info("Scheduled scan: " + health.NotificationSummary());
             Background.Notify(title, health.NotificationSummary() + ". Click to open Evict.", () => { ShowMainWindow(); Navigate(PageKey.Health); }, warning: issues > 0);
         }
@@ -258,6 +259,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         else
         {
+            if (!Program.RestoreSingleInstance()) { App.Quit(); return; }
             Dialogs.Info("Administrator rights were not granted. You can keep using Evict, but some operations will be limited.");
         }
     }

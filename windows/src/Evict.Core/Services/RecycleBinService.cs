@@ -1,5 +1,6 @@
 using System.Security.Principal;
 using System.Text;
+using Evict.Core.Util;
 
 namespace Evict.Core.Services;
 
@@ -43,8 +44,10 @@ public static class RecycleBinService
     public sealed class RestoreResult
     {
         public int Restored { get; set; }
+        public List<string> RestoredPaths { get; } = new();
         public List<string> NotFound { get; } = new();
         public List<string> Errors { get; } = new();
+        public List<string> Warnings { get; } = new();
     }
 
     /// <summary>
@@ -93,16 +96,26 @@ public static class RecycleBinService
                 if (File.Exists(path) || Directory.Exists(path)) { result.Errors.Add($"{path}: something with this name exists again – left in the Recycle Bin."); continue; }
                 var parent = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
-                if (Directory.Exists(item)) Directory.Move(item, path);
-                else if (File.Exists(item)) File.Move(item, path);
+                if (Directory.Exists(item)) RestoreItem(item, path, rec.InfoFile, result, Directory.Move);
+                else if (File.Exists(item)) RestoreItem(item, path, rec.InfoFile, result, File.Move);
                 else { result.NotFound.Add(path); continue; }
-                File.Delete(rec.InfoFile);
-                result.Restored++;
             }
             catch (Exception ex) { result.Errors.Add($"{path}: {ex.Message}"); }
         }
         return result;
     }
 
-    private static string Normalize(string path) => path.Trim().TrimEnd('\\');
+    // Moving the data is the restore. A stale metadata record cannot make that successful move retryable.
+    internal static void RestoreItem(string item, string path, string infoFile, RestoreResult result,
+        Action<string, string> moveItem, Action<string>? deleteInfo = null)
+    {
+        moveItem(item, path);
+        result.Restored++;
+        result.RestoredPaths.Add(path);
+        try { (deleteInfo ?? File.Delete)(infoFile); }
+        catch (Exception ex) { result.Warnings.Add($"{path}: restored, but its old Recycle Bin metadata could not be removed: {ex.Message}"); }
+    }
+
+    private static string Normalize(string path) => PathUtil.TryCanonicalizeAbsolute(path, out var canonical)
+        ? canonical : path.Trim().TrimEnd('\\');
 }

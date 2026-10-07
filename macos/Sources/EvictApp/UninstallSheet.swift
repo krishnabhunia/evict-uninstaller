@@ -8,6 +8,7 @@ struct UninstallSheet: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var step: Step = .review
+    @State private var confirmingRemoval = false
 
     enum Step { case review, working, done }
 
@@ -23,13 +24,20 @@ struct UninstallSheet: View {
             footer
         }
         .frame(width: 720, height: 560)
+        .interactiveDismissDisabled(step == .working || state.isRemoving)
+        .confirmationDialog("Move \(selectedItems.count) selected items to the Trash?", isPresented: $confirmingRemoval) {
+            Button("Move to Trash", role: .destructive) { startRemoval() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Review shared or uncertain matches before continuing. Items stay in the Trash until you empty it.")
+        }
     }
 
     private var header: some View {
         HStack(spacing: 12) {
             AppIcon(bundlePath: plan.app.bundlePath, size: 40)
             VStack(alignment: .leading, spacing: 2) {
-                Text(step == .done ? "Removed \(plan.app.name)" : "Uninstall \(plan.app.name)")
+                Text(step == .done ? "Removal results for \(plan.app.name)" : "Uninstall \(plan.app.name)")
                     .font(.title3).bold()
                 Text(subtitle).font(.callout).foregroundStyle(.secondary)
             }
@@ -46,7 +54,7 @@ struct UninstallSheet: View {
             return "Moving items to the Trash…"
         case .done:
             guard let result = state.removalResult else { return "" }
-            return "\(result.succeededCount) items removed · \(ByteFormat.string(result.bytesFreed)) freed"
+            return "\(result.succeededCount) items moved to Trash · \(ByteFormat.string(result.bytesFreed)) moved"
         }
     }
 
@@ -93,12 +101,18 @@ struct UninstallSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 if let result = state.removalResult {
-                    Label("\(result.succeededCount) items moved to the Trash, \(ByteFormat.string(result.bytesFreed)) freed. Nothing was deleted permanently – you can put anything back from the Trash.",
-                          systemImage: "checkmark.circle")
+                    Label("\(result.succeededCount) items moved to the Trash (\(ByteFormat.string(result.bytesFreed))). Disk space is reclaimed when the Trash is emptied. You can restore the moved items from the Trash.",
+                          systemImage: result.failed.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
                         .font(.callout)
 
+                    if let bundle = plan.bundleItem, !result.trashed.contains(bundle.path) {
+                        Label("The application bundle was not removed. Only successful selected items were moved.",
+                              systemImage: "app.badge")
+                            .font(.callout).foregroundStyle(.orange)
+                    }
+
                     if result.needsAdminCount > 0 {
-                        Label("\(result.needsAdminCount) item(s) sit outside your home folder and need an administrator. Re-run Evict with administrator rights, or remove them in the Finder.",
+                        Label("\(result.needsAdminCount) item(s) require administrator authorization. For files, use Finder to authorize the move; for installer receipts, follow the command listed below.",
                               systemImage: "lock")
                             .font(.callout)
                             .foregroundStyle(.orange)
@@ -133,19 +147,26 @@ struct UninstallSheet: View {
             Spacer()
             Button(step == .done ? "Close" : "Cancel") { dismiss() }
                 .keyboardShortcut(.cancelAction)
+                .disabled(step == .working || state.isRemoving)
             if step == .review {
                 Button("Move to Trash") {
-                    step = .working
-                    Task {
-                        await state.performRemoval()
-                        step = .done
-                    }
+                    if state.settings.confirmBeforeRemoving { confirmingRemoval = true }
+                    else { startRemoval() }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(selectedItems.isEmpty)
             }
         }
         .padding(16)
+    }
+
+    private func startRemoval() {
+        guard !state.isRemoving, !selectedItems.isEmpty else { return }
+        step = .working
+        Task {
+            await state.performRemoval()
+            step = .done
+        }
     }
 }
 
@@ -162,6 +183,7 @@ private struct LeftoverRow: View {
             }
             Spacer()
             if item.needsAdmin { Chip(text: "Admin", tint: .orange) }
+            if item.isSharedVendorMatch == true { Chip(text: "Shared vendor", tint: .orange) }
             Chip(text: item.confidence.label, tint: item.confidence.tint)
             Text(ByteFormat.string(item.sizeBytes))
                 .font(.caption.monospacedDigit())

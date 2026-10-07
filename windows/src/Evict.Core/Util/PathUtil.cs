@@ -1,3 +1,7 @@
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
 namespace Evict.Core.Util;
 
 public static class PathUtil
@@ -32,26 +36,142 @@ public static class PathUtil
 
     public static bool IsUnder(string? path, string? root)
     {
-        if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(root)) return false;
-        var p = NormalizeForCompare(path);
-        var r = NormalizeForCompare(root);
-        if (r.Length == 0) return false;
+        if (!TryCanonicalizeAbsolute(path, out var p) || !TryCanonicalizeAbsolute(root, out var r)) return false;
+        p = p.Replace('/', '\\');
+        r = r.Replace('/', '\\');
         if (!r.EndsWith('\\')) r += "\\";
         return (p + "\\").StartsWith(r, StringComparison.OrdinalIgnoreCase);
     }
 
-    public static string NormalizeForCompare(string path)
+    public static string NormalizeForCompare(string path) => TryCanonicalizeAbsolute(path, out var canonical) ? canonical : "";
+
+    /// <summary>Canonical absolute path, independent of the current directory. Ambiguous Win32 spellings fail closed.</summary>
+    public static bool TryCanonicalizeAbsolute(string? path, out string canonical)
     {
-        var p = path.Trim().Trim('"').Replace('/', '\\');
-        while (p.Length > 3 && p.EndsWith('\\')) p = p[..^1];
-        return p;
+        canonical = "";
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        var cleaned = Environment.ExpandEnvironmentVariables(path.Trim().Trim('"').Trim());
+        if (cleaned.Length == 0) return false;
+        var p = cleaned.Replace('/', '\\');
+        if (p.StartsWith(@"\\?\") || p.StartsWith(@"\\.\") || p.Any(c => c < ' ' || "<>\"|?*".Contains(c))) return false;
+        string root;
+        string rest;
+        if (p.Length >= 3 && char.IsLetter(p[0]) && p[1] == ':' && p[2] == '\\')
+        {
+            root = char.ToUpperInvariant(p[0]) + @":\";
+            rest = p[3..];
+        }
+        else if (p.StartsWith(@"\\"))
+        {
+            var parts = p[2..].Split('\\', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2 || parts.Take(2).Any(s => s is "." or ".." || s.EndsWith('.') || s.EndsWith(' ') || s.Contains(':'))) return false;
+            root = @"\\" + parts[0] + "\\" + parts[1];
+            rest = string.Join("\\", parts.Skip(2));
+        }
+        else if (!OperatingSystem.IsWindows() && cleaned.StartsWith('/'))
+        {
+            try { canonical = Path.GetFullPath(cleaned).TrimEnd('/'); if (canonical.Length == 0) canonical = "/"; return true; }
+            catch { return false; }
+        }
+        else return false; // drive-relative paths (C:Foo), rooted-relative paths and ordinary relative paths
+
+        var segments = new List<string>();
+        foreach (var segment in rest.Split('\\', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == ".") continue;
+            if (segment == "..")
+            {
+                if (segments.Count > 0) segments.RemoveAt(segments.Count - 1);
+                continue;
+            }
+            if (segment.EndsWith('.') || segment.EndsWith(' ') || segment.Contains(':')) return false;
+            segments.Add(segment);
+        }
+        canonical = root.TrimEnd('\\') + (segments.Count > 0 ? "\\" + string.Join("\\", segments) : root.EndsWith('\\') ? "\\" : "");
+        if (OperatingSystem.IsWindows()) canonical = ExpandShortPath(canonical);
+        return true;
+    }
+
+    private static string ExpandShortPath(string path)
+    {
+        var existing = path;
+        var suffix = new Stack<string>();
+        while (!string.IsNullOrEmpty(existing))
+        {
+            var buffer = new StringBuilder(260);
+            uint length = GetLongPathName(existing, buffer, (uint)buffer.Capacity);
+            if (length >= buffer.Capacity && length < 32768)
+            {
+                buffer = new StringBuilder((int)length + 1);
+                length = GetLongPathName(existing, buffer, (uint)buffer.Capacity);
+            }
+            if (length > 0 && length < buffer.Capacity)
+            {
+                var expanded = buffer.ToString();
+                foreach (var segment in suffix) expanded = Path.Combine(expanded, segment);
+                return expanded;
+            }
+            var parent = Path.GetDirectoryName(existing);
+            if (string.IsNullOrEmpty(parent) || parent == existing) break;
+            suffix.Push(Path.GetFileName(existing));
+            existing = parent;
+        }
+        return path;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);
+
+    /// <summary>Checks the object actually opened before a destructive write, including a concurrent parent link swap.</summary>
+    internal static bool OpenedFileMatchesPath(SafeFileHandle handle, string expectedPath)
+    {
+        if (!OperatingSystem.IsWindows()) return !HasReparsePoint(expectedPath);
+        if (!GetFileInformationByHandle(handle, out var information) || information.NumberOfLinks != 1) return false;
+        var buffer = new StringBuilder(32768);
+        var length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+        if (length == 0 || length >= buffer.Capacity) return false;
+        var actual = buffer.ToString();
+        if (actual.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) actual = @"\\" + actual[8..];
+        else if (actual.StartsWith(@"\\?\")) actual = actual[4..];
+        return IsUnder(actual, expectedPath) && IsUnder(expectedPath, actual);
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint bufferLength, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct OpenedFileInformation
+    {
+        public uint Attributes;
+        public uint CreationLow, CreationHigh, AccessLow, AccessHigh, WriteLow, WriteHigh;
+        public uint VolumeSerialNumber, SizeHigh, SizeLow, NumberOfLinks, IndexHigh, IndexLow;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out OpenedFileInformation information);
+
+    /// <summary>True if an existing path component is a junction/symlink, or cannot be safely inspected.</summary>
+    public static bool HasReparsePoint(string path)
+    {
+        if (!TryCanonicalizeAbsolute(path, out var p)) return true;
+        while (!string.IsNullOrEmpty(p))
+        {
+            try { if ((File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0) return true; }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+            catch { return true; }
+            var parent = Path.GetDirectoryName(p);
+            if (parent == p) break;
+            p = parent ?? "";
+        }
+        return false;
     }
 
     /// <summary>Depth of a path from its root: "C:\" → 0, "C:\Program Files" → 1, "C:\Program Files\Foo" → 2.</summary>
     /// <remarks>Implemented without <see cref="Path"/> so the logic is identical (and testable) on every OS.</remarks>
     public static int Depth(string path)
     {
-        var p = NormalizeForCompare(path);
+        var p = NormalizeForCompare(path).Replace('/', '\\');
         string rest;
         if (p.Length >= 2 && char.IsLetter(p[0]) && p[1] == ':')
             rest = p[2..];                                   // drive-letter path
@@ -78,6 +198,7 @@ public static class PathUtil
     public static string? ParentPath(string? path)
     {
         if (string.IsNullOrEmpty(path)) return null;
+        if (!OperatingSystem.IsWindows() && path.StartsWith('/')) return Path.GetDirectoryName(path.TrimEnd('/'));
         var p = path.Replace('/', '\\').TrimEnd('\\');
         int i = p.LastIndexOf('\\');
         if (i <= 0) return null;
@@ -88,7 +209,7 @@ public static class PathUtil
     /// <summary>Paths that must never be deleted as a whole, regardless of what a scanner thinks.</summary>
     public static bool IsProtectedRoot(string path, bool checkProtectedNames = true)
     {
-        var p = NormalizeForCompare(path);
+        if (!TryCanonicalizeAbsolute(path, out var p) || HasReparsePoint(p)) return true;
         if (Depth(p) <= 1) return true; // drive roots and first-level folders (Program Files, Users, Windows…)
 
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);

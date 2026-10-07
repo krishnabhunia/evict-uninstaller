@@ -28,13 +28,13 @@ public struct AppInventory {
 
     /// Every `.app` bundle in the application folders, one level of grouping folders included
     /// (`/Applications/Vendor/App.app`).
-    public func bundlePaths(includeSystemApps: Bool) -> [String] {
+    public func bundlePaths(includeSystemApps: Bool, folders: [String]? = nil) -> [String] {
         let fm = FileManager.default
         var found: [String] = []
-        var folders = AppPaths.applicationFolders
-        if includeSystemApps { folders.append("/System/Applications") }
+        var scanFolders = folders ?? AppPaths.applicationFolders
+        if includeSystemApps { scanFolders.append("/System/Applications") }
 
-        for folder in folders {
+        for folder in scanFolders {
             guard let entries = try? fm.contentsOfDirectory(atPath: folder) else { continue }
             for entry in entries.sorted() {
                 let path = folder + "/" + entry
@@ -48,7 +48,21 @@ public struct AppInventory {
                 }
             }
         }
-        return found
+        var seen = Set<String>()
+        return found.compactMap { path in
+            let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+            return seen.insert(normalized).inserted ? normalized : nil
+        }
+    }
+
+    /// Validate a dropped application's structure before treating it as a removal target.
+    public static func validBundlePath(_ path: String) -> String? {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        var isDirectory: ObjCBool = false
+        guard (normalized as NSString).pathExtension.lowercased() == "app",
+              FileManager.default.fileExists(atPath: normalized, isDirectory: &isDirectory), isDirectory.boolValue,
+              Plist.read(atPath: normalized + "/Contents/Info.plist") != nil else { return nil }
+        return normalized
     }
 
     /// Reads one bundle's `Info.plist` and works out where it came from.
@@ -78,9 +92,15 @@ public struct AppInventory {
             receiptIdentifiers: matchedReceipts)
     }
 
-    private func source(bundlePath: String, bundleID: String?, receipts: [String], casks: [String]) -> AppSource {
-        if bundlePath.hasPrefix("/System/") || SafePaths.isInside(bundlePath, root: "/Applications/Utilities") { return .system }
-        if let id = bundleID, id.lowercased().hasPrefix("com.apple.") { return .system }
+    func source(bundlePath: String, bundleID: String?, receipts: [String], casks: [String]) -> AppSource {
+        let original = URL(fileURLWithPath: bundlePath).standardizedFileURL.path
+        let resolved = URL(fileURLWithPath: bundlePath).resolvingSymlinksInPath().standardizedFileURL.path
+        // Preserve protected locations even when the bundle is a link. The writable Data
+        // volume is not a system application source merely because its path starts /System.
+        let protectedOriginal = SafePaths.systemRoots.contains { SafePaths.isInside(original, root: $0) }
+        let protectedResolved = !SafePaths.isInside(resolved, root: "/System/Volumes/Data") &&
+            SafePaths.systemRoots.contains { SafePaths.isInside(resolved, root: $0) }
+        if protectedOriginal || protectedResolved { return .system }
         if FileManager.default.fileExists(atPath: bundlePath + "/Contents/_MASReceipt/receipt") { return .appStore }
         if HomebrewService.cask(forBundlePath: bundlePath, casks: casks) != nil { return .homebrewCask }
         if let id = bundleID, receipts.contains(where: { NameMatching.matchesBundleIdentifier($0, bundleIdentifier: id) }) { return .installerPkg }

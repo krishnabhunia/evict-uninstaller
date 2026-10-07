@@ -324,11 +324,12 @@
                 <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
                 <TextBlock Text="·" Margin="8,0" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center" Visibility="{Binding SelectedCount, Converter={StaticResource BoolToVis}}" />
                 <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}" FontWeight="SemiBold" Visibility="{Binding SelectedCount, Converter={StaticResource BoolToVis}}"
-                           Text="{Binding SelectedCount, Converter={StaticResource CountLabel}, ConverterParameter='program selected|programs selected'}" />
+                           Text="{Binding SelectionSummary}" />
                 <Button Style="{StaticResource Button.Link}" Content="Clear" Command="{Binding ClearSelectionCommand}" Margin="10,0,0,0" VerticalAlignment="Center"
                         Visibility="{Binding SelectedCount, Converter={StaticResource BoolToVis}}" />
             </StackPanel>
-            <Button Grid.Column="1" Style="{StaticResource Button.Danger}" Command="{Binding UninstallSelectedCommand}" MinWidth="200" Padding="18,9">
+            <Button Grid.Column="1" Style="{StaticResource Button.Danger}" Command="{Binding UninstallSelectedCommand}" MinWidth="200" Padding="18,9"
+                    ToolTip="{Binding SelectionSummary}">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="15" Foreground="White" />
                     <TextBlock Margin="9,0,0,0">

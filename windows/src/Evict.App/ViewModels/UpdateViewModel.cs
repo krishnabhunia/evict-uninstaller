@@ -77,7 +77,13 @@ public sealed partial class UpdateViewModel : ObservableObject
             StatusText = InstalledMode ? "Starting the installer…" : "Replacing Evict.exe…";
             await Task.Delay(300, ct);
 
-            var (ok, error) = _services.Updater.Apply(path, InstalledMode, beforeRestart: Program.ReleaseSingleInstance);
+            var (ok, error) = _services.Updater.Apply(path, InstalledMode, beforeRestart: Program.ReleaseSingleInstance,
+                restartFailed: () =>
+                {
+                    if (Program.RestoreSingleInstance()) return;
+                    App.Quit();
+                    throw new InvalidOperationException("Another Evict instance opened during the failed update. This instance will close; reopen Evict to continue.");
+                });
             if (ok)
             {
                 _services.Settings.Current.SkippedUpdateVersion = null;

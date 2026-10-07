@@ -75,6 +75,15 @@ public static partial class NameNormalizer
     [GeneratedRegex(@"(?<![\p{L}\p{Nd}])(?:v|ver\.?|version)?\s*\d+(?:\.\d+){1,3}[a-z0-9\-]*(?![\p{L}\p{Nd}])", RegexOptions.IgnoreCase)]
     private static partial Regex VersionRegex();
 
+    /// <summary>Different explicit versions are different products even if their comparison keys coincide.</summary>
+    internal static bool HasConflictingVersion(string candidate, string target)
+    {
+        var candidateVersions = VersionRegex().Matches(candidate).Select(m => m.Value.Trim()).ToList();
+        var targetVersions = VersionRegex().Matches(target).Select(m => m.Value.Trim()).ToList();
+        return candidateVersions.Count > 0 && targetVersions.Count > 0
+            && !candidateVersions.Intersect(targetVersions, StringComparer.OrdinalIgnoreCase).Any();
+    }
+
     [GeneratedRegex(@"[^\p{L}\p{Nd}\s\-_\.\+#]")]
     private static partial Regex PunctuationRegex();
 

@@ -406,14 +406,20 @@ public sealed class BrowserExtensionService
         }
     }
 
-    private static (bool, string) RemoveChromium(BrowserExtensionInfo ext)
+    internal static (bool, string) RemoveChromium(BrowserExtensionInfo ext)
     {
+        if (ext.ExtensionId.Length != 32 || ext.ExtensionId.Any(c => c < 'a' || c > 'p'))
+            return (false, "The extension ID is invalid.");
+        if (!PathUtil.TryCanonicalizeAbsolute(ext.ProfilePath, out var profile) || PathUtil.IsProtectedRoot(profile, checkProtectedNames: false))
+            return (false, "The browser profile cannot be safely accessed.");
         var notes = new List<string>();
+        var errors = new List<string>();
         // 1. Preferences files – remove the settings entry and its integrity MAC.
         foreach (var prefFile in new[] { "Preferences", "Secure Preferences" })
         {
             var path = Path.Combine(ext.ProfilePath, prefFile);
             if (!File.Exists(path)) continue;
+            if (PathUtil.HasReparsePoint(path)) return (false, "A browser preference file points outside the profile.");
             try
             {
                 var node = JsonNode.Parse(File.ReadAllText(path));
@@ -438,8 +444,9 @@ public sealed class BrowserExtensionService
                     notes.Add($"updated {prefFile}");
                 }
             }
-            catch (Exception ex) { notes.Add($"{prefFile}: {ex.Message}"); }
+            catch (Exception ex) { errors.Add($"{prefFile}: {ex.Message}"); }
         }
+        if (errors.Count > 0) return (false, "Could not update browser preferences: " + string.Join("; ", errors));
 
         // 2. Extension files and per-extension storage.
         foreach (var dir in new[]
@@ -453,22 +460,43 @@ public sealed class BrowserExtensionService
         })
         {
             if (!Directory.Exists(dir)) continue;
-            try { Directory.Delete(dir, recursive: true); notes.Add("deleted " + Path.GetFileName(Path.GetDirectoryName(dir)!)); }
-            catch (Exception ex) { notes.Add($"{dir}: {ex.Message}"); }
+            try { DeleteOwnedDirectory(dir, profile); notes.Add("deleted " + Path.GetFileName(Path.GetDirectoryName(dir)!)); }
+            catch (Exception ex) { errors.Add($"{dir}: {ex.Message}"); }
         }
-        if (!string.IsNullOrEmpty(ext.ExtensionPath) && Directory.Exists(ext.ExtensionPath))
-        {
-            try { Directory.Delete(ext.ExtensionPath, true); } catch { /* unpacked extension elsewhere – leave it */ }
-        }
+        // ExtensionPath may be an unpacked developer project. Only the browser-owned directories above
+        // are removable; unregistering an extension never grants ownership of its source directory.
         Log.Info($"Removed extension {ext.Name} ({ext.ExtensionId}) from {ext.BrowserDisplayName}/{ext.ProfileName}: {string.Join(", ", notes)}");
+        if (errors.Count > 0) return (false, "Entry removed, but some browser storage could not be deleted: " + string.Join("; ", errors));
         return (true, "Removed. The browser will drop the extension on next start.");
+    }
+
+    private static void DeleteOwnedDirectory(string directory, string profile)
+    {
+        if (!PathUtil.IsUnder(directory, profile) || PathUtil.HasReparsePoint(directory))
+            throw new IOException("Refusing to follow a link outside browser storage.");
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            var attributes = File.GetAttributes(entry);
+            if ((attributes & FileAttributes.Directory) != 0)
+            {
+                if ((attributes & FileAttributes.ReparsePoint) != 0) Directory.Delete(entry, false);
+                else DeleteOwnedDirectory(entry, profile);
+            }
+            else File.Delete(entry); // deleting a file link unlinks it; it does not modify its target
+        }
+        Directory.Delete(directory, false);
     }
 
     private static (bool, string) RemoveFirefox(BrowserExtensionInfo ext)
     {
+        if (!PathUtil.TryCanonicalizeAbsolute(ext.ProfilePath, out var profile) || PathUtil.IsProtectedRoot(profile, checkProtectedNames: false))
+            return (false, "The browser profile cannot be safely accessed.");
+        if (ext.ExtensionId is "." or ".." || ext.ExtensionId.IndexOfAny(new[] { '\\', '/', ':' }) >= 0)
+            return (false, "The extension ID is invalid.");
         var file = Path.Combine(ext.ProfilePath, "extensions.json");
         if (File.Exists(file))
         {
+            if (PathUtil.HasReparsePoint(file)) return (false, "The browser extension list points outside the profile.");
             var node = JsonNode.Parse(File.ReadAllText(file));
             if (node?["addons"] is JsonArray addons)
             {
@@ -480,13 +508,18 @@ public sealed class BrowserExtensionService
                 File.WriteAllText(file, node!.ToJsonString());
             }
         }
-        var xpi = ext.ExtensionPath ?? Path.Combine(ext.ProfilePath, "extensions", ext.ExtensionId + ".xpi");
+        var storage = Path.Combine(ext.ProfilePath, "extensions");
+        var xpi = ext.ExtensionPath ?? Path.Combine(storage, ext.ExtensionId + ".xpi");
         try
         {
-            if (File.Exists(xpi)) File.Delete(xpi);
-            else if (Directory.Exists(xpi)) Directory.Delete(xpi, true);
+            // Firefox can also load a development extension outside its profile.
+            if (PathUtil.IsUnder(xpi, storage) && !PathUtil.HasReparsePoint(xpi))
+            {
+                if (File.Exists(xpi)) File.Delete(xpi);
+                else if (Directory.Exists(xpi)) DeleteOwnedDirectory(xpi, ext.ProfilePath);
+            }
         }
-        catch (Exception ex) { return (true, "Entry removed, but the add-on file could not be deleted: " + ex.Message); }
+        catch (Exception ex) { return (false, "Entry removed, but the add-on file could not be deleted: " + ex.Message); }
         // Firefox rebuilds addonStartup.json.lz4 from extensions.json on launch.
         var startup = Path.Combine(ext.ProfilePath, "addonStartup.json.lz4");
         try { if (File.Exists(startup)) File.Delete(startup); } catch { /* ignore */ }

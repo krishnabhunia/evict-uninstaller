@@ -50,14 +50,51 @@ public class RegistryBackupTests
     }
 
     [Theory]
-    [InlineData(RegistryHive.LocalMachine, RegistryView.Registry32, @"SOFTWARE\Foo", @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Foo")]
+    [InlineData(RegistryHive.LocalMachine, RegistryView.Registry32, @"SOFTWARE\Foo", @"HKEY_LOCAL_MACHINE\SOFTWARE\Foo")]
     [InlineData(RegistryHive.LocalMachine, RegistryView.Registry64, @"SOFTWARE\Foo", @"HKEY_LOCAL_MACHINE\SOFTWARE\Foo")]
     [InlineData(RegistryHive.LocalMachine, RegistryView.Registry32, @"SOFTWARE\WOW6432Node\Foo", @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Foo")]
     [InlineData(RegistryHive.LocalMachine, RegistryView.Registry32, @"SYSTEM\X", @"HKEY_LOCAL_MACHINE\SYSTEM\X")]
     [InlineData(RegistryHive.CurrentUser, RegistryView.Registry32, @"\Software\Foo\", @"HKEY_CURRENT_USER\Software\Foo")]
-    public void KeyPath_MapsWow64(RegistryHive hive, RegistryView view, string sub, string expected)
+    public void KeyPath_PreservesLogicalLocation(RegistryHive hive, RegistryView view, string sub, string expected)
     {
         Assert.Equal(expected, RegFileFormat.KeyPath(hive, view, sub));
+    }
+
+    [Fact]
+    public void Mixed_view_backups_preserve_shared_key_paths_and_restore_each_view_explicitly()
+    {
+        const string applications = @"HKEY_LOCAL_MACHINE\SOFTWARE\Classes\Applications\fixture.exe";
+        const string appPaths = @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\fixture.exe";
+        var document = RegFileFormat.BuildDocument(new[]
+        {
+            new RegKeyBlock(applications, new[] { RegFileFormat.String("", "32-bit fixture") }) { View = RegistryView.Registry32 },
+            new RegKeyBlock(appPaths, Array.Empty<RegRawValue>()) { View = RegistryView.Registry32 },
+            new RegKeyBlock(applications, new[] { RegFileFormat.String("", "64-bit fixture") }) { View = RegistryView.Registry64 },
+        });
+        Assert.Contains(RegFileFormat.RestoreHint, document);
+        Assert.DoesNotContain("WOW6432Node", document);
+        var parts = RegFileFormat.RestoreDocuments(document);
+        Assert.Equal(2, parts.Count);
+        var x86 = Assert.Single(parts, p => p.View == RegistryView.Registry32);
+        var x64 = Assert.Single(parts, p => p.View == RegistryView.Registry64);
+        Assert.Contains(applications, x86.Document);
+        Assert.Contains(appPaths, x86.Document);
+        Assert.Contains("32-bit fixture", x86.Document);
+        Assert.DoesNotContain("64-bit fixture", x86.Document);
+        Assert.Contains("64-bit fixture", x64.Document);
+        Assert.EndsWith(" /reg:32", Evict.Core.Services.RegistryBackupService.ImportArguments("fixture.reg", x86.View));
+        Assert.EndsWith(" /reg:64", Evict.Core.Services.RegistryBackupService.ImportArguments("fixture.reg", x64.View));
+    }
+
+    [Fact]
+    public void Legacy_backup_keeps_default_view_and_malformed_view_metadata_is_rejected()
+    {
+        var legacy = RegFileFormat.BuildDocument(new[] { new RegKeyBlock(@"HKEY_CURRENT_USER\Software\Fixture", Array.Empty<RegRawValue>()) });
+        var part = Assert.Single(RegFileFormat.RestoreDocuments(legacy));
+        Assert.Equal(RegistryView.Default, part.View);
+        Assert.Equal(legacy, part.Document);
+        Assert.Equal("import \"fixture.reg\"", Evict.Core.Services.RegistryBackupService.ImportArguments("fixture.reg", part.View));
+        Assert.Throws<FormatException>(() => RegFileFormat.RestoreDocuments(RegFileFormat.Header + "\r\n" + RegFileFormat.ViewMarker + "invalid\r\n[HKEY_CURRENT_USER\\Software\\Fixture]"));
     }
 
     [Fact]
