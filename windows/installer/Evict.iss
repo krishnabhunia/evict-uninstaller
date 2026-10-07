@@ -114,32 +114,33 @@ const
   EvictSharingViolation = 32;
   EvictLockViolation = 33;
 
-// These declarations use Inno's pointer-sized HANDLE/UINT_PTR and Win32 BOOL/DWORD types.
+// Win32 BOOL is a signed 32-bit integer; use Integer and explicit zero comparisons.
+// HANDLE/UINT_PTR remain pointer-sized, and DWORD values retain their native width.
 function EvictCreateFile(Name: String; Access, Share: DWORD; Security: UINT_PTR;
   Creation, Attributes: DWORD; Template: THandle): THandle;
   external 'CreateFileW@kernel32.dll stdcall';
-function EvictCloseHandle(Handle: THandle): BOOL;
+function EvictCloseHandle(Handle: THandle): Integer;
   external 'CloseHandle@kernel32.dll stdcall';
-function EvictWaitNamedPipe(Name: String; Timeout: DWORD): BOOL;
+function EvictWaitNamedPipe(Name: String; Timeout: DWORD): Integer;
   external 'WaitNamedPipeW@kernel32.dll stdcall';
 function EvictSetPipeState(Pipe: THandle; var Mode: DWORD;
-  CollectionCount, CollectionTimeout: UINT_PTR): BOOL;
+  CollectionCount, CollectionTimeout: UINT_PTR): Integer;
   external 'SetNamedPipeHandleState@kernel32.dll stdcall';
 function EvictWriteFile(Handle: THandle; Buffer: AnsiString; Count: DWORD;
-  var Written: DWORD; Overlapped: UINT_PTR): BOOL;
+  var Written: DWORD; Overlapped: UINT_PTR): Integer;
   external 'WriteFile@kernel32.dll stdcall';
-function EvictGetPipeServerPid(Pipe: THandle; var Pid: DWORD): BOOL;
+function EvictGetPipeServerPid(Pipe: THandle; var Pid: DWORD): Integer;
   external 'GetNamedPipeServerProcessId@kernel32.dll stdcall';
-function EvictOpenProcess(Access: DWORD; Inherit: BOOL; Pid: DWORD): THandle;
+function EvictOpenProcess(Access: DWORD; Inherit: Integer; Pid: DWORD): THandle;
   external 'OpenProcess@kernel32.dll stdcall';
 function EvictQueryProcessImage(Process: THandle; Flags: DWORD; Name: String;
-  var Size: DWORD): BOOL;
+  var Size: DWORD): Integer;
   external 'QueryFullProcessImageNameW@kernel32.dll stdcall';
 function EvictWaitForProcess(Process: THandle; Timeout: DWORD): DWORD;
   external 'WaitForSingleObject@kernel32.dll stdcall';
 function EvictCurrentPid(): DWORD;
   external 'GetCurrentProcessId@kernel32.dll stdcall';
-function EvictProcessSession(Pid: DWORD; var Session: DWORD): BOOL;
+function EvictProcessSession(Pid: DWORD; var Session: DWORD): Integer;
   external 'ProcessIdToSessionId@kernel32.dll stdcall';
 
 function CloseFailureMessage(): String;
@@ -162,7 +163,7 @@ var
 begin
   Result := False;
   Process := 0;
-  if not EvictWaitNamedPipe(EvictPipe, 2500) then
+  if EvictWaitNamedPipe(EvictPipe, 2500) = 0 then
   begin
     ErrorCode := DLLGetLastError;
     Log('Evict exit pipe unavailable; Windows error ' + IntToStr(ErrorCode));
@@ -177,19 +178,30 @@ begin
     exit;
   end;
   try
-    if not EvictGetPipeServerPid(Pipe, Pid) then
+    if EvictGetPipeServerPid(Pipe, Pid) = 0 then
     begin
       ErrorCode := DLLGetLastError;
       Log('Could not identify Evict pipe server; Windows error ' + IntToStr(ErrorCode));
       exit;
     end;
-    if not EvictProcessSession(Pid, Session) or
-       not EvictProcessSession(EvictCurrentPid(), SetupSession) or (Session <> SetupSession) then
+    if EvictProcessSession(Pid, Session) = 0 then
+    begin
+      ErrorCode := DLLGetLastError;
+      Log('Could not read Evict pipe server session; Windows error ' + IntToStr(ErrorCode));
+      exit;
+    end;
+    if EvictProcessSession(EvictCurrentPid(), SetupSession) = 0 then
+    begin
+      ErrorCode := DLLGetLastError;
+      Log('Could not read Setup session; Windows error ' + IntToStr(ErrorCode));
+      exit;
+    end;
+    if Session <> SetupSession then
     begin
       Log('Refusing to close a pipe server outside this Windows session.');
       exit;
     end;
-    Process := EvictOpenProcess(EvictSynchronize or EvictQueryLimitedInformation, False, Pid);
+    Process := EvictOpenProcess(EvictSynchronize or EvictQueryLimitedInformation, 0, Pid);
     if Process = 0 then
     begin
       ErrorCode := DLLGetLastError;
@@ -198,7 +210,7 @@ begin
     end;
     ImageSize := 32768;
     SetLength(Image, ImageSize);
-    if not EvictQueryProcessImage(Process, 0, Image, ImageSize) then
+    if EvictQueryProcessImage(Process, 0, Image, ImageSize) = 0 then
     begin
       ErrorCode := DLLGetLastError;
       Log('Could not read Evict pipe server image; Windows error ' + IntToStr(ErrorCode));
@@ -213,7 +225,7 @@ begin
     Log('Asking Evict to exit gracefully: PID ' + IntToStr(Pid) + ', ' + Image);
     // Nonblocking byte mode makes the tiny WriteFile return immediately, even if the app is stuck.
     Mode := EvictPipeNowait;
-    if not EvictSetPipeState(Pipe, Mode, 0, 0) then
+    if EvictSetPipeState(Pipe, Mode, 0, 0) = 0 then
     begin
       ErrorCode := DLLGetLastError;
       Log('Could not make Evict exit pipe nonblocking; Windows error ' + IntToStr(ErrorCode));
@@ -221,12 +233,17 @@ begin
     end;
     Payload := Utf8Encode('--exit');
     Written := 0;
-    if not EvictWriteFile(Pipe, Payload, Length(Payload), Written, 0) or
-       (Written <> DWORD(Length(Payload))) then
+    if EvictWriteFile(Pipe, Payload, Length(Payload), Written, 0) = 0 then
     begin
       ErrorCode := DLLGetLastError;
-      Log('Evict exit request was not completely written; bytes ' + IntToStr(Written) +
+      Log('Could not write Evict exit request; bytes ' + IntToStr(Written) +
         ', Windows error ' + IntToStr(ErrorCode));
+      exit;
+    end;
+    if Written <> DWORD(Length(Payload)) then
+    begin
+      Log('Evict exit request was only partially written; bytes ' + IntToStr(Written) +
+        ' of ' + IntToStr(Length(Payload)));
       exit;
     end;
     Result := True;

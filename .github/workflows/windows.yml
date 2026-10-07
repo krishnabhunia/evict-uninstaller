@@ -200,6 +200,19 @@ jobs:
           $publish = if ($env:GITHUB_EVENT_NAME -eq "pull_request") { "false" } else { "${{ steps.ver.outputs.publish }}" }
           "publish=$publish" >> $env:GITHUB_OUTPUT
 
+      - name: Compile installer script early
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y | Out-Null }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
+          $dummySource = Join-Path $env:RUNNER_TEMP "evict-compile-source-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $dummyOutput = Join-Path $env:RUNNER_TEMP "evict-compile-output-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Path $dummySource, $dummyOutput -Force | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $dummySource "Evict.exe"), [byte[]](0, 0, 0, 0))
+          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" "/DMyAppNumericVersion=${{ steps.ver.outputs.numeric_version }}" "/DSourceDir=$dummySource" "/O$dummyOutput" installer\Evict.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer script compilation failed with exit code $LASTEXITCODE" }
+
       - name: Restore
         run: dotnet restore Evict.sln
 
