@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.9.0 — 2026-10-07
+
+<!-- Evict automatic release; base: win-v1.8.0 -->
 
 - Request running Evict to exit through its local pipe without extracting a temporary helper; stop silent installation if the process cannot close and write a setup log automatically.
 - Upgrade GitHub Actions to supported Node.js 24 versions.
@@ -19,6 +21,9 @@
 - Every Windows release also comes as **`Evict-x.y.z.zip`** with exactly two folders: **installer** (`Evict-Setup-x.y.z.exe`,
   installs Evict) and **portable** (`Evict.exe`, runs from anywhere). The separate files stay on the release as before,
   so updates inside Evict work as they did. 1.8.0 gets its zip too.
+- Windows release zip with only installer/ and portable/
+- Merge pull request #10 from krishnabhunia/fix/audit-safety-and-reliability
+- feat(release): automate semantic versions and fix installer shutdown
 
 ## 1.8.0 — close running programs, fallback and rollback when an uninstall fails (29 Sep 2026)
 
