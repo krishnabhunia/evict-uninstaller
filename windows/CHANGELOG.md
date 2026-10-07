@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.11.0 — 2026-10-07
+
+<!-- Evict automatic release; base: win-v1.9.0 -->
+
+- feat(updates): publish 1.10.0 for stable update verification
+
 ## 1.10.0 — 2026-10-07
 
 - Publish an explicitly requested stable release from an unmerged test PR to verify the installed update flow.
