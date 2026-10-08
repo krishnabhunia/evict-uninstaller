@@ -90,6 +90,7 @@ PY
 
 verify_bundle "$APP"
 TASK_TEMP="$(mktemp -d "${TMPDIR:-/tmp}/evict-dmg.XXXXXX")"
+TASK_TEMP="$(cd "$TASK_TEMP" && pwd -P)"
 STAGING="$TASK_TEMP/staging"
 MOUNT_POINT="$TASK_TEMP/mounted"
 MOUNT_DEVICE=""
@@ -156,7 +157,12 @@ import sys
 
 info = plistlib.loads(pathlib.Path(sys.argv[1]).read_bytes())
 entities = info.get("system-entities", [])
-mounted = [item for item in entities if item.get("mount-point") == sys.argv[2]]
+requested = pathlib.Path(sys.argv[2]).resolve(strict=True)
+mounted = [
+    item for item in entities
+    if item.get("mount-point")
+    and pathlib.Path(item["mount-point"]).resolve(strict=True) == requested
+]
 if len(mounted) != 1:
     raise SystemExit("The installer must mount exactly one filesystem at the requested path.")
 device = mounted[0].get("dev-entry", "")
