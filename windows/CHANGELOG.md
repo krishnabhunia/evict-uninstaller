@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.1 — 2026-10-08
+
+<!-- Evict automatic release; base: win-v1.12.0 -->
+
+- fix(ci): keep one installation download and clean build artifacts
+
 ## 1.12.0 — 2026-10-08
 
 <!-- Evict automatic release; base: win-v1.11.0 -->
