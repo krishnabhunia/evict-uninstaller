@@ -4,28 +4,39 @@ on:
   push:
     branches: [ main ]
     tags: [ 'win-v*', '!win-v*-beta.*' ]
-    paths: [ 'windows/**', 'scripts/versioning.py', 'scripts/tests/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
+    paths: [ 'windows/**', 'macos/**', 'scripts/versioning.py', 'scripts/tests/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
   pull_request:
     branches: [ main ]
     types: [ opened, synchronize, reopened, edited, labeled, unlabeled ]
-    paths: [ 'windows/**', 'scripts/versioning.py', 'scripts/tests/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
+    paths: [ 'windows/**', 'macos/**', 'scripts/versioning.py', 'scripts/tests/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: read
 
-# Stable delivery and explicitly requested release tests share one lock. Ordinary PR previews retain their own locks.
+# Serialize planning through publication for main, stable tags and dispatches. PR previews have their own locks.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]' && contains(github.event.pull_request.body, 'Release-Test-Windows:')) && format('windows-pr-{0}', github.event.pull_request.number) || 'windows-stable' }}
+  group: ${{ github.event_name == 'pull_request' && format('windows-pr-{0}', github.event.pull_request.number) || 'windows-stable' }}
   cancel-in-progress: false
   queue: max
 
 jobs:
   build:
     # Keep stable delivery on main/tags unchanged; PR code builds in a separate read-only job below.
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/win-v'))
     runs-on: windows-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      core_version: ${{ steps.ver.outputs.core_version }}
+      source_sha: ${{ steps.ver.outputs.source_sha }}
+      artifact: ${{ steps.ver.outputs.artifact }}
+      publish: ${{ steps.ver.outputs.publish }}
+      channel: ${{ steps.ver.outputs.channel }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
     defaults:
       run:
         working-directory: windows
@@ -35,11 +46,34 @@ jobs:
       SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
       SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
     steps: &windows_build_steps
+      - name: Authorize main source before executing repository code
+        id: authorize
+        if: github.event_name != 'pull_request'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            if (!['push', 'workflow_dispatch'].includes(context.eventName)) throw new Error('Unexpected stable build event.');
+            const {data: main} = await github.rest.git.getRef({...context.repo, ref: 'heads/main'});
+            let source;
+            if (context.ref === 'refs/heads/main') {
+              source = main.object.sha;
+            } else {
+              const match = context.ref.match(/^refs\/tags\/(win-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/);
+              if (!match || match[1] === 'win-v1.10.0') throw new Error('Only normal main release tags may execute in the stable build.');
+              let target = (await github.rest.git.getRef({...context.repo, ref: 'tags/' + match[1]})).data.object;
+              while (target.type === 'tag') target = (await github.rest.git.getTag({...context.repo, tag_sha: target.sha})).data.object;
+              if (target.type !== 'commit') throw new Error('The stable tag does not identify a commit.');
+              source = target.sha;
+              const {data: comparison} = await github.rest.repos.compareCommits({...context.repo, base: source, head: main.object.sha});
+              if (!['ahead', 'identical'].includes(comparison.status)) throw new Error('The stable tag source must be part of main.');
+            }
+            if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Invalid authorized main source identity.');
+            core.setOutput('source_sha', source);
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # tags, to tell whether this version is already released
           # PR betas test the exact source snapshot that will be tagged, never GitHub's synthetic merge commit.
-          ref: ${{ needs.prepare-beta.outputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ needs.freeze-beta.outputs.source_sha || steps.authorize.outputs.source_sha || github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v6
@@ -50,6 +84,10 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.13"
+
+      - name: Fetch immutable historical review proof
+        working-directory: .
+        run: git fetch origin 89877b5a3a193c27dde216be345f96c5e76544e2 --no-tags
 
       - name: Semantic version engine tests
         id: engine_tests
@@ -76,10 +114,9 @@ jobs:
           $event = $env:GITHUB_EVENT_NAME
           $isMain = $ref -eq "refs/heads/main" -and $event -in @("push", "workflow_dispatch")
           $isTag = $ref.StartsWith("refs/tags/win-v")
-          $publishedReuse = $event -eq "pull_request" -and "${{ needs.prepare-beta.outputs.published_reuse }}" -eq "true"
-          $mode = if ($publishedReuse) { "tag" } elseif ($event -eq "pull_request") { "beta" } elseif ($isTag) { "tag" } else { "stable" }
-          $tagForPlan = if ($publishedReuse) { "${{ needs.prepare-beta.outputs.published_reuse_tag }}" } elseif ($isTag) { $ref.Substring("refs/tags/".Length) } else { "" }
-          if ($publishedReuse -and $tagForPlan -notmatch '^win-v\d+\.\d+\.\d+$') { throw "Invalid immutable stable-test tag" }
+          $tagName = if ($isTag) { $ref.Substring('refs/tags/'.Length) } else { '' }
+          if ($isTag -and $tagName -eq 'win-v1.10.0') { throw 'The retired PR stable-test tag cannot be released from main' }
+          $mode = if ($event -eq "pull_request") { "beta" } elseif ($isTag) { "tag" } else { "stable" }
           $allowed = @("windows/Directory.Build.props", "windows/installer/Evict.iss", "windows/CHANGELOG.md")
 
           function Read-Plan([bool] $sync) {
@@ -100,7 +137,7 @@ jobs:
               "--event-file", $env:GITHUB_EVENT_PATH, "--ref", $ref, "--repo-root", $repoRoot,
               "--main-ref", "origin/main", "--github-output", $output)
             if ($mode -eq "beta") { $planArguments += @("--beta-sequence", "$env:GITHUB_RUN_NUMBER.$env:GITHUB_RUN_ATTEMPT") }
-            if ($mode -eq "tag") { $planArguments += @("--tag", $tagForPlan) }
+            if ($mode -eq "tag") { $planArguments += @("--tag", $ref.Substring("refs/tags/".Length)) }
             if ($sync) { $planArguments += "--sync" }
             & python @planArguments | ForEach-Object { Write-Host $_ }
             if ($LASTEXITCODE -ne 0) { throw "Semantic version planning failed" }
@@ -114,40 +151,9 @@ jobs:
                 $result.tag -ne "win-v$($result.version)" -or $result.publish -notin @("true", "false")) {
               throw "Invalid semantic version plan"
             }
-            if ($publishedReuse) {
-              if ($result.tag -ne $tagForPlan -or $result.source_sha -ne $engineSource -or
-                  $result.release_source_sha -ne $engineSource -or $result.source_version -ne $result.core_version -or
-                  $result.channel -ne "stable" -or $result.prerelease -ne "false" -or $result.version -ne $result.core_version) {
-                throw "Immutable published stable-test validation failed"
-              }
-              $result.publish = "false"; $result.release = "false"; $result.release_test = "true"
-            }
-            if ($mode -eq "beta" -or $publishedReuse) {
-              if ($result.channel -notin @("stable", "beta") -or $result.prerelease -notin @("true", "false") -or
-                  $result.release_test -notin @("true", "false")) { throw "Invalid PR release channel plan" }
-              if ($result.channel -eq "stable" -and ($result.release_test -ne "true" -or
-                  $result.prerelease -ne "false" -or $result.version -ne $result.core_version)) {
-                throw "Only an explicit release-test PR can publish stable"
-              }
-              if ($result.channel -eq "beta" -and ($result.prerelease -ne "true" -or
-                  $result.version -notmatch '^\d+\.\d+\.\d+-beta\.\d+\.\d+\.\d+$')) {
-                throw "A beta PR must retain its complete beta version"
-              }
-              if ($result.release_test -eq "true") {
-                $payload = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
-                $pr = $payload.pull_request
-                if ($pr.base.ref -ne "main" -or $pr.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or
-                    $pr.base.repo.full_name -ne $env:GITHUB_REPOSITORY -or
-                    $payload.repository.full_name -ne $env:GITHUB_REPOSITORY -or
-                    $pr.user.type -ne "User" -or $payload.sender.type -ne "User" -or
-                    $pr.user.login -match '\[bot\]$' -or $payload.sender.login -match '\[bot\]$') {
-                  throw "Release tests require a trusted same-repository human PR"
-                }
-                $committed = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
-                if ($committed -ne $result.core_version -or $result.source_version -ne $committed) {
-                  throw "The release-test version must match the committed source core"
-                }
-              }
+            if ($mode -eq "beta" -and ($result.channel -ne "beta" -or $result.prerelease -ne "true" -or
+                $result.version -notmatch '^\d+\.\d+\.\d+-beta\.\d+\.\d+\.\d+$')) {
+              throw "Every PR release must be a beta"
             }
             return $result
           }
@@ -182,6 +188,8 @@ jobs:
                   Write-Host "Main changed; recomputing the version from fresh source (attempt $($attempt + 1))."
                   continue
                 }
+                git -C $repoRoot fetch origin 'refs/heads/main:refs/remotes/origin/main' --tags
+                if ($LASTEXITCODE -ne 0) { throw 'Could not confirm the updated main release source' }
               }
               break
             }
@@ -195,7 +203,7 @@ jobs:
           }
 
           $eligible = $isMain -or $isTag
-          if (-not $eligible -and $mode -ne "beta" -and -not $publishedReuse) {
+          if (-not $eligible -and $mode -ne "beta") {
             # A branch dispatch is CI only and leaves source versions untouched.
             $core = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
             $plan.version = $core; $plan.core_version = $core; $plan.numeric_version = "$core.0"; $plan.tag = "win-v$core"
@@ -206,10 +214,7 @@ jobs:
           $global:LASTEXITCODE = 0
           $source = (git -C $repoRoot rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0) { throw "Could not read the checked-out source commit" }
-          $release = if ($eligible -or $publishedReuse) { Read-Release $plan.tag } else { $null }
-          if ($publishedReuse -and ($null -eq $release -or $release.draft -or $release.prerelease -or $release.tag_name -ne $tagForPlan)) {
-            throw "The immutable stable-test release is no longer published in the expected channel"
-          }
+          $release = if ($eligible) { Read-Release $plan.tag } else { $null }
           if ($tagExists) {
             $tagSource = $tagSource.Trim()
             if ($plan.publish -eq "true" -and $tagSource -ne $source) { throw "Version tag already points to different source; refusing to change it" }
@@ -229,10 +234,10 @@ jobs:
             if ($stored -ne $plan.core_version) { throw "Release source version does not match the planned tag" }
           }
           $plan.source_sha = $source
-          if (($mode -eq "beta" -or $publishedReuse) -and $plan.release_test -eq "true" -and $plan.publish -eq "false") {
-            if ($plan.release_source_sha -notmatch '^[a-f0-9]{40}$') { throw "Missing immutable release-test source" }
+          if ($mode -eq 'beta' -and '${{ needs.freeze-beta.outputs.source_sha }}' -ne '' -and
+              ($source -ne '${{ needs.freeze-beta.outputs.source_sha }}' -or $plan.version -ne '${{ needs.plan-beta.outputs.version }}')) {
+            throw 'The frozen beta source or planned version changed before the build'
           }
-          else { $plan.release_source_sha = $source }
           $plan.artifact = "Evict-$($plan.version)-$source"
           foreach ($key in $plan.Keys) { "$key=$($plan[$key])" >> $env:GITHUB_OUTPUT }
           Write-Host "Version $($plan.version), source $source, publish $($plan.publish)"
@@ -312,190 +317,99 @@ jobs:
           (Get-FileHash Portable/Evict.exe -Algorithm SHA256).Hash | Out-File Portable/Evict.exe.sha256 -Encoding ascii
           Get-ChildItem Installed\*.exe | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash | Out-File "$($_.FullName).sha256" -Encoding ascii }
 
-      # Release zip (Krishna's standing rule): Evict-<version>.zip holds exactly two folders — installer\ (the setup)
-      # and portable\ (Evict.exe). The script refuses anything else.
-      - name: Release zip (installer + portable)
-        run: python build/release_zip.py ${{ steps.ver.outputs.version }} --setup Installed --exe Portable --out Zip
 
-      - name: Verify stable release assets
-        id: stable_assets
-        if: steps.rel.outputs.publish == 'true'
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
-        run: |
-          $v = $env:RELEASE_VERSION
-          $files = @("Portable/Evict.exe", "Installed/Evict-Setup-$v.exe", "Zip/Evict-$v.zip")
-          $assetSizes = @{}
-          foreach ($file in $files) {
-            $expected = (Get-Content -LiteralPath "$file.sha256" -Raw).Trim()
-            if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) {
-              throw "Stable release checksum mismatch: $file"
-            }
-            $assetSizes[[IO.Path]::GetFileName($file)] = (Get-Item -LiteralPath $file).Length
-            $assetSizes[[IO.Path]::GetFileName("$file.sha256")] = (Get-Item -LiteralPath "$file.sha256").Length
-          }
-          "sizes=$($assetSizes | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
-
-      # The CI download follows the same rule as the release zip: only installer\ and portable\ inside.
-      - name: Unpack the zip for the CI download
+      - name: Stage native Windows build
         shell: pwsh
         run: |
-          Expand-Archive Zip/Evict-${{ steps.ver.outputs.version }}.zip -DestinationPath CiDownload
-          python build/release_zip.py --check-folder CiDownload
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+          New-Item -ItemType Directory -Path CiWindows/portable, CiWindows/windows-installer -Force | Out-Null
+          Copy-Item -LiteralPath Portable/Evict.exe, Portable/Evict.exe.sha256 -Destination CiWindows/portable
+          Copy-Item -LiteralPath "Installed/Evict-Setup-${{ steps.ver.outputs.version }}.exe", "Installed/Evict-Setup-${{ steps.ver.outputs.version }}.exe.sha256" -Destination CiWindows/windows-installer
+      - uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.ver.outputs.artifact }}
-          path: windows/CiDownload/
+          name: ${{ steps.ver.outputs.artifact }}-windows
+          path: windows/CiWindows/
           if-no-files-found: error
 
-      # Transport the already checked ZIP without rebuilding it in the privileged publication job.
-      - name: Upload beta ZIP for publication
-        if: github.event_name == 'pull_request' && steps.ver.outputs.publish == 'true' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ steps.ver.outputs.artifact }}-release-zip
-          path: windows/Zip/
-          if-no-files-found: error
-
-      - name: Release notes from CHANGELOG.md
-        if: steps.rel.outputs.publish == 'true'
-        shell: pwsh
-        run: |
-          $v = [regex]::Escape("${{ steps.ver.outputs.version }}")
-          $out = @(); $in = $false
-          foreach ($line in Get-Content CHANGELOG.md -Encoding utf8) {
-            # Unpublished versions ride along with the next published one, so their sections are included too.
-            if ($line -match '^## ') {
-              if ($in) { if ($line -match '\(not published\)') { $out += '', $line; continue } else { break } }
-              $in = $line -match "^## $v\b"; continue
-            }
-            if ($in) { $out += $line }
-          }
-          if (-not $out) { throw "CHANGELOG.md has no '## ${{ steps.ver.outputs.version }}' section" }
-          ($out -join "`n").Trim() | Out-File "$env:RUNNER_TEMP\notes.md" -Encoding utf8
-
-      - name: Verify stable source and release status
-        id: stable_guard
-        if: steps.rel.outputs.publish == 'true'
-        uses: actions/github-script@v9
-        env:
-          RELEASE_TAG: ${{ steps.rel.outputs.tag }}
-          RELEASE_SOURCE_SHA: ${{ steps.ver.outputs.source_sha }}
+  # One-time correction of the explicitly requested stable PR test. Its tag and bytes remain immutable.
+  retire-stable-pr-test:
+    if: ${{ github.event_name == 'pull_request' && github.repository == 'krishnabhunia/evict-uninstaller' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type == 'User' && github.event.sender.type == 'User' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: evict-retire-stable-pr-test-1.10.0
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@v9
         with:
           script: |
-            const repo = context.repo;
-            const tag = process.env.RELEASE_TAG;
-            const source = process.env.RELEASE_SOURCE_SHA;
-            let release;
-            try { release = (await github.rest.repos.getReleaseByTag({...repo, tag})).data; }
-            catch (error) { if (error.status !== 404) throw error; }
-            if (release && !release.draft) {
-              core.setOutput('publish', 'false');
-              core.info('The release is already published; leaving its assets and metadata unchanged.');
+            const pr = context.payload.pull_request;
+            const {data: live} = await github.rest.pulls.get({...context.repo, pull_number: pr.number});
+            if (context.repo.owner !== 'krishnabhunia' || context.repo.repo !== 'evict-uninstaller' ||
+                pr.head.repo.full_name !== process.env.GITHUB_REPOSITORY ||
+                pr.base.repo.full_name !== process.env.GITHUB_REPOSITORY || pr.base.ref !== 'main' ||
+                pr.user.type !== 'User' || context.payload.sender?.type !== 'User' ||
+                /\[bot\]$/.test(pr.user.login) || /\[bot\]$/.test(context.payload.sender.login) ||
+                live.state !== 'open' || live.head.sha !== pr.head.sha || live.base.ref !== 'main') {
+              throw new Error('The historical release correction requires the current trusted PR.');
+            }
+            const source = 'cd62afeedd2838cfa1dda814ed8c6b9369e794ed';
+            const release_id = 405730452;
+            const {data: release} = await github.rest.repos.getRelease({...context.repo, release_id});
+            const marker = 'Evict retired stable reservation: windows 1.10.0';
+            const originalBody = "Explicit installed-update release test of [PR #12](https://github.com/krishnabhunia/evict-uninstaller/pull/12).\nRelease channel: stable\nRelease-test request: true\nOriginal PR head: 89877b5a3a193c27dde216be345f96c5e76544e2\nBuilt and tested release source: cd62afeedd2838cfa1dda814ed8c6b9369e794ed\nAll application, test and documentation files match the PR head. Only .github/workflows matches the default branch so GitHub Actions can publish without an additional token.\nThe release ZIP contains only installer/ and portable/, each with its SHA-256 checksum.\n";
+            const expectedBody = originalBody + marker + '\n';
+            if (release.tag_name !== 'win-v1.10.0' || release.target_commitish !== source ||
+                release.prerelease || ![originalBody, expectedBody].includes(release.body)) {
+              throw new Error('The historical release no longer has its exact reviewed provenance.');
+            }
+            let target = (await github.rest.git.getRef({...context.repo, ref: 'tags/win-v1.10.0'})).data.object;
+            while (target.type === 'tag') target = (await github.rest.git.getTag({...context.repo, tag_sha: target.sha})).data.object;
+            if (target.type !== 'commit' || target.sha !== source) throw new Error('The historical tag changed.');
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {...context.repo, release_id, per_page: 100});
+            const expected = [{"id":618609321,"name":"Evict-1.10.0.zip","size":122511748,"digest":"sha256:ae1dfa5265fe46afe3758ebb69ad5dc68038f814b6155d058fda0d2fdb892dc1"},{"id":618609318,"name":"Evict-1.10.0.zip.sha256","size":65,"digest":"sha256:edd82beb000c1cc08a0494c3b5597e3fd43cac23dbc432d3be67654240bfab0b"},{"id":618609327,"name":"Evict-Setup-1.10.0.exe","size":61849338,"digest":"sha256:d1b8e82daf463886392ce674e24c566a8c72b8018041e8de4526bae2dbd45c28"},{"id":618609319,"name":"Evict-Setup-1.10.0.exe.sha256","size":66,"digest":"sha256:9c2e59a7841c8f8c9f3585a4d69ef0609418fa084b28a0af5c908fedb8dcd9c1"},{"id":618609320,"name":"Evict.exe","size":66763160,"digest":"sha256:3a39f1756d2fe8de9dd01b6a2607c60d198a7883ded9618a98e308ae08fa2073"},{"id":618609322,"name":"Evict.exe.sha256","size":66,"digest":"sha256:5631728c5ad985adec7807820811e5108f214a0dd97b2a82752501c41c3caf0b"}];
+            const identity = assets.map(({id, name, size, digest}) => ({id, name, size, digest})).sort((a,b) => a.name.localeCompare(b.name));
+            if (JSON.stringify(identity) !== JSON.stringify(expected) || assets.some(a => a.state !== 'uploaded' || a.size <= 0)) {
+              throw new Error('Historical release asset identities or hashes changed.');
+            }
+            if (release.draft) {
+              if (release.body !== expectedBody) throw new Error('Unexpected historical draft without its retirement marker.');
+              core.info('The historical stable PR test is already retired; its tag and assets are unchanged.');
               return;
             }
-            if (release?.prerelease) throw new Error('A stable tag is reserved by a prerelease.');
-            const ref = 'tags/' + tag;
-            let target;
-            try { target = (await github.rest.git.getRef({...repo, ref})).data.object; }
-            catch (error) {
-              if (error.status !== 404) throw error;
-              target = (await github.rest.git.createRef({...repo, ref: 'refs/' + ref, sha: source})).data.object;
+            const crypto = require('crypto');
+            for (const asset of assets) {
+              const url = new URL(asset.browser_download_url);
+              if (url.origin !== 'https://github.com' ||
+                  url.pathname !== '/krishnabhunia/evict-uninstaller/releases/download/win-v1.10.0/' + asset.name) {
+                throw new Error('Unexpected historical asset download URL.');
+              }
+              const response = await fetch(url, {signal: AbortSignal.timeout(180000)});
+              if (!response.ok) throw new Error('Could not verify historical asset bytes: ' + asset.name);
+              const hash = crypto.createHash('sha256'); let size = 0;
+              for await (const chunk of response.body) { hash.update(chunk); size += chunk.length; }
+              if (size !== asset.size || 'sha256:' + hash.digest('hex') !== asset.digest) {
+                throw new Error('Historical release bytes disagree with their immutable hashes.');
+              }
             }
-            while (target.type === 'tag') {
-              target = (await github.rest.git.getTag({...repo, tag_sha: target.sha})).data.object;
-            }
-            if (target.type !== 'commit' || target.sha !== source) throw new Error('Stable tag points to different source.');
-            core.setOutput('publish', 'true');
-
-      - name: Upload stable release draft
-        id: stable_release
-        if: steps.stable_guard.outputs.publish == 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          # The immutable tag was verified against the actual synchronized source commit after tests.
-          tag_name: ${{ steps.rel.outputs.tag }}
-          target_commitish: ${{ steps.ver.outputs.source_sha }}
-          name: Evict ${{ steps.ver.outputs.version }} for Windows
-          draft: true
-          prerelease: false
-          fail_on_unmatched_files: true
-          body_path: ${{ runner.temp }}/notes.md
-          files: |
-            windows/Portable/Evict.exe
-            windows/Portable/Evict.exe.sha256
-            windows/Installed/*.exe
-            windows/Installed/*.sha256
-            windows/Zip/Evict-*.zip
-            windows/Zip/Evict-*.zip.sha256
-          generate_release_notes: true
-          # The final publication step promotes only a newer Windows stable version.
-          make_latest: false
-
-      - name: Publish verified stable release
-        if: steps.stable_guard.outputs.publish == 'true'
-        uses: actions/github-script@v9
-        env:
-          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
-          RELEASE_SOURCE_SHA: ${{ steps.ver.outputs.source_sha }}
-          RELEASE_ID: ${{ steps.stable_release.outputs.id }}
-          RELEASE_ASSET_SIZES: ${{ steps.stable_assets.outputs.sizes }}
-        with:
-          script: |
-            const version = process.env.RELEASE_VERSION;
-            const release_id = Number(process.env.RELEASE_ID);
-            if (!Number.isSafeInteger(release_id) || release_id <= 0) throw new Error('No stable release draft was created.');
-            const {data: release} = await github.rest.repos.getRelease({...context.repo, release_id});
-            if (!release.draft || release.prerelease || release.tag_name !== 'win-v' + version) {
-              throw new Error('The stable draft has unexpected metadata.');
-            }
-            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {...context.repo, release_id, per_page: 100});
-            const sizes = JSON.parse(process.env.RELEASE_ASSET_SIZES);
-            const expected = ['Evict.exe', 'Evict.exe.sha256', 'Evict-Setup-' + version + '.exe',
-              'Evict-Setup-' + version + '.exe.sha256', 'Evict-' + version + '.zip', 'Evict-' + version + '.zip.sha256'].sort();
-            if (JSON.stringify(assets.map(a => a.name).sort()) !== JSON.stringify(expected) ||
-                assets.some(a => a.state !== 'uploaded' || a.size <= 0 || a.size !== sizes[a.name])) {
-              throw new Error('Stable assets are incomplete; leaving the release unpublished.');
-            }
-            let target = (await github.rest.git.getRef({...context.repo, ref: 'tags/win-v' + version})).data.object;
-            while (target.type === 'tag') target = (await github.rest.git.getTag({...context.repo, tag_sha: target.sha})).data.object;
-            if (target.type !== 'commit' || target.sha !== process.env.RELEASE_SOURCE_SHA) {
-              throw new Error('Stable tag does not identify the tested version commit.');
-            }
-            let makeLatest = 'true';
-            const candidate = version.split('.').map(Number);
-            const releases = await github.paginate(github.rest.repos.listReleases, {...context.repo, per_page: 100});
-            for (const existing of releases) {
-              if (existing.draft || existing.prerelease) continue;
-              const match = existing.tag_name.match(/^(?:win-v|v)(\d+)\.(\d+)\.(\d+)$/);
-              if (!match) continue;
-              const previous = match.slice(1).map(Number);
-              let comparison = 0;
-              for (let i = 0; i < 3 && comparison === 0; i++) comparison = Math.sign(candidate[i] - previous[i]);
-              if (comparison <= 0) makeLatest = 'false';
-            }
-            const {data: published} = await github.rest.repos.updateRelease({
-              ...context.repo, release_id, draft: false, prerelease: false, make_latest: makeLatest
+            const {data: updated} = await github.rest.repos.updateRelease({
+              ...context.repo, release_id, body: expectedBody, draft: true, prerelease: false, make_latest: 'false'
             });
-            if (published.draft || published.prerelease) throw new Error('Stable publication was not confirmed.');
-            await core.summary.addHeading('Windows release published').addLink(version, published.html_url).write();
+            if (!updated.draft || updated.prerelease || updated.body !== expectedBody) throw new Error('Retirement was not confirmed.');
+            core.info('Retired the stable PR test. Its source tag and all six assets remain unchanged.');
 
-
-  # A preview source commit contains every PR file unchanged except .github/workflows, which matches the default
-  # branch. GitHub forbids GITHUB_TOKEN release creation for targets that modify workflows; no PAT is needed here.
   prepare-beta:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
+    needs: retire-stable-pr-test
+    if: always() && (needs.retire-stable-pr-test.result == 'success' || needs.retire-stable-pr-test.result == 'skipped') && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && github.event.pull_request.user.type == 'User' && github.event.sender.type == 'User' && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
       source_sha: ${{ steps.snapshot.outputs.source_sha }}
       temp_ref: ${{ steps.snapshot.outputs.temp_ref }}
-      published_reuse: ${{ steps.snapshot.outputs.published_reuse }}
-      published_reuse_tag: ${{ steps.snapshot.outputs.published_reuse_tag }}
     steps:
       - name: Prepare beta source without workflow changes
         id: snapshot
@@ -504,8 +418,11 @@ jobs:
           script: |
             const repo = context.repo;
             const pr = context.payload.pull_request;
-            core.setOutput('published_reuse', 'false');
-            core.setOutput('published_reuse_tag', '');
+            const {data: current} = await github.rest.pulls.get({...repo, pull_number: pr.number});
+            if (current.state !== 'open' || current.head.sha !== pr.head.sha || pr.base.ref !== 'main' ||
+                pr.base.repo.full_name !== process.env.GITHUB_REPOSITORY || pr.user.type !== 'User' ||
+                context.payload.sender?.type !== 'User' || /\[bot\]$/.test(pr.user.login) ||
+                /\[bot\]$/.test(context.payload.sender.login)) throw new Error('A current same-repository human PR is required.');
             if (!pr || pr.head.repo.full_name !== process.env.GITHUB_REPOSITORY ||
                 context.actor === 'dependabot[bot]' || pr.user.login === 'dependabot[bot]') {
               throw new Error('Only trusted same-repository PRs can prepare beta sources.');
@@ -522,59 +439,6 @@ jobs:
               return config.tree.find(entry => entry.path === 'workflows' && entry.type === 'tree')?.sha ?? null;
             }
             const defaultWorkflows = await workflows(base.tree.sha);
-            const testLines = (pr.body || '').split(/\r?\n/).filter(line => /^Release-Test-Windows:/i.test(line));
-            if (testLines.length > 1) throw new Error('Duplicate Windows release-test directives.');
-            const releaseTest = testLines.length ? testLines[0].match(/^Release-Test-Windows:[ \t]+(stable|beta)[ \t]+(\d+\.\d+\.\d+)[ \t]*$/i) : null;
-            if (testLines.length && !releaseTest) throw new Error('Invalid Windows release-test directive.');
-            if (releaseTest && (pr.base.ref !== 'main' || pr.base.repo.full_name !== process.env.GITHUB_REPOSITORY ||
-                context.payload.repository?.full_name !== process.env.GITHUB_REPOSITORY ||
-                pr.user.type !== 'User' || context.payload.sender?.type !== 'User' ||
-                /\[bot\]$/.test(pr.user.login) || /\[bot\]$/.test(context.payload.sender.login))) {
-              throw new Error('Release tests require a trusted same-repository human PR targeting main.');
-            }
-            if (releaseTest && releaseTest[1].toLowerCase() === 'stable') {
-              let reserved;
-              try { reserved = (await github.rest.git.getRef({...repo, ref: 'tags/win-v' + releaseTest[2]})).data.object; }
-              catch (error) { if (error.status !== 404) throw error; }
-              if (reserved) {
-                while (reserved.type === 'tag') reserved = (await github.rest.git.getTag({...repo, tag_sha: reserved.sha})).data.object;
-                if (reserved.type !== 'commit') throw new Error('The stable test tag does not identify a commit.');
-                const {data: frozen} = await github.rest.git.getCommit({...repo, commit_sha: reserved.sha});
-                if (JSON.stringify(await applicationEntries(head.tree.sha)) !==
-                    JSON.stringify(await applicationEntries(frozen.tree.sha)) ||
-                    await workflows(frozen.tree.sha) !== defaultWorkflows) {
-                  throw new Error('Reserved release-test source differs from this reviewed PR or default workflows.');
-                }
-                let published;
-                const tag = 'win-v' + releaseTest[2];
-                try { published = (await github.rest.repos.getReleaseByTag({...repo, tag})).data; }
-                catch (error) { if (error.status !== 404) throw error; }
-                if (published && !published.draft) {
-                  const body = (published.body || '').split(/\r?\n/);
-                  const originalLines = body.filter(line => /^Original PR head: /.test(line));
-                  const original = originalLines.length === 1 ? originalLines[0].match(/^Original PR head: ([a-f0-9]{40})$/) : null;
-                  if (published.prerelease || published.tag_name !== tag || !original ||
-                      !body.includes('Release channel: stable') || !body.includes('Release-test request: true') ||
-                      !body.includes('Built and tested release source: ' + frozen.sha) ||
-                      !body.includes('Explicit installed-update release test of [PR #' + pr.number + '](https://github.com/' + process.env.GITHUB_REPOSITORY + '/pull/' + pr.number + ').')) {
-                    throw new Error('The published stable test has incompatible channel or PR/source provenance.');
-                  }
-                  const {data: reviewed} = await github.rest.git.getCommit({...repo, commit_sha: original[1]});
-                  if (JSON.stringify(await applicationEntries(reviewed.tree.sha)) !==
-                      JSON.stringify(await applicationEntries(frozen.tree.sha))) {
-                    throw new Error('The published stable review identity differs from its frozen application source.');
-                  }
-                  // A workflow-only repair validates the immutable tag, without replanning or changing the release.
-                  core.setOutput('published_reuse', 'true');
-                  core.setOutput('published_reuse_tag', tag);
-                }
-                core.setOutput('source_sha', frozen.sha);
-                core.setOutput('temp_ref', '');
-                await core.summary.addHeading('Reuse immutable Windows release-test source')
-                  .addRaw('Reviewed PR head: ' + head.sha + '\n\nReserved source: ' + frozen.sha).write();
-                return;
-              }
-            }
             if (await workflows(head.tree.sha) === defaultWorkflows) {
               core.setOutput('source_sha', head.sha);
               core.setOutput('temp_ref', '');
@@ -611,9 +475,191 @@ jobs:
               .addRaw('Original PR head: ' + head.sha + '\n\nRelease source snapshot: ' + snapshot.sha +
                       '\n\nAll non-workflow tree entries verified identical.').write();
 
-  pr-build:
+  # Execute the reviewed version engine with read-only credentials; generated metadata is transferred as data.
+  plan-beta:
     needs: prepare-beta
-    if: always() && github.event_name == 'pull_request' && (needs.prepare-beta.result == 'success' || github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]')
+    if: always() && needs.prepare-beta.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      core_version: ${{ steps.plan.outputs.core_version }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-beta.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Fetch immutable historical review proof
+        run: git fetch origin 89877b5a3a193c27dde216be345f96c5e76544e2 --no-tags
+      - name: Test version engine before generation
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Calculate beta and export only managed metadata
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREPARED_SOURCE: ${{ needs.prepare-beta.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          mkdir GeneratedVersion
+          python scripts/versioning.py plan --platform windows --mode beta --sync \
+            --event-file "$GITHUB_EVENT_PATH" --ref "$GITHUB_REF" --main-ref origin/main \
+            --beta-sequence "$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT" \
+            --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/beta-plan.json"
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          allowed = ["windows/Directory.Build.props", "windows/installer/Evict.iss", "windows/CHANGELOG.md"]
+          plan = json.loads(pathlib.Path(os.environ["RUNNER_TEMP"], "beta-plan.json").read_text())
+          changed = subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines()
+          assert all(path in allowed for path in changed), "Generated changes escaped the version allowlist"
+          assert all(path in allowed for path in plan["sync_files"]), "Unexpected generated path"
+          assert plan["channel"] == "beta" and plan["prerelease"] is True
+          assert plan["source_sha"] == os.environ["PREPARED_SOURCE"]
+          assert not plan["publish"] or plan["source_version"] == plan["core_version"]
+          manifest = {"source_sha": os.environ["PREPARED_SOURCE"], "plan": plan,
+                      "files": {path: pathlib.Path(path).read_text(encoding="utf-8-sig") for path in allowed}}
+          pathlib.Path("GeneratedVersion/manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: generated-windows-version-${{ github.run_id }}-${{ github.run_attempt }}
+          path: GeneratedVersion/manifest.json
+          if-no-files-found: error
+
+  # This job reads a data manifest; it never checks out or executes PR code with a write token.
+  freeze-beta:
+    needs: [prepare-beta, plan-beta]
+    if: always() && needs.prepare-beta.result == 'success' && needs.plan-beta.result == 'success' && needs.plan-beta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      source_sha: ${{ steps.freeze.outputs.source_sha }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: generated-windows-version-${{ github.run_id }}-${{ github.run_attempt }}
+          path: GeneratedVersion
+      - name: Validate generated metadata and freeze final source
+        id: freeze
+        uses: actions/github-script@v9
+        env:
+          PREPARED_SOURCE: ${{ needs.prepare-beta.outputs.source_sha }}
+          BETA_VERSION: ${{ needs.plan-beta.outputs.version }}
+          BETA_CORE: ${{ needs.plan-beta.outputs.core_version }}
+        with:
+          script: |
+            const fs = require('fs');
+            const pr = context.payload.pull_request;
+            const {data: current} = await github.rest.pulls.get({...context.repo, pull_number: pr.number});
+            if (current.state !== 'open' || current.head.sha !== pr.head.sha ||
+                pr.head.repo.full_name !== process.env.GITHUB_REPOSITORY || pr.base.repo.full_name !== process.env.GITHUB_REPOSITORY ||
+                pr.base.ref !== 'main' || pr.user.type !== 'User' || context.payload.sender?.type !== 'User' ||
+                /\[bot\]$/.test(pr.user.login) || /\[bot\]$/.test(context.payload.sender.login)) {
+              throw new Error('Only the current trusted same-repository human PR may freeze a beta.');
+            }
+            const path = 'GeneratedVersion/manifest.json';
+            const stat = fs.lstatSync(path);
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1000000 ||
+                JSON.stringify(fs.readdirSync('GeneratedVersion').sort()) !== JSON.stringify(['manifest.json'])) {
+              throw new Error('Unexpected generated metadata artifact.');
+            }
+            const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const p = manifest.plan, coreVersion = process.env.BETA_CORE;
+            const expectedVersion = coreVersion + '-beta.' + process.env.GITHUB_RUN_NUMBER + '.' + pr.number + '.' + process.env.GITHUB_RUN_ATTEMPT;
+            const allowed = ['windows/Directory.Build.props', 'windows/installer/Evict.iss', 'windows/CHANGELOG.md'];
+            if (manifest.source_sha !== process.env.PREPARED_SOURCE || p.source_sha !== manifest.source_sha ||
+                p.version !== process.env.BETA_VERSION || p.version !== expectedVersion ||
+                !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(coreVersion) ||
+                coreVersion.split('.').some(n => Number(n) > 65535) ||
+                p.core_version !== coreVersion || p.source_version !== coreVersion ||
+                p.numeric_version !== coreVersion + '.0' || p.channel !== 'beta' || p.prerelease !== true ||
+                p.tag !== 'win-v' + expectedVersion || !Array.isArray(p.sync_files) ||
+                p.sync_files.some(path => !allowed.includes(path)) ||
+                JSON.stringify(Object.keys(manifest.files).sort()) !== JSON.stringify([...allowed].sort()) ||
+                !Array.isArray(p.notes) || p.notes.some(n => typeof n !== 'string' || n.length > 2000) ||
+                !/^\d{4}-\d{2}-\d{2}$/.test(p.sync_date) ||
+                Math.abs(Date.now() - Date.parse(p.sync_date + 'T00:00:00Z')) > 172800000) {
+              throw new Error('Generated beta identity or metadata contract is invalid.');
+            }
+            const {data: source} = await github.rest.git.getCommit({...context.repo, commit_sha: manifest.source_sha});
+            const {data: sourceTree} = await github.rest.git.getTree({...context.repo, tree_sha: source.tree.sha, recursive: 'true'});
+            if (sourceTree.truncated) throw new Error('Cannot verify a truncated prepared source.');
+            const generated = [];
+            const normalize = text => text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            function changelog(text) {
+              const marker = '<!-- Evict automatic release; base: ' + (p.base_tag || 'initial') + ' -->';
+              const heading = /^## (.+)$/m.exec(text);
+              if (heading) {
+                const start = heading.index, headingEnd = start + heading[0].length;
+                const next = /^## /m.exec(text.slice(headingEnd));
+                const end = next ? headingEnd + next.index : text.length;
+                const first = text.slice(headingEnd, end);
+                const reusable = heading[1].toLowerCase().includes('not published') ||
+                  heading[1].toLowerCase() === 'unreleased' || first.includes(marker);
+                const same = heading[1] === coreVersion || heading[1].startsWith(coreVersion + ' ');
+                if (reusable) {
+                  let section = first.trim().replace(/^<!-- Evict automatic release; base: .* -->\n?/gm, '').trim();
+                  for (const note of p.notes) {
+                    const bullet = '- ' + note;
+                    if (!section.includes(bullet)) section += (section ? '\n' : '') + bullet;
+                  }
+                  return text.slice(0, start) + '## ' + coreVersion + ' — ' + p.sync_date + '\n\n' +
+                    marker + '\n\n' + section + '\n\n' + text.slice(end).replace(/^\n+/, '');
+                }
+                if (same) return text;
+              }
+              const bullets = p.notes.map(note => '- ' + note).join('\n') || '- Maintenance changes.';
+              const section = '## ' + coreVersion + ' — ' + p.sync_date + '\n\n' + marker + '\n\n' + bullets + '\n\n';
+              return heading ? text.slice(0, heading.index) + section + text.slice(heading.index) : text.trimEnd() + '\n\n' + section;
+            }
+            for (const path of allowed) {
+              const entry = sourceTree.tree.find(e => e.path === path);
+              if (!entry || entry.type !== 'blob' || entry.mode !== '100644') throw new Error('A managed source file is missing or unsafe.');
+              const {data: blob} = await github.rest.git.getBlob({...context.repo, file_sha: entry.sha});
+              const original = normalize(Buffer.from(blob.content, 'base64').toString('utf8'));
+              let expected = original;
+              if (path.endsWith('Directory.Build.props')) {
+                if (!/<Version>\s*[^<]+\s*<\/Version>/.test(original)) throw new Error('Missing source Version.');
+                expected = original.replace(/(<Version>)\s*[^<]+\s*(<\/Version>)/, '$1' + coreVersion + '$2');
+              } else if (path.endsWith('Evict.iss')) {
+                if (!/#define MyAppVersion "[^"]+"/.test(original)) throw new Error('Missing installer version.');
+                expected = original.replace(/(#define MyAppVersion ")[^"]+(")/, '$1' + coreVersion + '$2')
+                  .replace(/^(\s*#define MyAppNumericVersion )[^\r\n]+/m, '$1"' + coreVersion + '.0"')
+                  .replace(/(\/DMyAppVersion=)[0-9]+\.[0-9]+\.[0-9]+/, '$1' + coreVersion);
+              } else { expected = changelog(original); }
+              if (manifest.files[path] !== expected) throw new Error('Noncanonical generated content: ' + path);
+              const {data: created} = await github.rest.git.createBlob({...context.repo, content: expected, encoding: 'utf-8'});
+              generated.push({path, mode: '100644', type: 'blob', sha: created.sha});
+            }
+            const {data: tree} = await github.rest.git.createTree({...context.repo, base_tree: source.tree.sha, tree: generated});
+            const {data: finalTree} = await github.rest.git.getTree({...context.repo, tree_sha: tree.sha, recursive: 'true'});
+            if (finalTree.truncated) throw new Error('Cannot verify a truncated frozen source.');
+            const unchanged = result => result.tree.filter(e => e.type !== 'tree' && !allowed.includes(e.path))
+              .map(({path, mode, type, sha}) => ({path, mode, type, sha})).sort((a,b) => a.path.localeCompare(b.path));
+            if (JSON.stringify(unchanged(sourceTree)) !== JSON.stringify(unchanged(finalTree))) {
+              throw new Error('Version freezing changed a file outside the exact metadata allowlist.');
+            }
+            const {data: commit} = await github.rest.git.createCommit({
+              ...context.repo, tree: tree.sha, parents: [source.sha],
+              message: 'Windows beta version ' + expectedVersion + ' for PR #' + pr.number +
+                '\n\nOriginal PR head: ' + pr.head.sha + '\nGenerated core metadata only; all other prepared source entries preserved.'
+            });
+            const ref = 'heads/beta-versioned/pr-' + pr.number + '/run-' + context.runId + '-attempt-' + process.env.GITHUB_RUN_ATTEMPT;
+            await github.rest.git.createRef({...context.repo, ref: 'refs/' + ref, sha: commit.sha});
+            core.setOutput('source_sha', commit.sha);
+            await core.summary.addHeading('Frozen beta ' + expectedVersion).addRaw('Exact source: ' + commit.sha).write();
+
+  pr-build:
+    needs: [freeze-beta, plan-beta]
+    if: always() && github.event_name == 'pull_request' && (needs.freeze-beta.result == 'success' || (needs.plan-beta.result == 'success' && needs.plan-beta.outputs.publish == 'false') || github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.type != 'User' || github.event.sender.type != 'User')
     runs-on: windows-latest
     permissions:
       contents: read
@@ -622,203 +668,414 @@ jobs:
       run:
         working-directory: windows
     env:
-      # Forks and Dependabot keep CI, with read-only credentials and no signing secrets.
-      SIGN_PFX_BASE64: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]' && secrets.SIGN_PFX_BASE64 || '' }}
-      SIGN_PFX_PASSWORD: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]' && secrets.SIGN_PFX_PASSWORD || '' }}
+      # Reviewed PR code receives read-only credentials and no signing secrets.
+      SIGN_PFX_BASE64: ''
+      SIGN_PFX_PASSWORD: ''
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      core_version: ${{ steps.ver.outputs.core_version }}
+      channel: ${{ steps.ver.outputs.channel }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
       source_sha: ${{ steps.ver.outputs.source_sha }}
       artifact: ${{ steps.ver.outputs.artifact }}
       publish: ${{ steps.ver.outputs.publish }}
-      channel: ${{ steps.ver.outputs.channel }}
-      prerelease: ${{ steps.ver.outputs.prerelease }}
-      release_test: ${{ steps.ver.outputs.release_test }}
-      release_source_sha: ${{ steps.ver.outputs.release_source_sha }}
     steps: *windows_build_steps
 
-  publish-beta:
-    needs: pr-build
-    if: needs.pr-build.outputs.publish == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
+  # Native macOS binaries are built from the exact same frozen source as the Windows binaries.
+  mac-package:
+    needs: [build, pr-build]
+    if: always() && (needs.build.result == 'success' || needs.pr-build.result == 'success')
+    runs-on: macos-15
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.bundle.outputs.version }}
+      artifact: ${{ steps.bundle.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.pr-build.outputs.source_sha || needs.build.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Test macOS application
+        working-directory: macos
+        run: swift test
+      - name: Build native universal macOS app
+        working-directory: macos
+        run: Scripts/make-app.sh --universal
+      - name: Verify native bundle and preserve its original archive bytes
+        id: bundle
+        env:
+          EXPECTED_SOURCE: ${{ needs.pr-build.outputs.source_sha || needs.build.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          lipo -info macos/build/Evict.app/Contents/MacOS/Evict
+          lipo macos/build/Evict.app/Contents/MacOS/Evict -verify_arch arm64 x86_64
+          codesign --verify --verbose=2 macos/build/Evict.app
+          python - <<'PY'
+          import hashlib, importlib.util, os, pathlib, plistlib, re, shutil
+          spec = importlib.util.spec_from_file_location("release_zip", "windows/build/release_zip.py")
+          module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+          source = pathlib.Path("macos/Sources/EvictKit/Version.swift").read_text()
+          version = re.search(r'public static let current\s*=\s*"([^"]+)"', source).group(1)
+          build = re.search(r'public static let build\s*=\s*"([^"]+)"', source).group(1)
+          with pathlib.Path("macos/build/Evict.app/Contents/Info.plist").open("rb") as file:
+              bundle = plistlib.load(file)
+          assert bundle["CFBundleShortVersionString"] == version and bundle["CFBundleVersion"] == build
+          archive = pathlib.Path(f"macos/build/Evict-{version}.zip")
+          assert module.check_macos_archive(archive) == version, "Mac archive/source version mismatch"
+          sidecar = pathlib.Path(str(archive) + ".sha256").read_text().strip()
+          checksum = re.fullmatch(r"([a-fA-F0-9]{64})(?:\s+(\S+))?", sidecar)
+          assert checksum and (checksum.group(2) is None or checksum.group(2) == f"build/Evict-{version}.zip")
+          expected = checksum.group(1).lower()
+          assert expected == hashlib.sha256(archive.read_bytes()).hexdigest()
+          pathlib.Path("MacPackage").mkdir()
+          output = pathlib.Path(f"MacPackage/Evict-macOS-{version}.zip")
+          shutil.copyfile(archive, output)
+          pathlib.Path(str(output) + ".sha256").write_text(expected + "\n", encoding="ascii")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as file:
+              file.write(f"version={version}\nartifact=Evict-macOS-{os.environ['EXPECTED_SOURCE']}\n")
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bundle.outputs.artifact }}
+          path: MacPackage/
+          if-no-files-found: error
+
+  package:
+    needs: [build, pr-build, mac-package]
+    if: always() && needs.mac-package.result == 'success' && (needs.build.result == 'success' || needs.pr-build.result == 'success')
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
+      core_version: ${{ needs.pr-build.outputs.core_version || needs.build.outputs.core_version }}
+      source_sha: ${{ needs.pr-build.outputs.source_sha || needs.build.outputs.source_sha }}
+      artifact: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}
+      publish: ${{ needs.pr-build.outputs.publish || needs.build.outputs.publish }}
+      channel: ${{ needs.pr-build.outputs.channel || needs.build.outputs.channel }}
+      prerelease: ${{ needs.pr-build.outputs.prerelease || needs.build.outputs.prerelease }}
+      mac_version: ${{ needs.mac-package.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.pr-build.outputs.source_sha || needs.build.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}-windows
+          path: windows/CiWindows
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.mac-package.outputs.artifact }}
+          path: windows/MacPackage
+      - name: Assemble the three-folder installation ZIP
+        working-directory: windows
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
+          MAC_VERSION: ${{ needs.mac-package.outputs.version }}
+        run: |
+          $nativeFiles = @("CiWindows/portable/Evict.exe", "CiWindows/windows-installer/Evict-Setup-$env:RELEASE_VERSION.exe",
+            "MacPackage/Evict-macOS-$env:MAC_VERSION.zip")
+          foreach ($file in $nativeFiles) {
+            $expected = (Get-Content -LiteralPath "$file.sha256" -Raw).Trim()
+            if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or
+                (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) {
+              throw "Transferred native artifact checksum mismatch: $file"
+            }
+          }
+          python build/release_zip.py $env:RELEASE_VERSION --setup CiWindows/windows-installer --exe CiWindows/portable --macos "MacPackage/Evict-macOS-$env:MAC_VERSION.zip" --out Zip
+          if ($LASTEXITCODE -ne 0) { throw 'The installation ZIP failed native artifact validation' }
+          Expand-Archive -LiteralPath "Zip/Evict-$env:RELEASE_VERSION.zip" -DestinationPath CiDownload
+          python build/release_zip.py --check-folder CiDownload
+          if ($LASTEXITCODE -ne 0) { throw 'The installation ZIP must contain exactly portable/windows-installer/macOS' }
+      - name: Write source release notes
+        working-directory: windows
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
+          SOURCE_SHA: ${{ needs.pr-build.outputs.source_sha || needs.build.outputs.source_sha }}
+          WILL_PUBLISH: ${{ needs.pr-build.outputs.publish || needs.build.outputs.publish }}
+        run: |
+          $coreVersion = $env:RELEASE_VERSION.Split('-')[0]
+          $notes = @(); $inside = $false
+          foreach ($line in Get-Content -LiteralPath CHANGELOG.md -Encoding utf8) {
+            if ($line -match '^## ') {
+              if ($inside) { break }
+              $inside = $line -match ("^## " + [regex]::Escape($coreVersion) + "(?:\s|$)")
+              continue
+            }
+            if ($inside) { $notes += $line }
+          }
+          if (-not $notes -and $env:WILL_PUBLISH -eq 'true') { throw 'The frozen source changelog is missing its version section' }
+          if (-not $notes) { $notes = @('- Validation build; no release publication.') }
+          ($notes -join [char]10).Trim() | Set-Content -LiteralPath Zip/release-notes.md -Encoding utf8
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}
+          path: windows/CiDownload/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}-release-zip
+          path: windows/Zip/
+          if-no-files-found: error
+
+  validate-dispatch:
+    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/win-v')
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+      - name: Validate the version engine
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Validate Windows application
+        working-directory: windows
+        run: dotnet test tests/Evict.Core.Tests/Evict.Core.Tests.csproj -c Release
+
+  # Publication consumes validated files as data and executes no repository code with write credentials.
+  publish:
+    needs: package
+    if: always() && needs.package.result == 'success' && needs.package.outputs.publish == 'true'
     runs-on: windows-latest
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.pr-build.outputs.artifact }}
+          name: ${{ needs.package.outputs.artifact }}
           path: Download
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.pr-build.outputs.artifact }}-release-zip
+          name: ${{ needs.package.outputs.artifact }}-release-zip
           path: Zip
-
-      - name: Verify PR release assets before publication
-        id: beta_assets
+      - name: Verify native files, checksums and exact three-folder layout
+        id: assets
         shell: pwsh
         env:
-          BETA_VERSION: ${{ needs.pr-build.outputs.version }}
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+          MAC_VERSION: ${{ needs.package.outputs.mac_version }}
         run: |
-          $v = $env:BETA_VERSION
-          $files = @("Download/portable/Evict.exe", "Download/installer/Evict-Setup-$v.exe", "Zip/Evict-$v.zip")
-          $assetSizes = @{}
-          foreach ($file in $files) {
-            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing PR release asset: $file" }
-            $expected = (Get-Content -LiteralPath "$file.sha256" -Raw).Trim()
-            if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) {
-              throw "PR release checksum mismatch: $file"
-            }
-            $assetSizes[[IO.Path]::GetFileName($file)] = (Get-Item -LiteralPath $file).Length
-            $assetSizes[[IO.Path]::GetFileName("$file.sha256")] = (Get-Item -LiteralPath "$file.sha256").Length
+          $v = $env:RELEASE_VERSION; $mac = $env:MAC_VERSION
+          if ($v -notmatch '^\d+\.\d+\.\d+(?:-beta\.\d+\.\d+\.\d+)?$' -or $mac -notmatch '^\d+\.\d+\.\d+$') {
+            throw 'Invalid release artifact identity'
           }
-          "sizes=$($assetSizes | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
-          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath "Zip/Evict-$v.zip"))
+          $files = @("Download/portable/Evict.exe", "Download/windows-installer/Evict-Setup-$v.exe",
+            "Download/macOS/Evict-macOS-$mac.zip", "Zip/Evict-$v.zip")
+          $sizes = @{}
+          foreach ($file in $files) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing native artifact: $file" }
+            $item = Get-Item -LiteralPath $file
+            if ($item.LinkType -or $item.Length -le 0) { throw "Unsafe or empty artifact: $file" }
+            $expectedHash = (Get-Content -LiteralPath "$file.sha256" -Raw).Trim()
+            if ($expectedHash -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expectedHash) {
+              throw "Native artifact checksum mismatch: $file"
+            }
+            if (-not $file.StartsWith('Download/macOS/')) {
+              $sizes[$item.Name] = $item.Length
+              $sizes[[IO.Path]::GetFileName("$file.sha256")] = (Get-Item -LiteralPath "$file.sha256").Length
+            }
+          }
+          $product = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path Download/portable/Evict.exe).Path).ProductVersion -replace '\+.*$', ''
+          if ($product -ne $v) { throw 'Native Windows executable version differs from its release identity' }
+          $setup = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path "Download/windows-installer/Evict-Setup-$v.exe").Path)
+          if ("$($setup.FileMajorPart).$($setup.FileMinorPart).$($setup.FileBuildPart).$($setup.FilePrivatePart)" -ne "$($v.Split('-')[0]).0") {
+            throw 'Native Windows installer numeric version differs from its core version'
+          }
+          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath "Zip/Evict-$v.zip").Path)
           try {
-            $actual = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') } | Sort-Object)
-            $expected = @("installer/Evict-Setup-$v.exe", "installer/Evict-Setup-$v.exe.sha256", "portable/Evict.exe", "portable/Evict.exe.sha256") | Sort-Object
-            if (@(Compare-Object $expected $actual).Count -ne 0) { throw "PR release ZIP must contain only the installer/ and portable/ assets and checksums" }
+            $expected = @("portable/Evict.exe", "portable/Evict.exe.sha256",
+              "windows-installer/Evict-Setup-$v.exe", "windows-installer/Evict-Setup-$v.exe.sha256",
+              "macOS/Evict-macOS-$mac.zip", "macOS/Evict-macOS-$mac.zip.sha256") | Sort-Object
+            $actual = @($archive.Entries | ForEach-Object { $_.FullName } | Sort-Object)
+            if ($actual.Count -ne 6 -or ($actual -join [char]10) -cne ($expected -join [char]10)) {
+              throw 'The installation ZIP must contain only portable/windows-installer/macOS native files and checksums'
+            }
+            foreach ($entry in $archive.Entries) {
+              $stream = $entry.Open()
+              try { $hash = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash }
+              finally { $stream.Dispose() }
+              $path = Join-Path Download $entry.FullName
+              if ($hash -ne (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash) {
+                throw "The installation ZIP changed a validated native artifact: $($entry.FullName)"
+              }
+            }
           }
           finally { $archive.Dispose() }
+          "sizes=$($sizes | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
 
-      - name: Confirm PR release source and publication status
-        id: pr_release_guard
+      - name: Guard release channel, reviewed source and immutable tag
+        id: guard
         uses: actions/github-script@v9
         env:
-          BETA_SOURCE_SHA: ${{ needs.pr-build.outputs.source_sha }}
-          BETA_VERSION: ${{ needs.pr-build.outputs.version }}
-          PR_CHANNEL: ${{ needs.pr-build.outputs.channel }}
-          PR_PRERELEASE: ${{ needs.pr-build.outputs.prerelease }}
-          PR_RELEASE_TEST: ${{ needs.pr-build.outputs.release_test }}
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+          RELEASE_SOURCE: ${{ needs.package.outputs.source_sha }}
+          RELEASE_CHANNEL: ${{ needs.package.outputs.channel }}
+          RELEASE_PRERELEASE: ${{ needs.package.outputs.prerelease }}
+          MAC_VERSION: ${{ needs.package.outputs.mac_version }}
         with:
           script: |
-            const version = process.env.BETA_VERSION;
-            const channel = process.env.PR_CHANNEL;
-            const test = process.env.PR_RELEASE_TEST === 'true';
-            const prerelease = process.env.PR_PRERELEASE === 'true';
-            if (!['stable', 'beta'].includes(channel) || prerelease !== (channel === 'beta') ||
-                (channel === 'stable' && !test) ||
-                !(channel === 'stable' ? /^\d+\.\d+\.\d+$/ : /^\d+\.\d+\.\d+-beta\.\d+\.\d+\.\d+$/).test(version)) {
-              throw new Error('Invalid trusted PR release channel.');
-            }
-            if (test) {
-              const pr = context.payload.pull_request;
-              const sender = context.payload.sender;
+            const version = process.env.RELEASE_VERSION;
+            const source = process.env.RELEASE_SOURCE;
+            const isPr = context.eventName === 'pull_request';
+            const prerelease = isPr;
+            const pr = context.payload.pull_request;
+            if (!/^[a-f0-9]{40}$/.test(source) ||
+                process.env.RELEASE_CHANNEL !== (isPr ? 'beta' : 'stable') ||
+                process.env.RELEASE_PRERELEASE !== String(prerelease)) throw new Error('Invalid source or release channel.');
+            if (isPr) {
+              const {data: current} = await github.rest.pulls.get({...context.repo, pull_number: pr.number});
               if (pr.head.repo.full_name !== process.env.GITHUB_REPOSITORY ||
-                  pr.base.repo.full_name !== process.env.GITHUB_REPOSITORY ||
-                  pr.user.type !== 'User' || sender?.type !== 'User' ||
-                  /\[bot\]$/.test(pr.user.login) || /\[bot\]$/.test(sender.login)) {
-                throw new Error('Release tests require a same-repository human PR.');
+                  pr.base.repo.full_name !== process.env.GITHUB_REPOSITORY || pr.base.ref !== 'main' ||
+                  pr.user.type !== 'User' || context.payload.sender?.type !== 'User' ||
+                  /\[bot\]$/.test(pr.user.login) || /\[bot\]$/.test(context.payload.sender.login) ||
+                  current.state !== 'open' || current.head.sha !== pr.head.sha ||
+                  !new RegExp('^\\d+\\.\\d+\\.\\d+-beta\\.' + process.env.GITHUB_RUN_NUMBER + '\\.' +
+                    pr.number + '\\.' + process.env.GITHUB_RUN_ATTEMPT + '$').test(version)) {
+                throw new Error('Every PR release must be a beta of the current trusted reviewed head.');
               }
-              const lines = (pr.body || '').split(/\r?\n/).filter(line => /^Release-Test-Windows:/i.test(line));
-              const intent = lines.length === 1 ? lines[0].match(/^Release-Test-Windows:[ \t]+(stable|beta)[ \t]+(\d+\.\d+\.\d+)[ \t]*$/i) : null;
-              if (!intent || intent[1].toLowerCase() !== channel || intent[2] !== version.split('-')[0]) {
-                throw new Error('Release-test publication does not match the explicit PR request.');
+            } else {
+              if (!/^\d+\.\d+\.\d+$/.test(version) ||
+                  !['push', 'workflow_dispatch'].includes(context.eventName) ||
+                  !(context.ref === 'refs/heads/main' || context.ref === 'refs/tags/win-v' + version)) {
+                throw new Error('Stable releases can be built only from main or its validated stable tags.');
+              }
+              const {data: main} = await github.rest.git.getRef({...context.repo, ref: 'heads/main'});
+              const {data: comparison} = await github.rest.repos.compareCommits({...context.repo, base: source, head: main.object.sha});
+              if (!['ahead', 'identical'].includes(comparison.status)) throw new Error('Stable release source is not part of main.');
+              if (version === '1.10.0' && source === 'cd62afeedd2838cfa1dda814ed8c6b9369e794ed') {
+                throw new Error('The retired stable PR test cannot be republished.');
               }
             }
             async function workflows(commitSha) {
               const {data: commit} = await github.rest.git.getCommit({...context.repo, commit_sha: commitSha});
               const {data: root} = await github.rest.git.getTree({...context.repo, tree_sha: commit.tree.sha});
-              const gh = root.tree.find(entry => entry.path === '.github' && entry.type === 'tree');
+              const gh = root.tree.find(e => e.path === '.github' && e.type === 'tree');
               if (!gh) return null;
               const {data: config} = await github.rest.git.getTree({...context.repo, tree_sha: gh.sha});
-              return config.tree.find(entry => entry.path === 'workflows' && entry.type === 'tree')?.sha ?? null;
+              return config.tree.find(e => e.path === 'workflows' && e.type === 'tree')?.sha ?? null;
             }
-            const {data: repo} = await github.rest.repos.get(context.repo);
-            const {data: base} = await github.rest.git.getRef({...context.repo, ref: 'heads/' + repo.default_branch});
-            if (await workflows(base.object.sha) !== await workflows(process.env.BETA_SOURCE_SHA)) {
-              throw new Error('Default workflows changed during the PR build; rerun with a fresh source snapshot.');
+            if (isPr) {
+              const {data: repo} = await github.rest.repos.get(context.repo);
+              const {data: main} = await github.rest.git.getRef({...context.repo, ref: 'heads/' + repo.default_branch});
+              if (await workflows(main.object.sha) !== await workflows(source)) {
+                throw new Error('Default workflows changed during the beta build; rerun with a fresh source.');
+              }
             }
-            const releaseTag = 'win-v' + version;
+            const {data: macSource} = await github.rest.repos.getContent({
+              ...context.repo, path: 'macos/Sources/EvictKit/Version.swift', ref: source
+            });
+            const nativeMacVersion = Buffer.from(macSource.content, 'base64').toString('utf8')
+              .match(/public static let current\s*=\s*"([^"]+)"/)?.[1];
+            if (nativeMacVersion !== process.env.MAC_VERSION) throw new Error('Packaged Mac version differs from the frozen source.');
+            const tag = 'win-v' + version;
             let release;
-            try { release = (await github.rest.repos.getReleaseByTag({...context.repo, tag: releaseTag})).data; }
+            try { release = (await github.rest.repos.getReleaseByTag({...context.repo, tag})).data; }
             catch (error) { if (error.status !== 404) throw error; }
-            if (release && release.prerelease !== prerelease) throw new Error('The release tag is reserved for another channel.');
-            if (release && test && !(release.body || '').split(/\r?\n/).includes('Original PR head: ' + context.payload.pull_request.head.sha)) {
-              throw new Error('The release tag belongs to another reviewed PR head.');
+            if (release && (release.prerelease !== prerelease ||
+                (isPr && !(release.body || '').split(/\r?\n/).includes('Original PR head: ' + pr.head.sha)))) {
+              throw new Error('The version is reserved by another channel or reviewed source.');
             }
-            const ref = 'tags/' + releaseTag;
             let target;
-            try { target = (await github.rest.git.getRef({...context.repo, ref})).data.object; }
+            try { target = (await github.rest.git.getRef({...context.repo, ref: 'tags/' + tag})).data.object; }
             catch (error) {
               if (error.status !== 404) throw error;
               if (release) throw new Error('A release exists without its immutable source tag.');
-              target = (await github.rest.git.createRef({...context.repo, ref: 'refs/' + ref, sha: process.env.BETA_SOURCE_SHA})).data.object;
+              target = (await github.rest.git.createRef({...context.repo, ref: 'refs/tags/' + tag, sha: source})).data.object;
             }
             while (target.type === 'tag') target = (await github.rest.git.getTag({...context.repo, tag_sha: target.sha})).data.object;
-            if (target.type !== 'commit' || target.sha !== process.env.BETA_SOURCE_SHA) {
-              throw new Error('The PR release tag already identifies different source; refusing to overwrite it.');
+            if (target.type !== 'commit' || target.sha !== source) throw new Error('Release tag already points to another source; refusing to overwrite it.');
+            core.setOutput('publish', String(!release || release.draft));
+            core.setOutput('prerelease', String(prerelease));
+            core.setOutput('name', 'Evict ' + version + ' for Windows and macOS' + (isPr ? ' (PR #' + pr.number + ' beta)' : ''));
+            let body = fsReadNotes();
+            function fsReadNotes() {
+              const fs = require('fs');
+              const note = fs.lstatSync('Zip/release-notes.md');
+              if (!note.isFile() || note.isSymbolicLink() || note.size > 100000) throw new Error('Unexpected release notes artifact.');
+              return fs.readFileSync('Zip/release-notes.md', 'utf8').trim();
             }
-            if (release && !release.draft) {
-              core.setOutput('publish', 'false');
-              core.info('The release is already published; its metadata and assets stay unchanged.');
-              return;
-            }
-            core.setOutput('publish', 'true');
+            body += '\n\nRelease channel: ' + (isPr ? 'beta' : 'stable') +
+              '\nBuilt and tested release source: ' + source +
+              (isPr ? '\nOriginal PR head: ' + pr.head.sha +
+                '\nBeta preview of [PR #' + pr.number + '](https://github.com/' + process.env.GITHUB_REPOSITORY + '/pull/' + pr.number + ').' : '\nSource branch: main') +
+              '\nThe installation ZIP contains exactly portable/, windows-installer/ and macOS/, with real native builds and SHA-256 checksums.' +
+              '\nmacOS bundle version: ' + process.env.MAC_VERSION +
+              (isPr ? '\nOnly managed core version metadata differs from the reviewed application source; workflows match main.' : '');
+            core.setOutput('body', body);
 
-      # Keep the release a draft until every asset is uploaded and its name, size and source tag are verified.
-      - name: Upload PR release draft
-        id: beta_release
-        if: steps.pr_release_guard.outputs.publish == 'true'
+      - name: Upload complete draft
+        id: release
+        if: steps.guard.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: win-v${{ needs.pr-build.outputs.version }}
-          target_commitish: ${{ needs.pr-build.outputs.source_sha }}
-          name: "Evict ${{ needs.pr-build.outputs.version }} for Windows (${{ needs.pr-build.outputs.release_test == 'true' && format('release test PR #{0}', github.event.pull_request.number) || format('PR #{0}', github.event.pull_request.number) }})"
+          tag_name: win-v${{ needs.package.outputs.version }}
+          target_commitish: ${{ needs.package.outputs.source_sha }}
+          name: ${{ steps.guard.outputs.name }}
+          body: ${{ steps.guard.outputs.body }}
           draft: true
-          prerelease: ${{ needs.pr-build.outputs.prerelease == 'true' }}
+          prerelease: ${{ steps.guard.outputs.prerelease == 'true' }}
           make_latest: false
           fail_on_unmatched_files: true
-          body: |
-            ${{ needs.pr-build.outputs.release_test == 'true' && 'Explicit installed-update release test' || 'Beta preview' }} of [PR #${{ github.event.pull_request.number }}](https://github.com/${{ github.repository }}/pull/${{ github.event.pull_request.number }}).
-            Release channel: ${{ needs.pr-build.outputs.channel }}
-            Release-test request: ${{ needs.pr-build.outputs.release_test }}
-            Original PR head: ${{ github.event.pull_request.head.sha }}
-            Built and tested release source: ${{ needs.pr-build.outputs.source_sha }}
-            All application, test and documentation files match the PR head. Only .github/workflows matches the default branch so GitHub Actions can publish without an additional token.
-            The release ZIP contains only installer/ and portable/, each with its SHA-256 checksum.
           files: |
             Download/portable/Evict.exe
             Download/portable/Evict.exe.sha256
-            Download/installer/*.exe
-            Download/installer/*.sha256
+            Download/windows-installer/*.exe
+            Download/windows-installer/*.sha256
             Zip/Evict-*.zip
             Zip/Evict-*.zip.sha256
 
-      - name: Publish verified PR release
-        if: steps.pr_release_guard.outputs.publish == 'true'
+      - name: Publish verified beta or main release
+        if: steps.guard.outputs.publish == 'true'
         uses: actions/github-script@v9
         env:
-          BETA_VERSION: ${{ needs.pr-build.outputs.version }}
-          BETA_SOURCE_SHA: ${{ needs.pr-build.outputs.source_sha }}
-          BETA_RELEASE_ID: ${{ steps.beta_release.outputs.id }}
-          BETA_ASSET_SIZES: ${{ steps.beta_assets.outputs.sizes }}
-          PR_CHANNEL: ${{ needs.pr-build.outputs.channel }}
-          PR_PRERELEASE: ${{ needs.pr-build.outputs.prerelease }}
-          PR_RELEASE_TEST: ${{ needs.pr-build.outputs.release_test }}
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+          RELEASE_SOURCE: ${{ needs.package.outputs.source_sha }}
+          RELEASE_ID: ${{ steps.release.outputs.id }}
+          RELEASE_ASSET_SIZES: ${{ steps.assets.outputs.sizes }}
         with:
           script: |
-            const version = process.env.BETA_VERSION;
-            const prerelease = process.env.PR_PRERELEASE === 'true';
-            if (prerelease !== (process.env.PR_CHANNEL === 'beta') ||
-                (!prerelease && process.env.PR_RELEASE_TEST !== 'true')) throw new Error('Invalid PR release promotion.');
-            const release_id = Number(process.env.BETA_RELEASE_ID);
-            if (!Number.isSafeInteger(release_id) || release_id <= 0) throw new Error('No draft release was created.');
+            const version = process.env.RELEASE_VERSION;
+            const prerelease = context.eventName === 'pull_request';
+            if (prerelease && !/^\d+\.\d+\.\d+-beta\.\d+\.\d+\.\d+$/.test(version)) throw new Error('PR promotion requires a beta.');
+            if (!prerelease && !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Main promotion requires x.y.z.');
+            const release_id = Number(process.env.RELEASE_ID);
+            if (!Number.isSafeInteger(release_id) || release_id <= 0) throw new Error('No release draft was created.');
             const {data: release} = await github.rest.repos.getRelease({...context.repo, release_id});
             if (!release.draft || release.prerelease !== prerelease || release.tag_name !== 'win-v' + version) {
-              throw new Error('The PR draft has unexpected release metadata.');
+              throw new Error('The release draft has unexpected channel metadata.');
             }
             const assets = await github.paginate(github.rest.repos.listReleaseAssets, {...context.repo, release_id, per_page: 100});
-            const sizes = JSON.parse(process.env.BETA_ASSET_SIZES);
-            const expected = ['Evict.exe', 'Evict.exe.sha256', 'Evict-Setup-' + version + '.exe',
+            const sizes = JSON.parse(process.env.RELEASE_ASSET_SIZES);
+            const names = ['Evict.exe', 'Evict.exe.sha256', 'Evict-Setup-' + version + '.exe',
               'Evict-Setup-' + version + '.exe.sha256', 'Evict-' + version + '.zip', 'Evict-' + version + '.zip.sha256'].sort();
-            if (JSON.stringify(assets.map(a => a.name).sort()) !== JSON.stringify(expected) ||
-                assets.some(a => a.size <= 0 || a.size !== sizes[a.name] || a.state !== 'uploaded')) {
-              throw new Error('PR draft assets are incomplete; leaving the release unpublished.');
+            if (JSON.stringify(assets.map(a => a.name).sort()) !== JSON.stringify(names) ||
+                assets.some(a => a.state !== 'uploaded' || a.size <= 0 || a.size !== sizes[a.name])) {
+              throw new Error('Release assets are incomplete; leaving the draft unpublished.');
             }
             let target = (await github.rest.git.getRef({...context.repo, ref: 'tags/win-v' + version})).data.object;
             while (target.type === 'tag') target = (await github.rest.git.getTag({...context.repo, tag_sha: target.sha})).data.object;
-            if (target.type !== 'commit' || target.sha !== process.env.BETA_SOURCE_SHA) {
-              throw new Error('PR release tag does not point to the tested source commit.');
-            }
+            if (target.type !== 'commit' || target.sha !== process.env.RELEASE_SOURCE) throw new Error('Release tag does not identify its tested source.');
             let makeLatest = 'false';
             if (!prerelease) {
               makeLatest = 'true';
@@ -829,24 +1086,24 @@ jobs:
                 const match = existing.tag_name.match(/^(?:win-v|v)(\d+)\.(\d+)\.(\d+)$/);
                 if (!match) continue;
                 const previous = match.slice(1).map(Number);
-                let comparison = 0;
-                for (let i = 0; i < 3 && comparison === 0; i++) comparison = Math.sign(candidate[i] - previous[i]);
-                if (comparison <= 0) makeLatest = 'false';
+                let cmp = 0;
+                for (let i = 0; i < 3 && cmp === 0; i++) cmp = Math.sign(candidate[i] - previous[i]);
+                if (cmp <= 0) makeLatest = 'false';
               }
             }
             const {data: published} = await github.rest.repos.updateRelease({
               ...context.repo, release_id, draft: false, prerelease, make_latest: makeLatest
             });
-            if (published.draft || published.prerelease !== prerelease) throw new Error('PR publication was not confirmed.');
-            await core.summary.addHeading('Windows ' + process.env.PR_CHANNEL + ' published')
+            if (published.draft || published.prerelease !== prerelease) throw new Error('Release publication was not confirmed.');
+            await core.summary.addHeading(prerelease ? 'Beta published' : 'Main release published')
               .addLink(version, published.html_url).write();
 
   # Published update checks execute reviewed source and installers only in a separate read-only job.
-  verify-release-test:
-    needs: [pr-build, publish-beta]
-    if: always() && needs.pr-build.result == 'success' && needs.pr-build.outputs.release_test == 'true' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]' && (needs.publish-beta.result == 'success' || (needs.publish-beta.result == 'skipped' && needs.pr-build.outputs.publish == 'false'))
+  verify-published-update:
+    needs: [package, publish]
+    if: always() && needs.package.result == 'success' && needs.package.outputs.publish == 'true' && needs.publish.result == 'success'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
     defaults:
@@ -855,7 +1112,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.pr-build.outputs.release_source_sha }}
+          ref: ${{ needs.package.outputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Set up .NET 8 for published update checks
@@ -863,16 +1120,21 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
       - name: Download and verify published release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.pr-build.outputs.version }}
-          RELEASE_CHANNEL: ${{ needs.pr-build.outputs.channel }}
-          RELEASE_SOURCE_SHA: ${{ needs.pr-build.outputs.release_source_sha }}
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.package.outputs.channel }}
+          RELEASE_SOURCE_SHA: ${{ needs.package.outputs.source_sha }}
         run: |
           $v = $env:RELEASE_VERSION
           $channel = $env:RELEASE_CHANNEL
+          $mac = '${{ needs.package.outputs.mac_version }}'
           if ($v -notmatch '^\d+\.\d+\.\d+(?:-beta\.\d+\.\d+\.\d+)?$' -or $channel -notin @("stable", "beta")) {
             throw "Invalid published release-test identity"
           }
@@ -924,12 +1186,13 @@ jobs:
           if ($setupCore -ne "$($v.Split('-')[0]).0") { throw "Downloaded installer numeric version mismatch: $setupCore" }
           $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "PublishedAssets/Evict-$v.zip").Path)
           try {
-            $expectedEntries = @("installer/Evict-Setup-$v.exe", "installer/Evict-Setup-$v.exe.sha256", "portable/Evict.exe", "portable/Evict.exe.sha256") | Sort-Object
+            $expectedEntries = @("windows-installer/Evict-Setup-$v.exe", "windows-installer/Evict-Setup-$v.exe.sha256", "portable/Evict.exe", "portable/Evict.exe.sha256", "macOS/Evict-macOS-$mac.zip", "macOS/Evict-macOS-$mac.zip.sha256") | Sort-Object
             $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') } | Sort-Object)
             if ($entries.Count -ne $expectedEntries.Count -or ($entries -join [char]10) -cne ($expectedEntries -join [char]10)) {
-              throw "Downloaded ZIP violates the installer/portable layout"
+              throw "Downloaded ZIP violates the portable/windows-installer/macOS layout"
             }
             foreach ($entry in $archive.Entries) {
+              if ($entry.FullName.StartsWith('macOS/')) { continue }
               $name = [IO.Path]::GetFileName($entry.FullName.Replace('\', '/'))
               $stream = $entry.Open()
               try { $zipHash = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash }
@@ -941,45 +1204,68 @@ jobs:
           finally { $archive.Dispose() }
           Write-Host "Published $channel $v verified: six assets, SHA256, ZIP, source tag, ProductVersion $product and installer $setupCore"
 
+      - name: Verify downloaded ZIP native Mac bundle and frozen source version
+        env:
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+          MAC_VERSION: ${{ needs.package.outputs.mac_version }}
+        shell: pwsh
+        run: |
+          @'
+          import importlib.util, os, pathlib, re, zipfile
+          spec = importlib.util.spec_from_file_location("release_zip", "build/release_zip.py")
+          helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
+          archive = pathlib.Path("PublishedAssets", "Evict-" + os.environ["RELEASE_VERSION"] + ".zip")
+          helper.check_zip(archive)
+          source = pathlib.Path("../macos/Sources/EvictKit/Version.swift").read_text()
+          expected = re.search(r'public static let current\s*=\s*"([^"]+)"', source).group(1)
+          assert expected == os.environ["MAC_VERSION"]
+          with zipfile.ZipFile(archive) as package:
+              with package.open("macOS/Evict-macOS-" + expected + ".zip") as native:
+                  assert helper.check_macos_archive(native) == expected
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'Downloaded Mac build or exact three-folder package verification failed' }
+
       - name: Restore published updater test dependencies
         run: dotnet restore tests/Evict.Core.Tests/Evict.Core.Tests.csproj
 
       - name: Test installed update discovery and verified download
         env:
-          EVICT_PUBLISHED_UPDATE_TEST_VERSION: ${{ needs.pr-build.outputs.version }}
-          EVICT_PUBLISHED_UPDATE_TEST_CHANNEL: ${{ needs.pr-build.outputs.channel }}
-        run: dotnet test tests/Evict.Core.Tests/Evict.Core.Tests.csproj -c Release --no-restore -p:Version=${{ needs.pr-build.outputs.version }} -p:InformationalVersion=${{ needs.pr-build.outputs.version }} --filter FullyQualifiedName~PublishedUpdateScenarioTests --logger "trx;LogFileName=published-update.trx"
+          EVICT_PUBLISHED_UPDATE_TEST_VERSION: ${{ needs.package.outputs.version }}
+          EVICT_PUBLISHED_UPDATE_TEST_CHANNEL: ${{ needs.package.outputs.channel }}
+        run: dotnet test tests/Evict.Core.Tests/Evict.Core.Tests.csproj -c Release --no-restore -p:Version=${{ needs.package.outputs.version }} -p:InformationalVersion=${{ needs.package.outputs.version }} --filter FullyQualifiedName~PublishedUpdateScenarioTests --logger "trx;LogFileName=published-update.trx"
 
       - name: Native smoke against the downloaded installer
         shell: pwsh
         run: |
-          pwsh -NoProfile -File build/installer_smoke.ps1 -SetupPath "PublishedAssets/Evict-Setup-${{ needs.pr-build.outputs.version }}.exe" -PackagedExe "PublishedAssets/Evict.exe"
+          pwsh -NoProfile -File build/installer_smoke.ps1 -SetupPath "PublishedAssets/Evict-Setup-${{ needs.package.outputs.version }}.exe" -PackagedExe "PublishedAssets/Evict.exe"
           if ($LASTEXITCODE -ne 0) { throw "Downloaded installer smoke failed with exit code $LASTEXITCODE" }
 
   cleanup-beta-source:
-    needs: [prepare-beta, pr-build, publish-beta]
-    if: always() && needs.prepare-beta.outputs.temp_ref != ''
+    needs: [prepare-beta, freeze-beta, pr-build, mac-package, package, publish, verify-published-update]
+    if: always() && github.event_name == 'pull_request' && (needs.prepare-beta.outputs.temp_ref != '' || needs.freeze-beta.outputs.source_sha != '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Remove this run's temporary source ref
-        uses: actions/github-script@v9
+      - uses: actions/github-script@v9
         env:
-          BETA_TEMP_REF: ${{ needs.prepare-beta.outputs.temp_ref }}
-          BETA_SOURCE_SHA: ${{ needs.prepare-beta.outputs.source_sha }}
+          PREPARED_REF: ${{ needs.prepare-beta.outputs.temp_ref }}
+          PREPARED_SOURCE: ${{ needs.prepare-beta.outputs.source_sha }}
+          FROZEN_SOURCE: ${{ needs.freeze-beta.outputs.source_sha }}
         with:
           script: |
-            const ref = process.env.BETA_TEMP_REF;
-            const prefix = 'heads/beta-build/pr-' + context.payload.pull_request.number + '/run-' + context.runId + '-attempt-';
-            const attempt = ref.startsWith(prefix) ? ref.slice(prefix.length) : '';
-            if (!/^[1-9]\d*$/.test(attempt) || Number(attempt) > Number(process.env.GITHUB_RUN_ATTEMPT)) {
-              throw new Error('Refusing to remove an unexpected beta source ref.');
+            const suffix = '/pr-' + context.payload.pull_request.number + '/run-' + context.runId + '-attempt-' + process.env.GITHUB_RUN_ATTEMPT;
+            const owned = [
+              {ref: process.env.PREPARED_REF, expected: 'heads/beta-build' + suffix, sha: process.env.PREPARED_SOURCE},
+              {ref: process.env.FROZEN_SOURCE ? 'heads/beta-versioned' + suffix : '', expected: 'heads/beta-versioned' + suffix, sha: process.env.FROZEN_SOURCE}
+            ];
+            for (const {ref, expected, sha} of owned) {
+              if (!ref) continue;
+              if (ref !== expected || !/^[a-f0-9]{40}$/.test(sha)) throw new Error('Unexpected temporary source ref identity.');
+              let current;
+              try { current = (await github.rest.git.getRef({...context.repo, ref})).data; }
+              catch (error) { if (error.status === 404) continue; throw error; }
+              if (current.object.sha !== sha) throw new Error('Temporary source ref changed; leaving it intact.');
+              await github.rest.git.deleteRef({...context.repo, ref});
             }
-            let current;
-            try { current = (await github.rest.git.getRef({...context.repo, ref})).data; }
-            catch (error) { if (error.status === 404) return; throw error; }
-            if (current.object.sha !== process.env.BETA_SOURCE_SHA) {
-              throw new Error('Temporary source ref changed; leaving it intact.');
-            }
-            await github.rest.git.deleteRef({...context.repo, ref});
+
