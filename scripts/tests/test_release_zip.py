@@ -196,6 +196,45 @@ class InstallationZipTests(unittest.TestCase):
         with self.assertRaises(release_zip.ZipError):
             self.build()
 
+    def test_accept_udif_standalone_zero_and_one_segment_conventions(self):
+        # Each field may be zero in standalone vendor images, or explicitly one.
+        for segment_number, segment_count in ((0, 0), (0, 1), (1, 0), (1, 1)):
+            raw = bytearray(dmg_bytes())
+            start = len(raw) - 512
+            raw[start + 56:start + 60] = segment_number.to_bytes(4, "big")
+            raw[start + 60:start + 64] = segment_count.to_bytes(4, "big")
+            self.mac.write_bytes(raw)
+            with self.subTest(number=segment_number, count=segment_count):
+                release_zip.check_zip(self.build())
+
+    def test_reject_udif_split_segments_with_zero_or_one_legacy_markers(self):
+        for number, count, running_offset in ((0, 2, 0), (1, 2, 0), (2, 2, 256),
+                                              (2, 1, 0), (0, 0, 1), (1, 0, 256)):
+            raw = bytearray(dmg_bytes())
+            start = len(raw) - 512
+            raw[start + 16:start + 24] = running_offset.to_bytes(8, "big")
+            raw[start + 56:start + 60] = number.to_bytes(4, "big")
+            raw[start + 60:start + 64] = count.to_bytes(4, "big")
+            with self.subTest(number=number, count=count, running_offset=running_offset):
+                with self.assertRaisesRegex(release_zip.ZipError, "segmented macOS"):
+                    release_zip.check_dmg(io.BytesIO(raw), len(raw), "split image")
+
+    def test_udif_rejections_report_numeric_trailer_fields(self):
+        raw = bytearray(dmg_bytes())
+        start = len(raw) - 512
+        raw[start + 56:start + 60] = (2).to_bytes(4, "big")
+        self.mac.write_bytes(raw)
+        with self.assertRaises(release_zip.ZipError) as error:
+            self.build()
+        message = str(error.exception)
+        for field in ("version=4", "header_size=512", "flags=1",
+                      "running_data_offset=0", "data_offset=0", "data_length=",
+                      "resource_offset=0", "resource_length=0",
+                      "segment_number=2", "segment_count=1", "xml_offset=",
+                      "xml_length=", "image_variant=1", "sector_count=1",
+                      f"file_size={len(raw)}"):
+            self.assertIn(field, message)
+
     def test_reject_bad_udif_header_or_segment_fields(self):
         for offset, value, width in ((4, 3, 4), (8, 0, 4), (56, 2, 4),
                                      (60, 2, 4), (16, 1, 8)):

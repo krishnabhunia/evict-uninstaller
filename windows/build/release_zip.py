@@ -264,14 +264,33 @@ def check_dmg(stream, size, label):
     def number(start, length=8):
         return int.from_bytes(trailer[start:start + length], "big")
 
-    if number(4, 4) != 4 or number(8, 4) != 512:
-        raise ZipError(f"{label}: unsupported macOS UDIF header")
-    if number(56, 4) != 1 or number(60, 4) != 1 or number(16) != 0:
-        raise ZipError(f"{label}: segmented macOS disk images are not supported")
+    fields = {
+        "version": number(4, 4), "header_size": number(8, 4),
+        "flags": number(12, 4), "running_data_offset": number(16),
+        "data_offset": number(24), "data_length": number(32),
+        "resource_offset": number(40), "resource_length": number(48),
+        "segment_number": number(56, 4), "segment_count": number(60, 4),
+        "xml_offset": number(216), "xml_length": number(224),
+        "image_variant": number(488, 4), "sector_count": number(492),
+        "file_size": size,
+    }
+    details = ", ".join(f"{key}={value}" for key, value in fields.items())
+    if fields["version"] != 4 or fields["header_size"] != 512:
+        raise ZipError(f"{label}: unsupported macOS UDIF header ({details})")
+    # Standalone UDIF writers can leave either segment field at zero.
+    # VirtualBox validates segment count <= 1 and number in {0, 1} independently:
+    # https://github.com/mirror/vbox/blob/master/src/VBox/Storage/DMG.cpp
+    # A later segment, multiple segments, or an aggregate data offset still fails.
+    if (
+        fields["segment_number"] not in (0, 1)
+        or fields["segment_count"] not in (0, 1)
+        or fields["running_data_offset"] != 0
+    ):
+        raise ZipError(f"{label}: segmented macOS disk images are not supported ({details})")
     boundary = size - 512
-    data_offset, data_length = number(24), number(32)
-    resource_offset, resource_length = number(40), number(48)
-    xml_offset, xml_length = number(216), number(224)
+    data_offset, data_length = fields["data_offset"], fields["data_length"]
+    resource_offset, resource_length = fields["resource_offset"], fields["resource_length"]
+    xml_offset, xml_length = fields["xml_offset"], fields["xml_length"]
     if (
         not 0 < data_length <= boundary
         or data_offset + data_length > boundary
@@ -279,19 +298,19 @@ def check_dmg(stream, size, label):
         or xml_offset < data_offset + data_length
         or xml_offset + xml_length > boundary
         or (resource_length and resource_offset + resource_length > boundary)
-        or number(492) == 0
+        or fields["sector_count"] == 0
     ):
-        raise ZipError(f"{label}: invalid macOS UDIF data or metadata bounds")
+        raise ZipError(f"{label}: invalid macOS UDIF data or metadata bounds ({details})")
     stream.seek(xml_offset)
     try:
         metadata = plistlib.loads(stream.read(xml_length))
     except (ValueError, plistlib.InvalidFileException, ExpatError) as error:
-        raise ZipError(f"{label}: invalid macOS UDIF metadata") from error
+        raise ZipError(f"{label}: invalid macOS UDIF metadata ({details})") from error
     if not isinstance(metadata, dict) or not isinstance(metadata.get("resource-fork"), dict):
-        raise ZipError(f"{label}: macOS UDIF metadata lacks a resource dictionary")
+        raise ZipError(f"{label}: macOS UDIF metadata lacks a resource dictionary ({details})")
     blocks = metadata["resource-fork"].get("blkx")
     if not isinstance(blocks, list) or not blocks:
-        raise ZipError(f"{label}: macOS UDIF metadata lacks image block descriptors")
+        raise ZipError(f"{label}: macOS UDIF metadata lacks image block descriptors ({details})")
 
 
 def installation_root(version):
