@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Build a release ZIP with portable/, windows-installer/ and macOS/ only.
+"""Build and verify Evict_<version>.zip installation downloads.
 
-python build/release_zip.py 1.11.0-beta.32.13.1 --setup Installed --exe Portable \
-    --macos ../macos/build/Evict-0.2.0.zip --out Zip
-python build/release_zip.py --check Zip/Evict-1.11.0-beta.32.13.1.zip
+New downloads contain one Evict_<version>/ root with exactly three payloads:
+portable/Evict_<version>.exe, windows-x64/Evict_<version>.exe and
+macOS/Evict_<version>.dmg. SHA-256 sidecars remain outside the installation ZIP.
+
+python build/release_zip.py 1.12.1-beta.41.15.1 --setup Installed --exe Portable \
+    --macos ../macos/build/Evict.dmg --out Zip
+python build/release_zip.py --check Zip/Evict_1.12.1-beta.41.15.1.zip
 python build/release_zip.py --check-folder CiDownload
 
-The macOS payload must be a built Evict.app ZIP, not an empty placeholder.
-Its original ZIP bytes preserve executable permissions and bundle symlinks.
+Legacy release readers remain available for importing historical builds.
+DMG trailer checks are structural; macOS CI mounts and verifies the native app.
 Python standard library only.
 """
 import argparse
@@ -23,7 +27,10 @@ import tempfile
 import zipfile
 from xml.parsers.expat import ExpatError
 
-FOLDERS = ("portable", "windows-installer", "macOS")
+FOLDERS = ("portable", "windows-x64", "macOS")
+LEGACY_FOLDERS = ("portable", "windows-installer", "macOS")
+MAX_PAYLOAD_BYTES = 2 * 1024 * 1024 * 1024
+MAX_DMG_METADATA_BYTES = 16 * 1024 * 1024
 CORE_VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 VERSION = CORE_VERSION + r"(?:-beta\.[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*)?"
 MACHO_MAGICS = {
@@ -204,13 +211,13 @@ def check_macos_archive(file):
         raise ZipError(f"invalid macOS app ZIP: {error}") from error
 
 
-def _check_payloads(names, open_payload, size_payload):
+def _check_legacy_payloads(names, open_payload, size_payload):
     if len(names) != 6 or len(set(names)) != 6:
         raise ZipError("release ZIP must contain exactly three payload files and their SHA-256 sidecars")
     for name in names:
         parts = safe_name(name)
-        if len(parts) != 2 or parts[0] not in FOLDERS:
-            raise ZipError(f"release ZIP permits files only inside {', '.join(FOLDERS)}: {name}")
+        if len(parts) != 2 or parts[0] not in LEGACY_FOLDERS:
+            raise ZipError(f"release ZIP permits files only inside {', '.join(LEGACY_FOLDERS)}: {name}")
     setup_names = [name for name in names if re.fullmatch(
         "windows-installer/Evict-Setup-(" + VERSION + r")\.exe", name
     )]
@@ -245,6 +252,83 @@ def _check_payloads(names, open_payload, size_payload):
         raise ZipError("macOS archive name and bundle version differ")
 
 
+def check_dmg(stream, size, label):
+    """Check an ordinary, unsegmented UDIF image without extracting its contents."""
+    if size < 513 or size > MAX_PAYLOAD_BYTES:
+        raise ZipError(f"{label}: invalid macOS disk image size")
+    stream.seek(size - 512)
+    trailer = stream.read(512)
+    if len(trailer) != 512 or trailer[:4] != b"koly":
+        raise ZipError(f"{label}: missing macOS UDIF disk image trailer")
+
+    def number(start, length=8):
+        return int.from_bytes(trailer[start:start + length], "big")
+
+    if number(4, 4) != 4 or number(8, 4) != 512:
+        raise ZipError(f"{label}: unsupported macOS UDIF header")
+    if number(56, 4) != 1 or number(60, 4) != 1 or number(16) != 0:
+        raise ZipError(f"{label}: segmented macOS disk images are not supported")
+    boundary = size - 512
+    data_offset, data_length = number(24), number(32)
+    resource_offset, resource_length = number(40), number(48)
+    xml_offset, xml_length = number(216), number(224)
+    if (
+        not 0 < data_length <= boundary
+        or data_offset + data_length > boundary
+        or not 0 < xml_length <= MAX_DMG_METADATA_BYTES
+        or xml_offset < data_offset + data_length
+        or xml_offset + xml_length > boundary
+        or (resource_length and resource_offset + resource_length > boundary)
+        or number(492) == 0
+    ):
+        raise ZipError(f"{label}: invalid macOS UDIF data or metadata bounds")
+    stream.seek(xml_offset)
+    try:
+        metadata = plistlib.loads(stream.read(xml_length))
+    except (ValueError, plistlib.InvalidFileException, ExpatError) as error:
+        raise ZipError(f"{label}: invalid macOS UDIF metadata") from error
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("resource-fork"), dict):
+        raise ZipError(f"{label}: macOS UDIF metadata lacks a resource dictionary")
+    blocks = metadata["resource-fork"].get("blkx")
+    if not isinstance(blocks, list) or not blocks:
+        raise ZipError(f"{label}: macOS UDIF metadata lacks image block descriptors")
+
+
+def installation_root(version):
+    if not isinstance(version, str) or re.fullmatch(VERSION, version) is None:
+        raise ZipError("Installation version must be x.y.z or a complete x.y.z-beta.RUN.PR.ATTEMPT version")
+    return f"Evict_{version}"
+
+
+def _check_installation_payloads(names, open_payload, size_payload):
+    if len(names) != 3 or len(set(names)) != 3:
+        raise ZipError("installation ZIP must contain exactly three payload files")
+    parts = [safe_name(name) for name in names]
+    roots = {path[0] for path in parts}
+    if len(roots) != 1 or any(len(path) != 3 for path in parts):
+        raise ZipError("installation payloads must share one versioned root and three platform folders")
+    root = next(iter(roots))
+    version = root.removeprefix("Evict_")
+    if root != installation_root(version):
+        raise ZipError("installation root must be Evict_<full-version>")
+    payloads = (
+        f"{root}/portable/Evict_{version}.exe",
+        f"{root}/windows-x64/Evict_{version}.exe",
+        f"{root}/macOS/Evict_{version}.dmg",
+    )
+    if set(names) != set(payloads):
+        raise ZipError("installation ZIP contains missing, extra or incorrectly named files")
+    for payload in payloads:
+        if not 0 < size_payload(payload) <= MAX_PAYLOAD_BYTES:
+            raise ZipError(f"empty or excessively large payload: {payload}")
+    for payload in payloads[:2]:
+        with open_payload(payload) as stream:
+            check_pe(stream, size_payload(payload), payload)
+    with open_payload(payloads[2]) as stream:
+        check_dmg(stream, size_payload(payloads[2]), payloads[2])
+    return root
+
+
 def check_zip(file):
     try:
         with zipfile.ZipFile(file) as archive:
@@ -255,41 +339,73 @@ def check_zip(file):
                     raise ZipError(f"archive path was normalized before validation: {info.orig_filename!r}")
                 if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG):
                     raise ZipError(f"outer release ZIP must contain ordinary payload files only: {info.filename}")
-            _check_payloads(
-                [info.filename for info in infos],
-                archive.open,
-                lambda name: archive.getinfo(name).file_size,
-            )
+            names = [info.filename for info in infos]
+            if names and any(name.split("/", 1)[0].startswith("Evict_") for name in names):
+                root = _check_installation_payloads(
+                    names, archive.open, lambda name: archive.getinfo(name).file_size,
+                )
+                if isinstance(file, (str, os.PathLike)) and Path(file).name != f"{root}.zip":
+                    raise ZipError("installation ZIP filename must match its versioned root")
+            else:
+                _check_legacy_payloads(
+                    names, archive.open, lambda name: archive.getinfo(name).file_size,
+                )
+            corrupt = archive.testzip()
+            if corrupt is not None:
+                raise ZipError(f"corrupt release ZIP member: {corrupt}")
     except (OSError, zipfile.BadZipFile, RuntimeError) as error:
         raise ZipError(f"invalid release ZIP: {error}") from error
+
+
+def _folder_payloads(folder, folders, prefix=""):
+    found = sorted(path.name for path in folder.iterdir())
+    if found != sorted(folders) or any(
+        (folder / name).is_symlink() or not (folder / name).is_dir() for name in found
+    ):
+        raise ZipError(f"{folder}: platform folders must be exactly {', '.join(folders)}; found {found}")
+    names = []
+    for name in folders:
+        for path in (folder / name).iterdir():
+            regular_file(path)
+            names.append(f"{prefix}{name}/{path.name}")
+    return names
 
 
 def check_folder(folder):
     folder = Path(folder)
     try:
+        if folder.is_symlink() or not folder.is_dir():
+            raise ZipError(f"expected an ordinary unpacked directory: {folder}")
         found = sorted(path.name for path in folder.iterdir())
-        if found != sorted(FOLDERS) or any((folder / name).is_symlink() or not (folder / name).is_dir() for name in found):
-            raise ZipError(f"{folder}: top level must be exactly {', '.join(FOLDERS)}; found {found}")
-        names = []
-        for name in FOLDERS:
-            for path in (folder / name).iterdir():
-                regular_file(path)
-                names.append(f"{name}/{path.name}")
-        _check_payloads(
-            names,
-            lambda name: (folder / name).open("rb"),
-            lambda name: (folder / name).stat().st_size,
+        if found == sorted(LEGACY_FOLDERS):
+            names = _folder_payloads(folder, LEGACY_FOLDERS)
+            _check_legacy_payloads(
+                names, lambda name: (folder / name).open("rb"),
+                lambda name: (folder / name).stat().st_size,
+            )
+            return
+        if folder.name.startswith("Evict_") and found == sorted(FOLDERS):
+            root_folder = folder
+            base = folder.parent
+        else:
+            if len(found) != 1 or not found[0].startswith("Evict_"):
+                raise ZipError("unpacked installation must contain exactly one Evict_<full-version> root")
+            root_folder = folder / found[0]
+            base = folder
+        if root_folder.is_symlink() or not root_folder.is_dir():
+            raise ZipError("installation root must be an ordinary directory")
+        names = _folder_payloads(root_folder, FOLDERS, root_folder.name + "/")
+        _check_installation_payloads(
+            names, lambda name: (base / name).open("rb"),
+            lambda name: (base / name).stat().st_size,
         )
     except OSError as error:
         raise ZipError(f"invalid unpacked release folder: {error}") from error
 
-
 def make_zip(version, setup_dir, exe_dir, out_dir, macos_archive, archive_version=None):
-    if re.fullmatch(VERSION, version) is None:
-        raise ZipError("Windows version must be x.y.z or a complete x.y.z-beta.RUN.PR.ATTEMPT version")
-    archive_version = version if archive_version is None else archive_version
-    if re.fullmatch(VERSION, archive_version) is None:
-        raise ZipError("Archive version must be x.y.z or a complete beta version")
+    root = installation_root(version)
+    if archive_version is not None and archive_version != version:
+        raise ZipError("Archive version must match the full Windows installation version")
     setups = sorted(Path(setup_dir).glob("*.exe"))
     expected_setup = f"Evict-Setup-{version}.exe"
     if len(setups) != 1 or setups[0].name != expected_setup:
@@ -300,15 +416,16 @@ def make_zip(version, setup_dir, exe_dir, out_dir, macos_archive, archive_versio
     for payload in (setup, exe):
         with payload.open("rb") as stream:
             check_pe(stream, payload.stat().st_size, str(payload))
-    mac_version = check_macos_archive(macos)
+    with macos.open("rb") as stream:
+        check_dmg(stream, macos.stat().st_size, str(macos))
     destinations = (
-        ("portable/Evict.exe", exe),
-        (f"windows-installer/{expected_setup}", setup),
-        (f"macOS/Evict-macOS-{mac_version}.zip", macos),
+        (f"{root}/portable/Evict_{version}.exe", exe),
+        (f"{root}/windows-x64/Evict_{version}.exe", setup),
+        (f"{root}/macOS/Evict_{version}.dmg", macos),
     )
     output_dir = Path(out_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output = output_dir / f"Evict-{archive_version}.zip"
+    output = output_dir / f"{root}.zip"
     if output.is_symlink() or (output.exists() and not output.is_file()):
         raise ZipError(f"refusing an unsafe release ZIP output: {output}")
     sidecar = Path(str(output) + ".sha256")
@@ -320,7 +437,6 @@ def make_zip(version, setup_dir, exe_dir, out_dir, macos_archive, archive_versio
         with zipfile.ZipFile(staged, "w", zipfile.ZIP_DEFLATED) as archive:
             for name, payload in destinations:
                 archive.write(payload, name)
-                archive.writestr(name + ".sha256", sha256_file(payload) + "\n")
         check_zip(staged)
         digest = sha256_file(staged)
         staged_sidecar = Path(temporary) / sidecar.name
@@ -335,23 +451,23 @@ def main(argv=None):
     parser.add_argument("version", nargs="?")
     parser.add_argument("--setup", help="folder with exactly Evict-Setup-<version>.exe")
     parser.add_argument("--exe", help="folder with Evict.exe")
-    parser.add_argument("--macos", help="required built macOS Evict.app ZIP (made on a Mac)")
-    parser.add_argument("--out", help="folder for Evict-<version>.zip")
-    parser.add_argument("--archive-version", help="optional outer ZIP version (Mac delivery); component versions remain independent")
+    parser.add_argument("--macos", help="required verified native macOS UDIF .dmg (made on a Mac)")
+    parser.add_argument("--out", help="folder for Evict_<version>.zip")
+    parser.add_argument("--archive-version", help="optional compatibility argument; must equal the full installation version")
     parser.add_argument("--check", metavar="ZIP", help="verify an existing cross-platform release ZIP")
     parser.add_argument("--check-folder", metavar="DIR", help="verify an unpacked cross-platform release ZIP")
     args = parser.parse_args(argv)
     try:
         if args.check_folder:
             check_folder(args.check_folder)
-            print(f"{args.check_folder}: portable/, windows-installer/ and macOS/ verified")
+            print(f"{args.check_folder}: installation folders and native payloads verified")
         elif args.check:
             check_zip(args.check)
-            print(f"{args.check}: portable/, windows-installer/ and macOS/ verified")
+            print(f"{args.check}: installation folders and native payloads verified")
         elif args.version and args.setup and args.exe and args.out and args.macos:
             print(make_zip(args.version, args.setup, args.exe, args.out, args.macos, args.archive_version))
         else:
-            parser.error("give <version> --setup --exe --macos <built Evict.app ZIP> --out, or --check ZIP; empty macOS placeholders are not allowed")
+            parser.error("give <version> --setup --exe --macos <native DMG> --out, or --check ZIP; empty macOS placeholders are not allowed")
     except (ZipError, OSError) as error:
         print("release_zip: " + str(error), file=sys.stderr)
         return 1

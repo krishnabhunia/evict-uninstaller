@@ -21,13 +21,17 @@ The optional beta test directive enables real published-update verification. It 
 
 ## Archive layout
 
-| ZIP folder | Build file |
-| --- | --- |
-| `portable/` | `Evict.exe` and its SHA-256 sidecar |
-| `windows-installer/` | `Evict-Setup-<WindowsVersion>.exe` and its SHA-256 sidecar |
-| `macOS/` | `Evict-macOS-<MacVersion>.zip` and its SHA-256 sidecar |
+Actions and release downloads use `Evict_<fullversion>.zip`. Inside its single `Evict_<fullversion>/` enclosing folder:
 
-There are no other top-level files or folders. The macOS app ZIP contains the native `Evict.app` bundle and preserves its executable permissions and framework symlinks. Windows releases build both native components from the frozen source. Mac releases pair their native bundle with the latest published Windows stable whose source is reachable from main.
+| Folder | Build file |
+| --- | --- |
+| `portable/` | `Evict_<fullversion>.exe` — Windows portable app |
+| `windows-x64/` | `Evict_<fullversion>.exe` — Windows x64 installer |
+| `macOS/` | `Evict_<fullversion>.dmg` — universal native Mac app |
+
+There are exactly three payload files and no checksum sidecars inside the ZIP. The Mac disk image preserves the native app's executable permissions and framework symlinks. The single **Evict Build & Release** workflow builds both native components from the same release source. The macOS app keeps its own managed numeric version; the download names use the suite's complete version.
+
+The release retains separate `Evict.exe` and `Evict-Setup-<fullversion>.exe` Windows updater assets and external SHA-256 checksums.
 
 ## Check the installed application
 
@@ -45,6 +49,6 @@ The withdrawn historical PR #12 stable test is no longer a stable update source.
 
 Version tests cover beta-only PRs, exact-main stable delivery, automatic synchronization and major/minor/patch arithmetic. Startup tests cover each process lifetime, saved timestamps, current preferences, manual request deduplication, cancellation and stale channel results.
 
-Packaging checks require all three exact folders, checksum-valid Windows files and a real native macOS app archive. Live CI uses the real GitHub catalog, tests beta opt-out/opt-in, downloads the requested release's exact Setup and verifies its hash and native version. It captures installer handoff arguments without launching the application. Parallel PRs can legitimately make another preview the catalog's newest version.
+Packaging checks require the exact enclosing folder, three exact payload paths, valid Windows files and a real native macOS disk image. Live CI uses the real GitHub catalog, tests beta opt-out/opt-in, downloads the requested release's exact Setup and verifies its hash and native version. It captures installer handoff arguments without launching the application. Parallel PRs can legitimately make another preview the catalog's newest version.
 
 The downloaded installer also runs in five isolated native fixtures. Actual GUI restarting, retained settings and Bitdefender behavior still require testing on the user's Windows machine.

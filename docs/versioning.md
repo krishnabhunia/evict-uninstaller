@@ -8,7 +8,7 @@ Evict uses `x.y.z` and GitHub Actions calculates the version from the change. Co
 | y | Minor update or new feature | 1.10.0 |
 | z | Bug or error fix | 1.9.1 |
 
-A major increment resets minor and patch; a minor increment resets patch. The highest required increment among unreleased changes wins. Windows and macOS keep independent version tracks (`win-v` and `mac-v`).
+A major increment resets minor and patch; a minor increment resets patch. The highest required increment among unreleased Windows or macOS changes determines the suite version, which matches the Windows application's `win-v` version. The native macOS component keeps its independent numeric `x.y.z` and bundle build number; verified stable delivery records its `mac-v` component tag in the same workflow.
 
 ## Declare the change
 
@@ -19,11 +19,11 @@ A major increment resets minor and patch; a minor increment resets patch. The hi
 | Patch | `fix: handle interrupted downloads` | `Release-Type: patch` or `release:patch` |
 | No release | Documentation or tests only | `Release-Type: none` or `release:none` |
 
-Per-platform declarations such as `Release-Type-Windows: minor` and `Release-Type-Macos: none` override general declarations for that platform. A breaking marker cannot be reduced by a smaller declaration. Unclassified changes to application or delivery code receive a patch increment.
+Per-platform declarations such as `Release-Type-Windows: minor` and `Release-Type-Macos: none` override general declarations for that platform. The bundle uses the highest resulting platform increment, so a macOS-only feature also publishes a new suite download. A breaking marker cannot be reduced by a smaller declaration. Unclassified changes to application or delivery code receive a patch increment.
 
 ## PR beta delivery
 
-Every PR package uses the automatically calculated next core plus `-beta.<run>.<PR>.<attempt>`. The globally increasing Windows workflow run is first, so a later build of an older PR remains newer than earlier builds from other PRs. Historical PR-first beta tags still parse correctly and remain immutable.
+Every PR package uses the automatically calculated next core plus `-beta.<run>.<PR>.<attempt>`. The globally increasing unified workflow run is first, so a later build of an older PR remains newer than earlier builds from other PRs. Historical PR-first beta tags still parse correctly and remain immutable.
 
 GitHub Actions synchronizes the managed Windows version, installer metadata and changelog into the frozen beta source before building. The only allowed generated differences from the reviewed app source are those managed version files. The final tested source SHA and original PR head are recorded in the release notes. The workflow subtree matches the default branch so publication works with the normal GitHub token.
 
@@ -37,7 +37,7 @@ When the PR is merged into `main`, GitHub Actions:
 2. Calculates the required major, minor or patch increment.
 3. Synchronizes the managed source version, installer or app metadata, and changelog.
 4. Pushes the generated version commit using a compare-and-swap retry if main advances.
-5. Tests and packages that exact source, then publishes a normal `x.y.z` release.
+5. Tests and packages that exact source, then publishes one normal `x.y.z` suite release with Windows and macOS payloads.
 
 Stable planning requires the exact current `origin/main` source. Stable tag builds must resolve to a source reachable from main. A final release sorts above its beta at the same core. GitHub does not trigger another push workflow for a commit written with `GITHUB_TOKEN`; the workflow continues with its generated source.
 
@@ -51,7 +51,7 @@ This one historical reservation prevents reuse of 1.10.0. After PR #12 was merge
 
 ## Installation archive and startup checks
 
-Every final installation ZIP contains exactly `portable/`, `windows-installer/` and `macOS/`, with their corresponding native binaries and SHA-256 sidecars. The macOS folder contains a native app ZIP so executable permissions and framework symlinks survive Windows packaging. Each platform retains its own version.
+The single **Evict Build & Release** workflow produces `Evict_<fullversion>.zip`. Its only enclosing folder is `Evict_<fullversion>/`, containing exactly `portable/Evict_<fullversion>.exe`, `windows-x64/Evict_<fullversion>.exe` and `macOS/Evict_<fullversion>.dmg`. There are no internal checksum sidecars or nested ZIPs. The DMG preserves native Mac app metadata and permissions. The macOS component version remains independent; all download filenames use the complete suite version. Release checksums and raw Windows updater assets remain separate.
 
 Evict checks GitHub silently after every application restart when automatic checks are enabled. A saved last-check time does not suppress a new startup check. Stable is the default; beta requires **Settings → Updates → Include beta releases**. Shutdown cancels pending work, and a manual check replaces the delayed startup request.
 

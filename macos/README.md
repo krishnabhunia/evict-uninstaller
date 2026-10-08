@@ -43,11 +43,11 @@ so nothing it does is permanent.
 
 Builds are not signed with an Apple Developer ID yet, so Gatekeeper will complain on first launch:
 
-1. Download the installation ZIP from the Actions run or a Release and unzip it. Its only top-level folders are `portable`, `windows-installer` and `macOS`.
-2. Open `macOS/Evict-macOS-<MacVersion>.zip` to extract the native `Evict.app` bundle, then move it to `/Applications`.
+1. Download `Evict_<fullversion>.zip` from **Evict Build & Release** in Actions or from a Release, then unzip it.
+2. Open `Evict_<fullversion>/macOS/Evict_<fullversion>.dmg`, then drag `Evict.app` into `/Applications`.
 3. **Right-click the app → Open → Open.** After that it starts normally.
 
-The inner macOS archive preserves executable permissions and bundle symlinks. Its SHA-256 sidecar is next to it. The other two folders contain the verified Windows portable program and installer; platform versions are independent.
+The DMG preserves executable permissions and bundle symlinks. The same enclosing folder contains `portable/Evict_<fullversion>.exe` and `windows-x64/Evict_<fullversion>.exe` for Windows. The installation ZIP contains exactly these three payload files; checksums are separate release assets. Filenames use the suite version, while the native Mac app keeps its independent numeric version.
 
 ## Building it yourself
 
@@ -55,6 +55,7 @@ The inner macOS archive preserves executable permissions and bundle symlinks. It
 swift test                     # unit tests
 Scripts/make-app.sh            # build/Evict.app for this Mac
 Scripts/make-app.sh --universal # arm64 + x86_64
+Scripts/make-dmg.sh 1.12.2      # build/Evict_1.12.2.dmg, suite release version
 ```
 
 With a Developer ID certificate in the keychain:
@@ -70,9 +71,10 @@ SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" Scripts/make-app.sh
 | `Sources/EvictKit` | All logic: app inventory, leftover scanning, the safety gate, the remover, launchd items, settings, history. No UI. |
 | `Sources/EvictApp` | SwiftUI interface (macOS only). |
 | `Tests/EvictKitTests` | Unit tests for the rules that decide what may be removed. |
-| `Scripts/make-app.sh` | Builds the `.app` bundle and signs it. |
+| `Scripts/make-app.sh` | Builds and signs the `.app` bundle. |
+| `Scripts/make-dmg.sh` | Builds and mounts the versioned DMG to verify the native application. |
 | `docs/DESIGN.md` | How the Windows features map to macOS, and what is still to come. |
 
 ## Release versions
 
-GitHub Actions automatically maintains numeric `x.y.z` versions and the bundle build number from PR and commit release intent. The macOS 15 workflow tests the exact version commit and verifies the universal bundle metadata before publishing a `mac-vX.Y.Z` release. PR validation has read-only repository access. Installation ZIPs include the latest published Windows stable whose source is reachable from main, with downloaded hashes verified before packaging. See [automatic versioning](../docs/versioning.md).
+GitHub Actions automatically maintains numeric `x.y.z` versions and the bundle build number from PR and commit release intent. The single **Evict Build & Release** workflow tests the exact release source on native Windows and Mac runners, verifies the universal bundle and disk image, and publishes one combined suite release. A `mac-vX.Y.Z` component tag is recorded after verified stable publication. Trusted PRs publish an optional suite beta without merging or writing to main; fork and bot PRs validate with read-only access. See [automatic versioning](../docs/versioning.md).

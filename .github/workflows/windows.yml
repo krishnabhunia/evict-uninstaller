@@ -1,14 +1,14 @@
-name: Windows
+name: Evict Build & Release
 
 on:
   push:
     branches: [ main ]
     tags: [ 'win-v*', '!win-v*-beta.*' ]
-    paths: [ 'windows/**', 'macos/**', 'scripts/versioning.py', 'scripts/tests/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
+    paths: [ 'windows/**', 'macos/**', 'scripts/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
   pull_request:
     branches: [ main ]
     types: [ opened, synchronize, reopened, edited, labeled, unlabeled ]
-    paths: [ 'windows/**', 'macos/**', 'scripts/versioning.py', 'scripts/tests/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
+    paths: [ 'windows/**', 'macos/**', 'scripts/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
   workflow_dispatch:
 
 permissions:
@@ -17,14 +17,99 @@ permissions:
 
 # Serialize planning through publication for main, stable tags and dispatches. PR previews have their own locks.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('windows-pr-{0}', github.event.pull_request.number) || 'windows-stable' }}
+  group: ${{ github.event_name == 'pull_request' && format('evict-pr-{0}', github.event.pull_request.number) || 'evict-stable' }}
   cancel-in-progress: false
   queue: max
 
 jobs:
+  mac-version:
+    # Native Mac metadata is synchronized once on main, before the shared release source is built.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      source_sha: ${{ steps.prepare.outputs.source_sha }}
+    steps:
+      - name: Authorize main version source
+        id: authorize
+        uses: actions/github-script@v9
+        with:
+          script: |
+            if (!['push', 'workflow_dispatch'].includes(context.eventName) || context.ref !== 'refs/heads/main') {
+              throw new Error('Mac version metadata can be synchronized only on main.');
+            }
+            const {data: main} = await github.rest.git.getRef({...context.repo, ref: 'heads/main'});
+            core.setOutput('source_sha', main.object.sha);
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.authorize.outputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Test version and package policy
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Prepare native Mac semantic version
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          plan_output="$RUNNER_TEMP/macos-release-plan.txt"
+          tested_source="$(git rev-parse HEAD)"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            prepared=false
+            for attempt in 1 2 3; do
+              git fetch origin +refs/heads/main:refs/remotes/origin/main --tags
+              git checkout --detach origin/main
+              if [ "$(git rev-parse HEAD)" != "$tested_source" ]; then
+                python -m unittest discover -s scripts/tests -p 'test_*.py'
+                tested_source="$(git rev-parse HEAD)"
+              fi
+              : > "$plan_output"
+              python scripts/versioning.py plan --platform macos --mode stable \
+                --event-file "$GITHUB_EVENT_PATH" --ref "$GITHUB_REF" \
+                --main-ref origin/main --github-output "$plan_output" --sync
+              while IFS= read -r changed; do
+                case "$changed" in
+                  ""|macos/Sources/EvictKit/Version.swift|macos/CHANGELOG.md) ;;
+                  *) echo "::error::Unexpected generated file: $changed"; exit 1 ;;
+                esac
+              done < <(git diff --name-only)
+              git add -- macos/Sources/EvictKit/Version.swift macos/CHANGELOG.md
+              if git diff --cached --quiet; then
+                prepared=true
+                break
+              fi
+              planned_version="$(python - "$plan_output" <<'PY'
+          import pathlib, sys
+          values = dict(line.split("=", 1) for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if "=" in line)
+          print(values["version"])
+          PY
+              )"
+              git commit -m "chore(release): macos $planned_version"
+              if git push origin HEAD:refs/heads/main; then
+                prepared=true
+                break
+              fi
+              echo "::notice::Main advanced; recomputing Mac release (attempt $attempt of 3)"
+            done
+            if [ "$prepared" != true ]; then
+              echo "::error::Main kept advancing; no release source was prepared"
+              exit 1
+            fi
+          fi
+          cat "$plan_output" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: mac-version
     # Keep stable delivery on main/tags unchanged; PR code builds in a separate read-only job below.
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/win-v'))
+    if: always() && (needs.mac-version.result == 'success' || needs.mac-version.result == 'skipped') && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/win-v'))
     runs-on: windows-latest
     permissions:
       contents: write
@@ -164,6 +249,11 @@ jobs:
             for ($attempt = 1; $attempt -le 3; $attempt++) {
               git -C $repoRoot fetch origin "refs/heads/main:refs/remotes/origin/main" --tags
               if ($LASTEXITCODE -ne 0) { throw "Could not refresh main and release tags" }
+              $preparedMacSource = '${{ needs.mac-version.outputs.source_sha }}'
+              $currentMainSource = (git -C $repoRoot rev-parse origin/main).Trim()
+              if ($preparedMacSource -notmatch '^[a-f0-9]{40}$' -or $currentMainSource -ne $preparedMacSource) {
+                throw 'Main advanced after native Mac version planning. Rerun the shared workflow from current main; no stale component release will be published.'
+              }
               # This is the isolated runner checkout. Discard only the previous attempt's generated reservation.
               git -C $repoRoot checkout --detach --force origin/main
               if ($LASTEXITCODE -ne 0) { throw "Could not checkout current main" }
@@ -712,36 +802,42 @@ jobs:
       - name: Build native universal macOS app
         working-directory: macos
         run: Scripts/make-app.sh --universal
-      - name: Verify native bundle and preserve its original archive bytes
+      - name: Build and verify native macOS disk image
+        working-directory: macos
+        env:
+          RELEASE_VERSION: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
+        run: |
+          bash -n Scripts/make-dmg.sh
+          Scripts/make-dmg.sh "$RELEASE_VERSION"
+      - name: Verify disk image identity and transfer bytes
         id: bundle
         env:
           EXPECTED_SOURCE: ${{ needs.pr-build.outputs.source_sha || needs.build.outputs.source_sha }}
+          RELEASE_VERSION: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
-          lipo -info macos/build/Evict.app/Contents/MacOS/Evict
-          lipo macos/build/Evict.app/Contents/MacOS/Evict -verify_arch arm64 x86_64
-          codesign --verify --verbose=2 macos/build/Evict.app
           python - <<'PY'
           import hashlib, importlib.util, os, pathlib, plistlib, re, shutil
           spec = importlib.util.spec_from_file_location("release_zip", "windows/build/release_zip.py")
-          module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+          helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
           source = pathlib.Path("macos/Sources/EvictKit/Version.swift").read_text()
           version = re.search(r'public static let current\s*=\s*"([^"]+)"', source).group(1)
           build = re.search(r'public static let build\s*=\s*"([^"]+)"', source).group(1)
           with pathlib.Path("macos/build/Evict.app/Contents/Info.plist").open("rb") as file:
               bundle = plistlib.load(file)
           assert bundle["CFBundleShortVersionString"] == version and bundle["CFBundleVersion"] == build
-          archive = pathlib.Path(f"macos/build/Evict-{version}.zip")
-          assert module.check_macos_archive(archive) == version, "Mac archive/source version mismatch"
-          sidecar = pathlib.Path(str(archive) + ".sha256").read_text().strip()
+          image = pathlib.Path("macos/build") / ("Evict_" + os.environ["RELEASE_VERSION"] + ".dmg")
+          with image.open("rb") as stream:
+              helper.check_dmg(stream, image.stat().st_size, str(image))
+          sidecar = pathlib.Path(str(image) + ".sha256").read_text().strip()
           checksum = re.fullmatch(r"([a-fA-F0-9]{64})(?:\s+(\S+))?", sidecar)
-          assert checksum and (checksum.group(2) is None or checksum.group(2) == f"build/Evict-{version}.zip")
+          assert checksum and (checksum.group(2) is None or checksum.group(2) == image.name)
           expected = checksum.group(1).lower()
-          assert expected == hashlib.sha256(archive.read_bytes()).hexdigest()
+          assert expected == hashlib.sha256(image.read_bytes()).hexdigest()
           pathlib.Path("MacPackage").mkdir()
-          output = pathlib.Path(f"MacPackage/Evict-macOS-{version}.zip")
-          shutil.copyfile(archive, output)
+          output = pathlib.Path("MacPackage") / image.name
+          shutil.copyfile(image, output)
           pathlib.Path(str(output) + ".sha256").write_text(expected + "\n", encoding="ascii")
           with open(os.environ["GITHUB_OUTPUT"], "a") as file:
               file.write(f"version={version}\nartifact=Evict-macOS-{os.environ['EXPECTED_SOURCE']}\n")
@@ -763,7 +859,7 @@ jobs:
       version: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
       core_version: ${{ needs.pr-build.outputs.core_version || needs.build.outputs.core_version }}
       source_sha: ${{ needs.pr-build.outputs.source_sha || needs.build.outputs.source_sha }}
-      artifact: Evict-installation
+      artifact: ${{ format('Evict_{0}', needs.pr-build.outputs.version || needs.build.outputs.version) }}
       artifact_id: ${{ steps.installation.outputs.artifact-id }}
       transport_artifact: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}
       publish: ${{ needs.pr-build.outputs.publish || needs.build.outputs.publish }}
@@ -794,7 +890,7 @@ jobs:
           MAC_VERSION: ${{ needs.mac-package.outputs.version }}
         run: |
           $nativeFiles = @("CiWindows/portable/Evict.exe", "CiWindows/windows-installer/Evict-Setup-$env:RELEASE_VERSION.exe",
-            "MacPackage/Evict-macOS-$env:MAC_VERSION.zip")
+            "MacPackage/Evict_$env:RELEASE_VERSION.dmg")
           foreach ($file in $nativeFiles) {
             $expected = (Get-Content -LiteralPath "$file.sha256" -Raw).Trim()
             if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or
@@ -802,11 +898,11 @@ jobs:
               throw "Transferred native artifact checksum mismatch: $file"
             }
           }
-          python build/release_zip.py $env:RELEASE_VERSION --setup CiWindows/windows-installer --exe CiWindows/portable --macos "MacPackage/Evict-macOS-$env:MAC_VERSION.zip" --out Zip
+          python build/release_zip.py $env:RELEASE_VERSION --setup CiWindows/windows-installer --exe CiWindows/portable --macos "MacPackage/Evict_$env:RELEASE_VERSION.dmg" --out Zip
           if ($LASTEXITCODE -ne 0) { throw 'The installation ZIP failed native artifact validation' }
-          Expand-Archive -LiteralPath "Zip/Evict-$env:RELEASE_VERSION.zip" -DestinationPath CiDownload
+          Expand-Archive -LiteralPath "Zip/Evict_$env:RELEASE_VERSION.zip" -DestinationPath CiDownload
           python build/release_zip.py --check-folder CiDownload
-          if ($LASTEXITCODE -ne 0) { throw 'The installation ZIP must contain exactly portable/windows-installer/macOS' }
+          if ($LASTEXITCODE -ne 0) { throw 'The installation ZIP must contain one versioned root with portable/windows-x64/macOS' }
       - name: Write source release notes
         working-directory: windows
         shell: pwsh
@@ -831,7 +927,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         id: installation
         with:
-          name: Evict-installation
+          name: ${{ format('Evict_{0}', needs.pr-build.outputs.version || needs.build.outputs.version) }}
           path: windows/CiDownload/
           if-no-files-found: error
           overwrite: true
@@ -852,7 +948,8 @@ jobs:
           @("### Installation download", "",
             "[Download Evict installation]($env:INSTALLATION_URL)", "",
             "Windows: $env:RELEASE_VERSION; macOS: $env:MAC_VERSION", "",
-            "Contains portable/, windows-installer/ and macOS/.") |
+            "ZIP: Evict_$env:RELEASE_VERSION.zip", "",
+            "Root: Evict_$env:RELEASE_VERSION/; contains portable/, windows-x64/ and macOS/.") |
             Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
   validate-dispatch:
@@ -894,7 +991,7 @@ jobs:
         with:
           name: ${{ needs.package.outputs.transport_artifact }}-release-zip
           path: Zip
-      - name: Verify native files, checksums and exact three-folder layout
+      - name: Verify native files and exact versioned installation layout
         id: assets
         shell: pwsh
         env:
@@ -905,48 +1002,67 @@ jobs:
           if ($v -notmatch '^\d+\.\d+\.\d+(?:-beta\.\d+\.\d+\.\d+)?$' -or $mac -notmatch '^\d+\.\d+\.\d+$') {
             throw 'Invalid release artifact identity'
           }
-          $files = @("Download/portable/Evict.exe", "Download/windows-installer/Evict-Setup-$v.exe",
-            "Download/macOS/Evict-macOS-$mac.zip", "Zip/Evict-$v.zip")
-          $sizes = @{}
-          foreach ($file in $files) {
-            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing native artifact: $file" }
-            $item = Get-Item -LiteralPath $file
-            if ($item.LinkType -or $item.Length -le 0) { throw "Unsafe or empty artifact: $file" }
-            $expectedHash = (Get-Content -LiteralPath "$file.sha256" -Raw).Trim()
-            if ($expectedHash -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expectedHash) {
-              throw "Native artifact checksum mismatch: $file"
-            }
-            if (-not $file.StartsWith('Download/macOS/')) {
-              $sizes[$item.Name] = $item.Length
-              $sizes[[IO.Path]::GetFileName("$file.sha256")] = (Get-Item -LiteralPath "$file.sha256").Length
-            }
+          $root = "Evict_$v"
+          $expected = @("$root/portable/Evict_$v.exe", "$root/windows-x64/Evict_$v.exe",
+            "$root/macOS/Evict_$v.dmg") | Sort-Object
+          $actual = @(Get-ChildItem -LiteralPath Download -File -Recurse | ForEach-Object {
+            [IO.Path]::GetRelativePath((Resolve-Path Download).Path, $_.FullName).Replace('\', '/')
+          } | Sort-Object)
+          $dirs = @(Get-ChildItem -LiteralPath Download -Directory)
+          if ($dirs.Count -ne 1 -or $dirs[0].Name -cne $root -or $actual.Count -ne 3 -or
+              ($actual -join [char]10) -cne ($expected -join [char]10)) {
+            throw 'Installation artifact must contain one versioned root and exactly three native files'
           }
-          $product = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path Download/portable/Evict.exe).Path).ProductVersion -replace '\+.*$', ''
+          $allItems = @(Get-ChildItem -LiteralPath Download -Recurse)
+          if ($allItems.Where({ $_.LinkType }).Count -ne 0 -or
+              $allItems.Where({ $_.PSIsContainer }).Count -ne 4) { throw 'Unexpected installation directories or links' }
+          foreach ($path in $expected) {
+            $file = Get-Item -LiteralPath (Join-Path Download $path)
+            if ($file.Length -le 0) { throw "Empty native artifact: $path" }
+          }
+          $zipPath = "Zip/Evict_$v.zip"
+          $expectedHash = (Get-Content -LiteralPath "$zipPath.sha256" -Raw).Trim()
+          if ($expectedHash -notmatch '^[a-fA-F0-9]{64}$' -or
+              (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash -ne $expectedHash) {
+            throw 'Installation ZIP checksum mismatch'
+          }
+          $product = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path "Download/$root/portable/Evict_$v.exe").Path).ProductVersion -replace '\+.*$', ''
           if ($product -ne $v) { throw 'Native Windows executable version differs from its release identity' }
-          $setup = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path "Download/windows-installer/Evict-Setup-$v.exe").Path)
+          $setup = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path "Download/$root/windows-x64/Evict_$v.exe").Path)
           if ("$($setup.FileMajorPart).$($setup.FileMinorPart).$($setup.FileBuildPart).$($setup.FilePrivatePart)" -ne "$($v.Split('-')[0]).0") {
             throw 'Native Windows installer numeric version differs from its core version'
           }
-          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath "Zip/Evict-$v.zip").Path)
+          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $zipPath).Path)
           try {
-            $expected = @("portable/Evict.exe", "portable/Evict.exe.sha256",
-              "windows-installer/Evict-Setup-$v.exe", "windows-installer/Evict-Setup-$v.exe.sha256",
-              "macOS/Evict-macOS-$mac.zip", "macOS/Evict-macOS-$mac.zip.sha256") | Sort-Object
-            $actual = @($archive.Entries | ForEach-Object { $_.FullName } | Sort-Object)
-            if ($actual.Count -ne 6 -or ($actual -join [char]10) -cne ($expected -join [char]10)) {
-              throw 'The installation ZIP must contain only portable/windows-installer/macOS native files and checksums'
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName } | Sort-Object)
+            if ($entries.Count -ne 3 -or ($entries -join [char]10) -cne ($expected -join [char]10)) {
+              throw 'The ZIP must contain exactly the three versioned portable/windows-x64/macOS payloads'
             }
             foreach ($entry in $archive.Entries) {
               $stream = $entry.Open()
               try { $hash = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash }
               finally { $stream.Dispose() }
-              $path = Join-Path Download $entry.FullName
-              if ($hash -ne (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash) {
-                throw "The installation ZIP changed a validated native artifact: $($entry.FullName)"
+              if ($hash -ne (Get-FileHash -LiteralPath (Join-Path Download $entry.FullName) -Algorithm SHA256).Hash) {
+                throw "The ZIP changed a validated native artifact: $($entry.FullName)"
               }
             }
           }
           finally { $archive.Dispose() }
+          # Published updater aliases keep installed older Evict versions compatible.
+          New-Item -ItemType Directory -Path ReleaseInputs -Force | Out-Null
+          Copy-Item -LiteralPath "Download/$root/portable/Evict_$v.exe" -Destination ReleaseInputs/Evict.exe
+          Copy-Item -LiteralPath "Download/$root/windows-x64/Evict_$v.exe" -Destination "ReleaseInputs/Evict-Setup-$v.exe"
+          Copy-Item -LiteralPath "Download/$root/macOS/Evict_$v.dmg" -Destination "ReleaseInputs/Evict_$v.dmg"
+          $sizes = @{}
+          foreach ($file in @("ReleaseInputs/Evict.exe", "ReleaseInputs/Evict-Setup-$v.exe", "ReleaseInputs/Evict_$v.dmg", $zipPath)) {
+            $item = Get-Item -LiteralPath $file
+            if (-not $file.StartsWith('Zip/')) {
+              (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash |
+                Set-Content -LiteralPath "$file.sha256" -Encoding ascii
+            }
+            $sizes[$item.Name] = $item.Length
+            $sizes[[IO.Path]::GetFileName("$file.sha256")] = (Get-Item -LiteralPath "$file.sha256").Length
+          }
           "sizes=$($sizes | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
 
       - name: Guard release channel, reviewed source and immutable tag
@@ -1044,7 +1160,7 @@ jobs:
               '\nBuilt and tested release source: ' + source +
               (isPr ? '\nOriginal PR head: ' + pr.head.sha +
                 '\nBeta preview of [PR #' + pr.number + '](https://github.com/' + process.env.GITHUB_REPOSITORY + '/pull/' + pr.number + ').' : '\nSource branch: main') +
-              '\nThe installation ZIP contains exactly portable/, windows-installer/ and macOS/, with real native builds and SHA-256 checksums.' +
+              '\nInstallation download: Evict_' + version + '.zip; root Evict_' + version + '/ contains portable/, windows-x64/ and macOS/, with two native EXEs and a verified native DMG.' +
               '\nmacOS bundle version: ' + process.env.MAC_VERSION +
               (isPr ? '\nOnly managed core version metadata differs from the reviewed application source; workflows match main.' : '');
             core.setOutput('body', body);
@@ -1063,12 +1179,14 @@ jobs:
           make_latest: false
           fail_on_unmatched_files: true
           files: |
-            Download/portable/Evict.exe
-            Download/portable/Evict.exe.sha256
-            Download/windows-installer/*.exe
-            Download/windows-installer/*.sha256
-            Zip/Evict-*.zip
-            Zip/Evict-*.zip.sha256
+            ReleaseInputs/Evict.exe
+            ReleaseInputs/Evict.exe.sha256
+            ReleaseInputs/Evict-Setup-*.exe
+            ReleaseInputs/Evict-Setup-*.exe.sha256
+            ReleaseInputs/Evict_*.dmg
+            ReleaseInputs/Evict_*.dmg.sha256
+            Zip/Evict_*.zip
+            Zip/Evict_*.zip.sha256
 
       - name: Publish verified beta or main release
         if: steps.guard.outputs.publish == 'true'
@@ -1093,7 +1211,8 @@ jobs:
             const assets = await github.paginate(github.rest.repos.listReleaseAssets, {...context.repo, release_id, per_page: 100});
             const sizes = JSON.parse(process.env.RELEASE_ASSET_SIZES);
             const names = ['Evict.exe', 'Evict.exe.sha256', 'Evict-Setup-' + version + '.exe',
-              'Evict-Setup-' + version + '.exe.sha256', 'Evict-' + version + '.zip', 'Evict-' + version + '.zip.sha256'].sort();
+              'Evict-Setup-' + version + '.exe.sha256', 'Evict_' + version + '.dmg', 'Evict_' + version + '.dmg.sha256',
+              'Evict_' + version + '.zip', 'Evict_' + version + '.zip.sha256'].sort();
             if (JSON.stringify(assets.map(a => a.name).sort()) !== JSON.stringify(names) ||
                 assets.some(a => a.state !== 'uploaded' || a.size <= 0 || a.size !== sizes[a.name])) {
               throw new Error('Release assets are incomplete; leaving the draft unpublished.');
@@ -1178,11 +1297,11 @@ jobs:
           if ($target.type -ne "commit" -or $target.sha -ne $env:RELEASE_SOURCE_SHA) {
             throw "Published release source does not match the reviewed immutable source"
           }
-          $names = @("Evict.exe", "Evict.exe.sha256", "Evict-Setup-$v.exe", "Evict-Setup-$v.exe.sha256", "Evict-$v.zip", "Evict-$v.zip.sha256") | Sort-Object
+          $names = @("Evict.exe", "Evict.exe.sha256", "Evict-Setup-$v.exe", "Evict-Setup-$v.exe.sha256", "Evict_$v.dmg", "Evict_$v.dmg.sha256", "Evict_$v.zip", "Evict_$v.zip.sha256") | Sort-Object
           $assets = Invoke-RestMethod -Uri "$api/releases/$($release.id)/assets?per_page=100" -Headers $headers
           $actual = @($assets.name | Sort-Object)
           if ($actual.Count -ne $names.Count -or ($actual -join [char]10) -cne ($names -join [char]10)) {
-            throw "Published release must contain exactly its six expected assets"
+            throw "Published release must contain exactly its eight expected assets"
           }
           New-Item -ItemType Directory -Path PublishedAssets -Force | Out-Null
           foreach ($asset in $assets) {
@@ -1197,7 +1316,7 @@ jobs:
             Invoke-WebRequest -Uri $uri -OutFile $out -TimeoutSec 120 -MaximumRetryCount 3 -RetryIntervalSec 3
             if ((Get-Item -LiteralPath $out).Length -ne $asset.size) { throw "Downloaded asset size mismatch: $($asset.name)" }
           }
-          foreach ($name in @("Evict.exe", "Evict-Setup-$v.exe", "Evict-$v.zip")) {
+          foreach ($name in @("Evict.exe", "Evict-Setup-$v.exe", "Evict_$v.dmg", "Evict_$v.zip")) {
             $file = Join-Path PublishedAssets $name
             $expected = (Get-Content -LiteralPath "$file.sha256" -Raw).Trim()
             if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) {
@@ -1209,16 +1328,21 @@ jobs:
           $setupInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path "PublishedAssets/Evict-Setup-$v.exe").Path)
           $setupCore = "$($setupInfo.FileMajorPart).$($setupInfo.FileMinorPart).$($setupInfo.FileBuildPart).$($setupInfo.FilePrivatePart)"
           if ($setupCore -ne "$($v.Split('-')[0]).0") { throw "Downloaded installer numeric version mismatch: $setupCore" }
-          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "PublishedAssets/Evict-$v.zip").Path)
+          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "PublishedAssets/Evict_$v.zip").Path)
           try {
-            $expectedEntries = @("windows-installer/Evict-Setup-$v.exe", "windows-installer/Evict-Setup-$v.exe.sha256", "portable/Evict.exe", "portable/Evict.exe.sha256", "macOS/Evict-macOS-$mac.zip", "macOS/Evict-macOS-$mac.zip.sha256") | Sort-Object
-            $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') } | Sort-Object)
-            if ($entries.Count -ne $expectedEntries.Count -or ($entries -join [char]10) -cne ($expectedEntries -join [char]10)) {
-              throw "Downloaded ZIP violates the portable/windows-installer/macOS layout"
+            $root = "Evict_$v"
+            $expectedEntries = @("$root/portable/Evict_$v.exe", "$root/windows-x64/Evict_$v.exe", "$root/macOS/Evict_$v.dmg") | Sort-Object
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName } | Sort-Object)
+            if ($entries.Count -ne 3 -or ($entries -join [char]10) -cne ($expectedEntries -join [char]10)) {
+              throw "Downloaded ZIP violates the versioned portable/windows-x64/macOS layout"
+            }
+            $rawAssets = @{
+              "$root/portable/Evict_$v.exe" = "Evict.exe"
+              "$root/windows-x64/Evict_$v.exe" = "Evict-Setup-$v.exe"
+              "$root/macOS/Evict_$v.dmg" = "Evict_$v.dmg"
             }
             foreach ($entry in $archive.Entries) {
-              if ($entry.FullName.StartsWith('macOS/')) { continue }
-              $name = [IO.Path]::GetFileName($entry.FullName.Replace('\', '/'))
+              $name = $rawAssets[$entry.FullName]
               $stream = $entry.Open()
               try { $zipHash = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash }
               finally { $stream.Dispose() }
@@ -1227,9 +1351,9 @@ jobs:
             }
           }
           finally { $archive.Dispose() }
-          Write-Host "Published $channel $v verified: six assets, SHA256, ZIP, source tag, ProductVersion $product and installer $setupCore"
+          Write-Host "Published $channel $v verified: eight assets, SHA256, ZIP, source tag, ProductVersion $product and installer $setupCore"
 
-      - name: Verify downloaded ZIP native Mac bundle and frozen source version
+      - name: Verify downloaded ZIP, native disk image and frozen component version
         env:
           RELEASE_VERSION: ${{ needs.package.outputs.version }}
           MAC_VERSION: ${{ needs.package.outputs.mac_version }}
@@ -1239,14 +1363,15 @@ jobs:
           import importlib.util, os, pathlib, re, zipfile
           spec = importlib.util.spec_from_file_location("release_zip", "build/release_zip.py")
           helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
-          archive = pathlib.Path("PublishedAssets", "Evict-" + os.environ["RELEASE_VERSION"] + ".zip")
+          archive = pathlib.Path("PublishedAssets", "Evict_" + os.environ["RELEASE_VERSION"] + ".zip")
           helper.check_zip(archive)
           source = pathlib.Path("../macos/Sources/EvictKit/Version.swift").read_text()
           expected = re.search(r'public static let current\s*=\s*"([^"]+)"', source).group(1)
           assert expected == os.environ["MAC_VERSION"]
           with zipfile.ZipFile(archive) as package:
-              with package.open("macOS/Evict-macOS-" + expected + ".zip") as native:
-                  assert helper.check_macos_archive(native) == expected
+              name = "Evict_" + os.environ["RELEASE_VERSION"] + "/macOS/Evict_" + os.environ["RELEASE_VERSION"] + ".dmg"
+              with package.open(name) as native:
+                  helper.check_dmg(native, package.getinfo(name).file_size, name)
           '@ | python -
           if ($LASTEXITCODE -ne 0) { throw 'Downloaded Mac build or exact three-folder package verification failed' }
 
@@ -1265,8 +1390,153 @@ jobs:
           pwsh -NoProfile -File build/installer_smoke.ps1 -SetupPath "PublishedAssets/Evict-Setup-${{ needs.package.outputs.version }}.exe" -PackagedExe "PublishedAssets/Evict.exe"
           if ($LASTEXITCODE -ne 0) { throw "Downloaded installer smoke failed with exit code $LASTEXITCODE" }
 
+  verify-published-macos:
+    needs: [package, publish]
+    if: always() && needs.package.result == 'success' && needs.package.outputs.publish == 'true' && needs.publish.result == 'success'
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.package.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Download the published native macOS installer without credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.package.outputs.channel }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, re, urllib.parse, urllib.request
+          version = os.environ["RELEASE_VERSION"]
+          assert re.fullmatch(r"\d+\.\d+\.\d+(?:-beta\.\d+\.\d+\.\d+)?", version)
+          repo = os.environ["GITHUB_REPOSITORY"]
+          assert repo == "krishnabhunia/evict-uninstaller"
+          api = os.environ["GITHUB_API_URL"] + "/repos/" + repo + "/releases/tags/win-v" + version
+          request = urllib.request.Request(api, headers={
+              "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+              "Accept": "application/vnd.github+json", "User-Agent": "Evict-release-verification",
+              "X-GitHub-Api-Version": "2022-11-28",
+          })
+          with urllib.request.urlopen(request, timeout=30) as response:
+              release = json.load(response)
+          assert not release["draft"] and release["prerelease"] == (os.environ["RELEASE_CHANNEL"] == "beta")
+          files = {}
+          pathlib.Path("PublishedMac").mkdir()
+          for name in ("Evict_" + version + ".dmg", "Evict_" + version + ".dmg.sha256"):
+              matches = [asset for asset in release["assets"] if asset["name"] == name]
+              assert len(matches) == 1 and matches[0]["state"] == "uploaded" and matches[0]["size"] > 0
+              asset = matches[0]
+              url = urllib.parse.urlsplit(asset["browser_download_url"])
+              assert url.scheme == "https" and url.netloc == "github.com" and url.path == "/" + repo + "/releases/download/win-v" + version + "/" + name
+              # Public download requests do not carry the repository token.
+              download = urllib.request.Request(asset["browser_download_url"], headers={"User-Agent": "Evict-release-verification"})
+              with urllib.request.urlopen(download, timeout=120) as response:
+                  data = response.read()
+              assert len(data) == asset["size"]
+              target = pathlib.Path("PublishedMac") / name
+              target.write_bytes(data)
+              files[name] = target
+          image = files["Evict_" + version + ".dmg"]
+          expected = files[image.name + ".sha256"].read_text().strip()
+          assert re.fullmatch(r"[a-fA-F0-9]{64}", expected)
+          assert hashlib.sha256(image.read_bytes()).hexdigest() == expected.lower()
+          print("Published native macOS installer downloaded and SHA-256 verified.")
+          PY
+      - name: Mount the downloaded image and verify native installation
+        env:
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+          MAC_VERSION: ${{ needs.package.outputs.mac_version }}
+        run: |
+          set -euo pipefail
+          image="PublishedMac/Evict_$RELEASE_VERSION.dmg"
+          mount_point="$RUNNER_TEMP/evict-published-mac"
+          mkdir -p "$mount_point"
+          trap 'hdiutil detach "$mount_point" >/dev/null 2>&1 || true' EXIT
+          hdiutil verify "$image"
+          hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mount_point" "$image"
+          lipo "$mount_point/Evict.app/Contents/MacOS/Evict" -verify_arch arm64 x86_64
+          codesign --verify --deep --strict --verbose=2 "$mount_point/Evict.app"
+          python - "$mount_point" <<'PY'
+          import os, pathlib, plistlib, re, sys
+          volume = pathlib.Path(sys.argv[1])
+          assert os.statvfs(volume).f_flag & os.ST_RDONLY
+          assert (volume / "Applications").is_symlink() and os.readlink(volume / "Applications") == "/Applications"
+          source = pathlib.Path("macos/Sources/EvictKit/Version.swift").read_text()
+          version = re.search(r'public static let current\s*=\s*"([^"]+)"', source).group(1)
+          build = re.search(r'public static let build\s*=\s*"([^"]+)"', source).group(1)
+          with (volume / "Evict.app/Contents/Info.plist").open("rb") as stream:
+              info = plistlib.load(stream)
+          assert info["CFBundleShortVersionString"] == version == os.environ["MAC_VERSION"]
+          assert info["CFBundleVersion"] == build and info["CFBundleExecutable"] == "Evict"
+          assert os.access(volume / "Evict.app/Contents/MacOS/Evict", os.X_OK)
+          print("Published DMG verified: read-only installation, original component version, signed arm64/x86_64 app.")
+          PY
+          hdiutil detach "$mount_point"
+          trap - EXIT
+
+  record-macos-version:
+    needs: [package, publish, verify-published-update, verify-published-macos]
+    if: always() && needs.package.outputs.channel == 'stable' && needs.publish.result == 'success' && needs.verify-published-update.result == 'success' && needs.verify-published-macos.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Record verified native Mac version without a duplicate release
+        uses: actions/github-script@v9
+        env:
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+          RELEASE_SOURCE: ${{ needs.package.outputs.source_sha }}
+          MAC_VERSION: ${{ needs.package.outputs.mac_version }}
+        with:
+          script: |
+            const source = process.env.RELEASE_SOURCE;
+            const version = process.env.RELEASE_VERSION;
+            const mac = process.env.MAC_VERSION;
+            if (process.env.GITHUB_REPOSITORY !== 'krishnabhunia/evict-uninstaller' ||
+                !['push', 'workflow_dispatch'].includes(context.eventName) ||
+                (context.ref !== 'refs/heads/main' && context.ref !== 'refs/tags/win-v' + version) ||
+                !/^[a-f0-9]{40}$/.test(source) || !/^\d+\.\d+\.\d+$/.test(version) || !/^\d+\.\d+\.\d+$/.test(mac)) {
+              throw new Error('Native Mac tags require a verified stable main release.');
+            }
+            const {data: release} = await github.rest.repos.getReleaseByTag({...context.repo, tag: 'win-v' + version});
+            if (release.draft || release.prerelease) throw new Error('The shared stable release is not published.');
+            const {data: main} = await github.rest.git.getRef({...context.repo, ref: 'heads/main'});
+            const {data: comparison} = await github.rest.repos.compareCommits({...context.repo, base: source, head: main.object.sha});
+            if (!['ahead', 'identical'].includes(comparison.status)) throw new Error('Verified release source is not part of main.');
+            let target = (await github.rest.git.getRef({...context.repo, ref: 'tags/win-v' + version})).data.object;
+            while (target.type === 'tag') target = (await github.rest.git.getTag({...context.repo, tag_sha: target.sha})).data.object;
+            if (target.type !== 'commit' || target.sha !== source) throw new Error('The shared release source changed.');
+            const {data: native} = await github.rest.repos.getContent({...context.repo, path: 'macos/Sources/EvictKit/Version.swift', ref: source});
+            const actual = Buffer.from(native.content, 'base64').toString('utf8').match(/public static let current\s*=\s*"([^"]+)"/)?.[1];
+            if (actual !== mac) throw new Error('Native Mac version differs from the tested source.');
+            const ref = 'tags/mac-v' + mac;
+            let existing;
+            try { existing = (await github.rest.git.getRef({...context.repo, ref})).data; }
+            catch (error) { if (error.status !== 404) throw error; }
+            if (existing) {
+              // A previous verified native baseline remains immutable across Windows-only releases.
+              let baseline = existing.object;
+              while (baseline.type === 'tag') baseline = (await github.rest.git.getTag({...context.repo, tag_sha: baseline.sha})).data.object;
+              if (baseline.type !== 'commit') throw new Error('Native baseline is not a commit.');
+              const {data: ancestry} = await github.rest.repos.compareCommits({...context.repo, base: baseline.sha, head: main.object.sha});
+              if (!['ahead', 'identical'].includes(ancestry.status)) throw new Error('Native baseline is not part of main.');
+              const {data: metadata} = await github.rest.repos.getContent({...context.repo, path: 'macos/Sources/EvictKit/Version.swift', ref: baseline.sha});
+              const baselineVersion = Buffer.from(metadata.content, 'base64').toString('utf8').match(/public static let current\s*=\s*"([^"]+)"/)?.[1];
+              if (baselineVersion !== mac) throw new Error('Native baseline tag has different component metadata.');
+              core.info('Preserving existing native baseline ' + ref + ' at ' + baseline.sha + '.');
+            } else {
+              await github.rest.git.createRef({...context.repo, ref: 'refs/' + ref, sha: source});
+              core.info('Recorded native Mac version ' + mac + ' from verified shared release ' + version + '.');
+            }
+
   cleanup-beta-source:
-    needs: [prepare-beta, freeze-beta, pr-build, mac-package, package, publish, verify-published-update]
+    needs: [prepare-beta, freeze-beta, pr-build, mac-package, package, publish, verify-published-update, verify-published-macos]
     if: always() && github.event_name == 'pull_request' && (needs.prepare-beta.outputs.temp_ref != '' || needs.freeze-beta.outputs.source_sha != '')
     runs-on: ubuntu-latest
     permissions:
@@ -1298,8 +1568,8 @@ jobs:
   # Delete transfer files only after every consumer has successfully finished.
   # This job executes inline API calls with no checkout and no repository code.
   cleanup-artifacts:
-    needs: [build, pr-build, plan-beta, mac-package, package, publish, verify-published-update]
-    if: always() && needs.package.result == 'success' && (needs.package.outputs.publish == 'false' || (needs.publish.result == 'success' && needs.verify-published-update.result == 'success')) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && github.event.pull_request.user.type == 'User' && github.event.sender.type == 'User' && !endsWith(github.actor, '[bot]')))
+    needs: [build, pr-build, plan-beta, mac-package, package, publish, verify-published-update, verify-published-macos, record-macos-version]
+    if: always() && needs.package.result == 'success' && (needs.package.outputs.publish == 'false' || (needs.publish.result == 'success' && needs.verify-published-update.result == 'success' && needs.verify-published-macos.result == 'success' && (needs.record-macos-version.result == 'success' || needs.record-macos-version.result == 'skipped'))) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && github.event.pull_request.user.type == 'User' && github.event.sender.type == 'User' && !endsWith(github.actor, '[bot]')))
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -1316,13 +1586,15 @@ jobs:
           PACKAGE_RESULT: ${{ needs.package.result }}
           PUBLISH_REQUIRED: ${{ needs.package.outputs.publish }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
-          VERIFY_RESULT: ${{ needs.verify-published-update.result }}
+          VERIFY_RESULT: ${{ needs.verify-published-update.result == 'success' && needs.verify-published-macos.result == 'success' && (needs.record-macos-version.result == 'success' || needs.record-macos-version.result == 'skipped') && 'success' || 'failure' }}
         with:
           script: |
             // Cleanup runs without checkout and receives only artifact metadata from successful jobs.
             const EXPECTED_REPOSITORY = 'krishnabhunia/evict-uninstaller';
             const WORKFLOW_PATH = '.github/workflows/windows.yml';
             const VERSION_PATTERN = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-beta\\.[1-9]\\d*\\.[1-9]\\d*\\.[1-9]\\d*)?';
+            const VERSIONED_FINAL = new RegExp('^Evict_(' + VERSION_PATTERN + ')$');
+            const NATIVE_ZIP = new RegExp('^(Evict-' + VERSION_PATTERN + '-([a-f0-9]{40}))-release-zip$');
             const LEGACY_FINAL = new RegExp('^Evict-(' + VERSION_PATTERN + ')-([a-f0-9]{40})$');
             const NATIVE_WINDOWS = new RegExp('^(Evict-' + VERSION_PATTERN + '-([a-f0-9]{40}))-windows$');
             // One-time migration of the three reviewed successful runs; never sweep workflow history.
@@ -1362,21 +1634,49 @@ jobs:
               return match && Number(match[1]) === runId && positiveInteger(match[2]) &&
                 Number(match[2]) <= attempt;
             }
+            function transferVersion(match) {
+              return match[1].slice('Evict-'.length, -(match[2].length + 1));
+            }
+            function previousBetaAttempt(version, run) {
+              if (run.event !== 'pull_request' || context.eventName !== 'pull_request' ||
+                  !positiveInteger(run.run_number) || !positiveInteger(context.payload.pull_request?.number)) return false;
+              const sequence = version.match(/-beta\.([1-9]\d*)\.([1-9]\d*)\.([1-9]\d*)$/);
+              return sequence && sequence.slice(1).every(positiveInteger) &&
+                Number(sequence[1]) === run.run_number &&
+                Number(sequence[2]) === context.payload.pull_request.number &&
+                Number(sequence[3]) < run.run_attempt;
+            }
             function planCurrent(run, artifacts, env) {
               if (!validCollection(artifacts, run.id)) throw new Error('Current artifact collection is ambiguous or belongs to another run.');
-              if (env.FINAL_ARTIFACT !== 'Evict-installation') throw new Error('Unexpected final installation artifact name.');
+              const finalIdentity = env.FINAL_ARTIFACT?.match(VERSIONED_FINAL);
+              if (!finalIdentity) throw new Error('Unexpected final installation artifact name.');
               const finals = artifacts.filter(artifact => artifact.name === env.FINAL_ARTIFACT);
               if (finals.length !== 1 || !finalAvailable(finals[0])) throw new Error('A complete final installation artifact is required before cleanup.');
               if (env.FINAL_ARTIFACT_ID && Number(env.FINAL_ARTIFACT_ID) !== finals[0].id) throw new Error('Final artifact ID differs from the package output.');
               const windows = env.INTERNAL_WINDOWS?.match(NATIVE_WINDOWS);
-              if (!windows || env.INTERNAL_MAC !== 'Evict-macOS-' + windows[2] ||
+              if (!windows || finalIdentity[1] !== transferVersion(windows) ||
+                  env.INTERNAL_MAC !== 'Evict-macOS-' + windows[2] ||
                   env.INTERNAL_ZIP !== windows[1] + '-release-zip') throw new Error('Internal artifact names do not identify one version/source pair.');
               if (env.GENERATED_ARTIFACT && !manifestOwned(env.GENERATED_ARTIFACT, run.id, run.run_attempt)) {
                 throw new Error('Generated manifest does not belong to this workflow run and attempt.');
               }
               const names = new Set([env.INTERNAL_WINDOWS, env.INTERNAL_MAC, env.INTERNAL_ZIP]);
-              const remove = artifacts.filter(artifact => names.has(artifact.name) ||
-                manifestOwned(artifact.name, run.id, run.run_attempt));
+              // A retry creates a new beta filename. Select only versions proving this run, PR and an older attempt.
+              // A Mac transfer is eligible only beside a known Windows source pair from that older attempt.
+              for (const artifact of artifacts) {
+                const transfer = artifact.name.match(NATIVE_WINDOWS) || artifact.name.match(NATIVE_ZIP);
+                if (transfer && previousBetaAttempt(transferVersion(transfer), run)) {
+                  names.add(transfer[1] + '-windows');
+                  names.add(transfer[1] + '-release-zip');
+                  names.add('Evict-macOS-' + transfer[2]);
+                }
+                const previousFinal = artifact.name.match(VERSIONED_FINAL);
+                if (artifact.id !== finals[0].id && previousFinal && previousBetaAttempt(previousFinal[1], run)) {
+                  names.add(artifact.name);
+                }
+              }
+              const remove = artifacts.filter(artifact => artifact.id !== finals[0].id &&
+                (names.has(artifact.name) || manifestOwned(artifact.name, run.id, run.run_attempt)));
               return {run, final: finals[0], remove, historical: false};
             }
             function planHistorical(run, artifacts, workflowId) {
