@@ -50,8 +50,8 @@ Two editions come out of every build — pick one:
 
 | Edition | File | Notes |
 |---|---|---|
-| Portable | `Evict.exe` (~66 MB, self-contained, no .NET install needed) | Put it anywhere (e.g. `C:\Tools\Evict\`) and double-click. Updates replace the file in place. |
-| Installed | `Evict-Setup-x.y.z.exe` | Installs to `%LocalAppData%\Programs\Evict` for the current user (no UAC) or, if you choose *all users*, to `Program Files`. Adds Start-menu shortcuts, an *Apps & features* entry and, optionally, the Explorer context menu. Updates run the new Setup silently. |
+| Portable | `portable/Evict_<fullversion>.exe` (self-contained, no .NET install needed) | Put it anywhere (e.g. `C:\Tools\Evict\`) and double-click. Updates replace the file in place. |
+| Installed | `windows-x64/Evict_<fullversion>.exe` | Installs to `%LocalAppData%\Programs\Evict` for the current user (no UAC) or, if you choose *all users*, to `Program Files`. Adds Start-menu shortcuts, an *Apps & features* entry and, optionally, the Explorer context menu. Updates run the new Setup silently. |
 
 Both **start as administrator** by default (since 1.7.0): Windows shows a UAC prompt when the window opens, which unlocks
 machine-wide operations (Program Files leftovers, services, restore points, all-user Store apps, Windows updates).
@@ -103,35 +103,32 @@ or run `build/publish.ps1` (Windows) / `build/publish.sh` (Linux/macOS).
 | 1 | `windows/Portable/` | `Evict.exe` + `.sha256` – the stand-alone edition, runs from anywhere | `dotnet publish` (the build scripts) |
 | 2 | `windows/Installed/` | `Evict-Setup-x.y.z.exe` + `.sha256` – the installer, which packs `Portable/Evict.exe` | Inno Setup (`installer/Evict.iss`) |
 
-Both folders are local build results (ignored by git). The downloadable release ZIP uses this exact layout:
+Both folders are local build results (ignored by git). The downloadable `Evict_<fullversion>.zip` has one `Evict_<fullversion>/` enclosing folder containing exactly:
 
-| ZIP folder | Build file | Verification |
-|---|---|---|
-| `portable/` | `Evict.exe` | `Evict.exe.sha256` |
-| `windows-installer/` | `Evict-Setup-<Windows version>.exe` | Matching `.sha256` |
-| `macOS/` | `Evict-macOS-<Mac version>.zip` containing the native `Evict.app` | Matching `.sha256` |
+| Folder | Build file |
+|---|---|
+| `portable/` | `Evict_<fullversion>.exe` — portable application |
+| `windows-x64/` | `Evict_<fullversion>.exe` — Windows x64 installer |
+| `macOS/` | `Evict_<fullversion>.dmg` — universal native Mac app |
 
-The outer ZIP contains these three folders and six files only. Windows and Mac versions remain independent.
-The native Mac app stays in its own ZIP so its executable permissions, signature files and bundle symlinks survive
-download and extraction on Windows. The release also supplies raw Windows assets for the in-app updater.
+There are exactly three payload files and no internal SHA-256 sidecars. The DMG preserves the Mac app's executable permissions, signature files and bundle symlinks. Filenames use the complete suite version; the Mac app's numeric component version remains independent. Raw Windows updater assets and external checksums are also published separately.
 
-To package locally, first build the Windows portable app and installer, then build the native Mac archive on a Mac
-with `Scripts/make-app.sh --universal`. Supply that actual archive; packaging rejects missing or empty Mac placeholders:
+To package locally, first build the Windows portable app and installer, then build the native Mac disk image on a Mac
+with `Scripts/make-app.sh --universal` followed by `Scripts/make-dmg.sh 1.12.2`. Supply that actual DMG; packaging rejects missing or empty placeholders:
 
 ```powershell
-build/package.ps1 -MacOSArchive ..\macos\build\Evict-0.2.0.zip
+build/package.ps1 -MacOSArchive ..\macos\build\Evict_1.12.2.dmg
 # For a beta installer, also pass -Version <complete x.y.z-beta.RUN.PR.ATTEMPT version>.
 ```
 
 Or call the Python helper directly from `windows/`:
 
 ```bash
-python build/release_zip.py 1.10.0 --setup Installed --exe Portable --macos ../macos/build/Evict-0.2.0.zip --out Zip
-python build/release_zip.py --check Zip/Evict-1.10.0.zip
+python build/release_zip.py 1.12.2 --setup Installed --exe Portable --macos ../macos/build/Evict_1.12.2.dmg --out Zip
+python build/release_zip.py --check Zip/Evict_1.12.2.zip
 ```
 
-The helper verifies all three payloads and checksums, the Windows PE headers, the Mac bundle version and native
-executable permissions before writing the release ZIP.
+The helper verifies all three payloads, Windows PE headers and the Mac disk image before writing the release ZIP.
 
 ## Command line
 
@@ -152,7 +149,7 @@ If Evict is already running, a second launch hands its arguments to the open win
 
 ## Continuous integration
 
-`.github/workflows/windows.yml` tests and packages Windows changes on `windows-latest`: version-engine tests, .NET tests, XAML checks, single-file publish, optional signing, Inno Setup installer and SHA-256 checksums. A companion Mac runner tests and builds a universal app from the same release source. The Actions artifact and release ZIP contain exactly `portable/`, `windows-installer/` and `macOS/`, each with its payload and checksum.
+**Evict Build & Release** (`.github/workflows/windows.yml`) is the single active workflow. It tests and packages Windows and macOS changes on native runners: version-engine tests, .NET tests, XAML checks, single-file publish, optional signing, Inno Setup installer and SHA-256 checksums. A companion Mac runner tests and builds a universal app from the same release source. The Actions artifact is `Evict_<fullversion>` and downloads as a ZIP. It and the release ZIP use the enclosing folder and three-payload layout above. Successful runs remove internal build transfers after publication and live update verification.
 
 Main-branch delivery calculates the next major, minor or patch version from PR and commit metadata, commits the source version and changelog, and builds that exact commit. Stable releases use `win-vX.Y.Z` and are marked latest. PR previews use the same calculated core with a beta suffix and can be installed before merging. Published releases are preserved. See [automatic versioning](../docs/versioning.md).
 
@@ -200,7 +197,7 @@ src/Evict.App/               WPF UI (net8.0-windows), MVVM with CommunityToolkit
 tests/Evict.Core.Tests/      xunit tests (run on any OS)
 build/                       publish scripts, xaml_check.py (static XAML sanity checks)
 installer/Evict.iss          Inno Setup script (compiled by CI into Evict-Setup-<version>.exe)
-../.github/workflows/windows.yml  CI: test → publish → sign (optional) → installer → artifact / release
+../.github/workflows/windows.yml  unified CI: native tests → binaries / DMG → combined artifact / release
 ```
 
 ## Safety design

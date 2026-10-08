@@ -1,7 +1,7 @@
-# Packages existing Windows builds with a real macOS app archive.
+# Packages existing Windows builds with a verified native macOS disk image.
 # First build Portable/Evict.exe and Installed/Evict-Setup-<version>.exe.
-# Build the macOS ZIP on a Mac with: macos/Scripts/make-app.sh --universal
-# Example: build/package.ps1 -MacOSArchive ..\macos\build\Evict-0.2.0.zip
+# Build the macOS installer on a Mac with make-app.sh --universal, then make-dmg.sh <version>
+# Example: build/package.ps1 -MacOSArchive ..\macos\build\Evict_1.12.2.dmg
 param(
     [string] $MacOSArchive,
     [string] $Version
@@ -9,11 +9,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($MacOSArchive)) {
-    throw "A complete release ZIP requires -MacOSArchive <built Evict.app ZIP>. Build it on a Mac with Scripts/make-app.sh --universal; empty macOS placeholders are not allowed."
+    throw "A complete release ZIP requires -MacOSArchive <verified Evict_<version>.dmg>. Build it on a Mac with Scripts/make-app.sh --universal and Scripts/make-dmg.sh <version>; empty macOS placeholders are not allowed."
 }
 $macArchive = Get-Item -LiteralPath $MacOSArchive -ErrorAction Stop
 if ($macArchive.PSIsContainer -or ($macArchive.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $macArchive.Length -eq 0) {
-    throw "MacOSArchive must be a nonempty ordinary app ZIP file."
+    throw "MacOSArchive must be a nonempty ordinary native DMG file."
 }
 $windowsRoot = (Get-Item -LiteralPath (Join-Path $PSScriptRoot "..")).FullName
 if ([string]::IsNullOrWhiteSpace($Version)) {

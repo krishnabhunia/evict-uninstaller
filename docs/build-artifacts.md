@@ -1,29 +1,23 @@
 # Build artifacts
 
-Each successful Windows workflow keeps one final Actions download named **Evict-installation**. The macOS workflow keeps **Evict-macOS-installation**. Both download ZIPs contain exactly:
+**Evict Build & Release** is the single active workflow for Windows and macOS. Its definition is [`windows.yml`](../.github/workflows/windows.yml); it runs native Windows and Mac jobs from the same release source.
 
-- `portable/`
-- `windows-installer/`
-- `macOS/`
+Each successful run keeps one Actions download named **`Evict_<fullversion>`**. GitHub downloads it as **`Evict_<fullversion>.zip`**. The ZIP has one enclosing folder and exactly these three payload files:
 
-The running application, Setup filename, release tag and release ZIP keep their full automatically calculated version. The workflow summary shows the actual Windows and Mac versions and links directly to the installation artifact. Mac workflow bundles use the published Windows stable from main.
+| Path inside the ZIP | Native build |
+| --- | --- |
+| `Evict_<fullversion>/portable/Evict_<fullversion>.exe` | Windows portable application |
+| `Evict_<fullversion>/windows-x64/Evict_<fullversion>.exe` | Windows x64 installer |
+| `Evict_<fullversion>/macOS/Evict_<fullversion>.dmg` | Universal macOS disk image |
+
+The full version includes the beta suffix for a PR build. The macOS app inside the disk image retains its independently managed numeric component version. The run summary shows both versions and links to the final download.
+
+The release installation ZIP uses the same name and layout. SHA-256 checksums are separate release assets; no sidecars or nested archives are added to the installation ZIP. Raw `Evict.exe` and `Evict-Setup-<fullversion>.exe` updater assets remain available with their checksums.
 
 ## Temporary build transfers
 
-Windows builds temporarily upload version metadata, Windows binaries, the native Mac archive, and publication inputs so separate jobs can exchange files. These can appear while the workflow is running.
+Jobs temporarily upload version metadata, Windows binaries, the native Mac build and publication inputs. These can appear while a run is active.
 
-After packaging and, when applicable, publication plus live update verification succeed, an isolated API-only cleanup job deletes those transfers. The final installation download remains. Fork and bot PRs do not receive cleanup write permissions.
+After packaging and, when required, publication plus live update verification succeed, the cleanup job removes internal transfers and previous-attempt final downloads owned by that run. The current `Evict_<fullversion>` download remains. Temporary transfers expire after one day if the run fails. Fork and bot PRs do not receive cleanup write permissions.
 
-Temporary artifacts use one-day retention. Failed packaging, publication or update verification preserves them for diagnosis. Final downloads follow the repository's normal artifact retention.
-
-## Retries
-
-The final artifact has a fixed readable name and uses overwrite on retries, so a successful rerun replaces the previous Actions download instead of adding another version-named download. GitHub Release tags and published asset bytes are preserved.
-
-The version manifest consumer uses the producing job's output name rather than reconstructing a name from a later attempt.
-
-## Existing successful builds
-
-The cleanup migration checks only the known successful Windows runs `37663956345` (PR #14), `37663958842` (PR #13), and `37739868099` (main). It verifies the exact workflow, repository, latest successful attempt and one unambiguous final installation artifact before removing that run's internal transfers.
-
-Their existing final downloads keep their original names. Other workflows, failed runs, unrelated artifacts, logs, releases and source branches are preserved. Missing or ambiguous collections are skipped; bounded pagination and identity checks finish before deletion.
+Final downloads follow the repository's normal artifact retention. Historical workflow runs and their surviving final downloads keep their original names; removing the separate macOS workflow does not erase its history.

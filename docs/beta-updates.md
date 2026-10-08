@@ -6,7 +6,7 @@ Evict's preferred update flow uses GitHub Releases. Stable releases are selected
 
 Installed Evict 1.8.0 only understands stable updates. It cannot acquire a beta setting from release metadata alone. Install a beta-aware build once, then enable the option in Settings → Updates. Subsequent beta builds can be downloaded through Evict without merging their PR into main.
 
-For manual testing, download the Windows Actions artifact or the published beta installer. Exit an already running Evict first so its single-instance forwarding does not reopen the old binary. Beta and stable installations use the existing Evict installation and data profile.
+For manual testing, download the unified `Evict_<fullversion>.zip` Actions artifact and run `Evict_<fullversion>/windows-x64/Evict_<fullversion>.exe`, or download the separate published beta installer. Exit an already running Evict first so its single-instance forwarding does not reopen the old binary. Beta and stable installations use the existing Evict installation and data profile.
 
 ## Version and channel rules
 
@@ -20,7 +20,7 @@ For manual testing, download the Windows Actions artifact or the published beta 
 
 ## Publication and provenance
 
-Trusted same-repository Windows PR builds test and package a beta before publishing a GitHub prerelease. Fork and Dependabot PRs can build with read-only access and do not publish releases. Only main-branch sources publish stable releases after merge, using the same automatic major/minor/patch calculation. No test PR can bypass this channel rule.
+Trusted same-repository PR builds test and package a beta before publishing a GitHub prerelease. Fork and Dependabot PRs can build with read-only access and do not publish releases. Only main-branch sources publish stable releases after merge, using the same automatic major/minor/patch calculation. No test PR can bypass this channel rule.
 
 GitHub requires workflow-write permission when a release target changes workflows relative to the default branch. The publisher creates a frozen source snapshot preserving the reviewed PR app, tests and documentation, except for the three explicitly managed Windows version files synchronized by the version engine. The workflow subtree matches the default branch. The snapshot's parent is the default-branch commit. Its scoped build reference makes that snapshot available for checkout. This publishes app code with the normal contents-write token while keeping the default branch unchanged.
 
@@ -32,7 +32,7 @@ Automatic checks run silently after every application restart when enabled, even
 
 ## Validation
 
-Automated tests cover stable-default settings, persisted beta opt-in, semantic version ordering, release eligibility, release-list failures and pagination, and verified downloads. Windows CI compiles the app, checks XAML, tests the beta build, builds the native macOS bundle, and packages exactly `portable/`, `windows-installer/` and `macOS/`. All binaries and nested app archives have SHA-256 sidecars.
+Automated tests cover stable-default settings, persisted beta opt-in, semantic version ordering, release eligibility, release-list failures and pagination, and verified downloads. The single **Evict Build & Release** workflow compiles the Windows app, checks XAML, tests both platforms and builds the native macOS DMG from the same release source. Its `Evict_<fullversion>.zip` has one enclosing `Evict_<fullversion>/` folder containing exactly `portable/Evict_<fullversion>.exe`, `windows-x64/Evict_<fullversion>.exe` and `macOS/Evict_<fullversion>.dmg`. Checksums remain separate release assets, including the raw Windows updater assets.
 
 After installing the beta-aware build, use disposable installations to check:
 

@@ -150,13 +150,17 @@ def is_document_or_test(path: str) -> bool:
 
 
 def affects_platform(paths: list[str], platform: str) -> bool:
+    # Windows tags identify the delivery containing both native applications.
+    native_platforms = ("windows", "macos") if platform == "windows" else ("macos",)
+    workflows = ((".github/workflows/windows.yml", ".github/workflows/macos.yml")
+                 if platform == "windows" else (".github/workflows/macos.yml",))
     for path in paths:
         path = path.replace("\\", "/")
         if is_document_or_test(path):
             continue
-        if path.startswith(platform + "/") or path.startswith("scripts/"):
+        if path.startswith(tuple(value + "/" for value in native_platforms)) or path.startswith("scripts/"):
             return True
-        if path == f".github/workflows/{'windows' if platform == 'windows' else 'macos'}.yml":
+        if path in workflows:
             return True
         if path in (".github/release-policy.json", "Directory.Build.props", "global.json"):
             return True
@@ -220,6 +224,14 @@ def release_intent(message: str, metadata: dict[str, Any] | None, platform: str)
                     if (value := conventional_intent(text, platform)) is not None]
     declared = global_values + conventional
     return max(declared) if declared else Bump.PATCH
+
+
+def bundle_intent(message: str, metadata: dict[str, Any] | None, paths: list[str], platform: str) -> Bump:
+    """The shared delivery must also carry eligible Mac release intent."""
+    intent = release_intent(message, metadata, platform)
+    if platform == "windows" and affects_platform(paths, "macos"):
+        intent = max(intent, release_intent(message, metadata, "macos"))
+    return intent
 
 
 def release_test_request(event: dict[str, Any], repository: str, platform: str, mode: str) -> tuple[str, CoreVersion | None] | None:
@@ -575,12 +587,18 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
                     raise VersionError("A generated release reservation disagrees with its committed source.")
                 reservations.append(reserved)
                 continue
+            if platform == "windows" and generated_release_commit(message, paths, "macos"):
+                # The Mac version-preparation job cannot create another delivery bump.
+                continue
             if not runtime_delta or not affects_platform(paths, platform):
                 continue
             legacy = next((value for value in policy.get("legacy_pull_requests", {}).values()
                            if value.get("merge_commit_sha") == sha), None)
             if legacy:
-                intent = max(intent, Bump.parse(legacy[platform]))
+                legacy_intent = Bump.parse(legacy[platform])
+                if platform == "windows" and affects_platform(paths, "macos"):
+                    legacy_intent = max(legacy_intent, Bump.parse(legacy["macos"]))
+                intent = max(intent, legacy_intent)
                 notes.extend(change_notes(message, []))
                 continue
             pulls = github.merged_pull_requests(sha)
@@ -589,10 +607,10 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
             if pulls:
                 # Rebase merges can associate many distinct commits with one PR.
                 # Deduplicate notes, never the intent carried by later commit messages.
-                intent = max(intent, *(release_intent(message, pull, platform) for pull in pulls))
+                intent = max(intent, *(bundle_intent(message, pull, paths, platform) for pull in pulls))
                 notes.extend(change_notes(message, fresh))
             else:
-                intent = max(intent, release_intent(message, None, platform))
+                intent = max(intent, bundle_intent(message, None, paths, platform))
                 notes.extend(change_notes(message, []))
         pr_affects = False
         if mode == "beta":
@@ -606,9 +624,10 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
             before = git.resolve(pull["base"]["sha"])
             after = git.resolve(pull["head"]["sha"])
             before = git.merge_base(before, after)
-            pr_affects = affects_platform(git.paths(before, after), platform)
+            pr_paths = git.paths(before, after)
+            pr_affects = affects_platform(pr_paths, platform)
             if pr_affects:
-                intent = max(intent, release_intent("", pull, platform))
+                intent = max(intent, bundle_intent("", pull, pr_paths, platform))
                 notes.extend(change_notes("", [pull]))
         arithmetic_base = max(base, floor)
         computed = arithmetic_base.bump(intent) if intent != Bump.NONE else base

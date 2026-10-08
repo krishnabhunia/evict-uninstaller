@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Evict.Core.Util;
 using Microsoft.Win32;
 
@@ -80,13 +81,77 @@ public static class SelfCleanupService
         return string.Join(",", words);
     }
 
-    /// <summary>Evict.exe, or the Evict.old*.exe a portable self-update leaves behind.</summary>
+    // These are the complete names emitted by packaging and the portable update handoff.
+    // A prefix match would also claim unrelated applications and temporary files.
+    private const string CoreNumber = @"(?:0|[1-9][0-9]*)";
+    private const string PositiveNumber = @"[1-9][0-9]*";
+    private const string PortableVersion = CoreNumber + @"\." + CoreNumber + @"\." + CoreNumber
+        + @"(?:-beta\." + PositiveNumber + @"\." + PositiveNumber + @"\." + PositiveNumber + @")?";
+    private const RegexOptions NameOptions = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
+
+    /// <summary>The installed name, canonical versioned portable names, and exact update backup names.</summary>
     public static bool IsEvictExe(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
         var leaf = PathUtil.LeafName(path.Trim().Trim('"'));
         return leaf.Equals("Evict.exe", StringComparison.OrdinalIgnoreCase)
-               || (leaf.StartsWith("Evict.old", StringComparison.OrdinalIgnoreCase) && leaf.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+            || Regex.IsMatch(leaf, @"\AEvict\.old(?:\." + PositiveNumber + @")?\.exe\z", NameOptions)
+            || IsVersionedPortableStem(leaf.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? leaf[..^4] : "");
+    }
+
+    private static bool IsVersionedPortableStem(string name) =>
+        Regex.IsMatch(name, @"\AEvict_" + PortableVersion + @"\z", NameOptions);
+
+    internal static bool IsEvictCrashDump(string name)
+    {
+        var match = Regex.Match(PathUtil.LeafName(name), @"\A(?<exe>.+\.exe)\." + PositiveNumber + @"\.dmp\z", NameOptions);
+        return match.Success && IsEvictExe(match.Groups["exe"].Value);
+    }
+
+    internal static bool IsEvictPrefetch(string name)
+    {
+        var match = Regex.Match(PathUtil.LeafName(name), @"\A(?<exe>.+\.exe)-[0-9a-f]{8}\.pf\z", NameOptions);
+        return match.Success && IsEvictExe(match.Groups["exe"].Value);
+    }
+
+    internal static bool IsEvictNotificationKey(string name) =>
+        name.Equals("Evict Uninstaller", StringComparison.OrdinalIgnoreCase) || IsEvictExe(name);
+
+    internal static bool IsEvictExtractionName(string name) =>
+        name.Equals("Evict", StringComparison.OrdinalIgnoreCase) || IsVersionedPortableStem(name);
+
+    /// <summary>Select only immediate cache folders with an exact Evict host name; preserve links and other hosts.</summary>
+    internal static IReadOnlyList<string> ExtractionDirectories(string baseDirectory)
+    {
+        var result = new List<string>();
+        try
+        {
+            var parent = Path.GetFullPath(baseDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (!Directory.Exists(parent) || PathUtil.HasReparsePoint(parent)) return result;
+            foreach (var directory in SafeDirectories(parent))
+            {
+                var full = Path.GetFullPath(directory);
+                if (IsEvictExtractionName(Path.GetFileName(full))
+                    && string.Equals(Path.GetDirectoryName(full), parent, StringComparison.OrdinalIgnoreCase)
+                    && !PathUtil.HasReparsePoint(full)) result.Add(full);
+            }
+        }
+        catch { /* inaccessible or invalid cache bases are never removed */ }
+        return result;
+    }
+
+    internal static void RemoveExtractionCaches(string baseDirectory, SelfCleanupReport report)
+    {
+        foreach (var root in ExtractionDirectories(baseDirectory))
+        {
+            foreach (var directory in SafeDirectories(root))
+            {
+                // Do not follow a link in the selected bundle cache.
+                if (PathUtil.HasReparsePoint(directory)) continue;
+                try { Directory.Delete(directory, recursive: true); report.Removed.Add(directory); } catch { /* current bundle is in use */ }
+            }
+            TryRemoveEmptyDirectory(root, report);
+        }
     }
 
     private static readonly HashSet<string> HistoryEntries = new(StringComparer.OrdinalIgnoreCase)
@@ -106,7 +171,8 @@ public static class SelfCleanupService
     /// Where .NET unpacks the native WPF libraries of the single-file Evict.exe (one sub-folder per version, ~25 MB
     /// each; IncludeNativeLibrariesForSelfExtract). The running version's folder is locked – see <see cref="ScheduleExtractionCleanup"/>.
     /// </summary>
-    public static string ExtractionRoot => Path.Combine(Environment.GetEnvironmentVariable("DOTNET_BUNDLE_EXTRACT_BASE_DIR") is { Length: > 0 } b ? b : Path.Combine(Path.GetTempPath(), ".net"), "Evict");
+    private static string ExtractionBaseDirectory => Environment.GetEnvironmentVariable("DOTNET_BUNDLE_EXTRACT_BASE_DIR") is { Length: > 0 } b ? b : Path.Combine(Path.GetTempPath(), ".net");
+    public static string ExtractionRoot => Path.Combine(ExtractionBaseDirectory, "Evict");
     public static string InstallerCacheBackupRoot => SystemCleanupService.BackupRoot;
     private static string ProgramDataEvict => Path.GetDirectoryName(InstallerCacheBackupRoot) ?? InstallerCacheBackupRoot;
 
@@ -126,13 +192,13 @@ public static class SelfCleanupService
     private static IEnumerable<string> CrashDumps()
     {
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CrashDumps");
-        return Directory.Exists(dir) ? SafeFiles(dir, "Evict.exe.*.dmp") : Enumerable.Empty<string>();
+        return Directory.Exists(dir) ? SafeFiles(dir, "*.dmp").Where(IsEvictCrashDump) : Enumerable.Empty<string>();
     }
 
     private static IEnumerable<string> PrefetchFiles()
     {
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Prefetch");
-        return ElevationHelper.IsElevated && Directory.Exists(dir) ? SafeFiles(dir, "EVICT.EXE-*.pf") : Enumerable.Empty<string>();
+        return ElevationHelper.IsElevated && Directory.Exists(dir) ? SafeFiles(dir, "*.pf").Where(IsEvictPrefetch) : Enumerable.Empty<string>();
     }
 
     private static IEnumerable<string> SafeFiles(string dir, string pattern)
@@ -183,7 +249,7 @@ public static class SelfCleanupService
         "\"Start with Windows\" entry and the scheduled Software Health scan",
         "\"Uninstall with Evict\" in Explorer's right-click and Send-to menus",
         "Evict.old.exe files left by portable updates",
-        "Unpacked program libraries in %TEMP%\\.net\\Evict (a cache of this .exe, safe to remove)",
+        "Unpacked program libraries in Evict's installed and versioned portable .NET cache folders",
     };
 
     private static IEnumerable<string> SafeEntries(string dir)
@@ -270,17 +336,10 @@ public static class SelfCleanupService
 
         // Evict.old*.exe from portable self-updates.
         if (!string.IsNullOrEmpty(appDir) && Directory.Exists(appDir))
-            foreach (var f in SafeFiles(appDir, "Evict.old*.exe")) DeleteEntry(f, r);
+            foreach (var f in SafeFiles(appDir, "Evict.old*.exe").Where(IsEvictExe)) DeleteEntry(f, r);
 
         // Unpacked native libraries of earlier versions (the running one is in use and fails silently).
-        if (Directory.Exists(ExtractionRoot))
-        {
-            foreach (var dir in SafeDirectories(ExtractionRoot))
-            {
-                try { Directory.Delete(dir, recursive: true); r.Removed.Add(dir); } catch { /* in use by this process */ }
-            }
-            TryRemoveEmptyDirectory(ExtractionRoot, r);
-        }
+        RemoveExtractionCaches(ExtractionBaseDirectory, r);
     }
 
     private static IEnumerable<string> SafeDirectories(string dir)
@@ -296,16 +355,19 @@ public static class SelfCleanupService
     {
         try
         {
-            var root = ExtractionRoot;
-            if (!Directory.Exists(root)) return;
             var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
-            var psi = new System.Diagnostics.ProcessStartInfo(cmd, $"/c ping 127.0.0.1 -n 4 >nul & rmdir /s /q \"{root}\"")
+            foreach (var root in ExtractionDirectories(ExtractionBaseDirectory))
             {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
-            };
-            System.Diagnostics.Process.Start(psi)?.Dispose();
+                // cmd expands environment references even inside quotes; unusual custom paths fail closed.
+                if (root.IndexOfAny(new[] { '"', '%', '!', '\r', '\n' }) >= 0) continue;
+                var psi = new System.Diagnostics.ProcessStartInfo(cmd, $"/d /c ping 127.0.0.1 -n 4 >nul & rmdir /s /q \"{root}\"")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+                };
+                System.Diagnostics.Process.Start(psi)?.Dispose();
+            }
         }
         catch { /* best effort */ }
     }
@@ -355,7 +417,7 @@ public static class SelfCleanupService
         {
             using var k = Registry.CurrentUser.OpenSubKey(NotificationSettings);
             foreach (var name in k?.GetSubKeyNames() ?? Array.Empty<string>())
-                if (name.Contains("Evict.exe", StringComparison.OrdinalIgnoreCase) || name.Equals("Evict Uninstaller", StringComparison.OrdinalIgnoreCase))
+                if (IsEvictNotificationKey(name))
                     list.Add($@"{NotificationSettings}\{name}");
         }
         catch { /* ignore */ }

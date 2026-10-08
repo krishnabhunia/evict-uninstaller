@@ -1,4 +1,4 @@
-"""Release archive contract: real payloads, three folders, integrity and native Mac metadata."""
+"""Versioned installation ZIPs, native payload safety and historical compatibility."""
 import contextlib
 import hashlib
 import importlib.util
@@ -58,7 +58,24 @@ def write_zip(path, entries):
                 archive.writestr(info, data)
 
 
-class ReleaseZipTests(unittest.TestCase):
+
+def dmg_bytes():
+    # Minimal UDIF structural fixture; never mounted or executed.
+    data = b"disk image fixture" * 16
+    xml = plistlib.dumps({"resource-fork": {"blkx": [{"Name": "fixture", "Data": b"data"}]}})
+    trailer = bytearray(512)
+    trailer[:4] = b"koly"
+    for offset, value, width in (
+        (4, 4, 4), (8, 512, 4), (12, 1, 4),
+        (32, len(data), 8), (56, 1, 4), (60, 1, 4),
+        (216, len(data), 8), (224, len(xml), 8),
+        (488, 1, 4), (492, 1, 8),
+    ):
+        trailer[offset:offset + width] = value.to_bytes(width, "big")
+    return data + xml + bytes(trailer)
+
+
+class InstallationZipTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -68,13 +85,12 @@ class ReleaseZipTests(unittest.TestCase):
         self.output = self.root / "Zip"
         self.setup.mkdir()
         self.portable.mkdir()
-        self.invalid_mac_attempts = 0
-        self.version = "1.10.0"
+        self.version = "1.12.1"
         self.installer = self.setup / f"Evict-Setup-{self.version}.exe"
         self.installer.write_bytes(pe_bytes())
         (self.portable / "Evict.exe").write_bytes(pe_bytes() + b"portable")
-        self.mac = self.root / "Evict-native.zip"
-        write_zip(self.mac, mac_entries())
+        self.mac = self.root / "Evict.dmg"
+        self.mac.write_bytes(dmg_bytes())
 
     def build(self, **kwargs):
         return Path(release_zip.make_zip(
@@ -89,76 +105,65 @@ class ReleaseZipTests(unittest.TestCase):
         write_zip(archive, transform(entries))
         return archive
 
-    def assert_invalid_mac(self, entries):
-        self.invalid_mac_attempts += 1
-        self.output = self.root / f"RejectedZip-{self.invalid_mac_attempts}"
-        write_zip(self.mac, entries)
-        with self.assertRaises(release_zip.ZipError):
-            self.build()
-        self.assertFalse(self.output.exists(), "invalid inputs must fail before making an archive")
-
-    def test_exact_three_folders_and_six_payload_entries(self):
+    def unpack(self, name="unpacked"):
         archive = self.build()
+        folder = self.root / name
         with zipfile.ZipFile(archive) as reader:
-            self.assertEqual(
-                set(reader.namelist()),
-                {
-                    "portable/Evict.exe", "portable/Evict.exe.sha256",
-                    "windows-installer/Evict-Setup-1.10.0.exe",
-                    "windows-installer/Evict-Setup-1.10.0.exe.sha256",
-                    "macOS/Evict-macOS-0.2.0.zip", "macOS/Evict-macOS-0.2.0.zip.sha256",
-                },
-            )
+            reader.extractall(folder)
+        return folder, folder / f"Evict_{self.version}"
+
+    def test_exact_versioned_root_three_payloads_and_no_internal_checksums(self):
+        archive = self.build()
+        self.assertEqual(archive.name, "Evict_1.12.1.zip")
+        with zipfile.ZipFile(archive) as reader:
+            self.assertEqual(set(reader.namelist()), {
+                "Evict_1.12.1/portable/Evict_1.12.1.exe",
+                "Evict_1.12.1/windows-x64/Evict_1.12.1.exe",
+                "Evict_1.12.1/macOS/Evict_1.12.1.dmg",
+            })
+            self.assertEqual(reader.read("Evict_1.12.1/portable/Evict_1.12.1.exe"),
+                             (self.portable / "Evict.exe").read_bytes())
+            self.assertEqual(reader.read("Evict_1.12.1/windows-x64/Evict_1.12.1.exe"),
+                             self.installer.read_bytes())
+            self.assertEqual(reader.read("Evict_1.12.1/macOS/Evict_1.12.1.dmg"),
+                             self.mac.read_bytes())
         release_zip.check_zip(archive)
         self.assertEqual(Path(str(archive) + ".sha256").read_text().strip(),
                          hashlib.sha256(archive.read_bytes()).hexdigest().upper())
 
-    def test_nested_mac_bytes_permissions_and_symlinks_survive(self):
-        archive = self.build()
-        with zipfile.ZipFile(archive) as reader:
-            embedded = reader.read("macOS/Evict-macOS-0.2.0.zip")
-        self.assertEqual(embedded, self.mac.read_bytes())
-        with zipfile.ZipFile(io.BytesIO(embedded)) as inner:
-            binary = inner.getinfo("Evict.app/Contents/MacOS/Evict")
-            link = inner.getinfo("Evict.app/Contents/Resources/current")
-            self.assertEqual((binary.external_attr >> 16) & 0o777, 0o755)
-            self.assertTrue(stat.S_ISLNK(link.external_attr >> 16))
-            self.assertEqual(inner.read(link), b"../MacOS/Evict")
-
-    def test_independent_mac_archive_version_does_not_rename_windows_payload(self):
-        archive = self.build(archive_version="0.2.0")
-        self.assertEqual(archive.name, "Evict-0.2.0.zip")
-        with zipfile.ZipFile(archive) as reader:
-            self.assertIn("windows-installer/Evict-Setup-1.10.0.exe", reader.namelist())
-
-    def test_full_beta_version_is_preserved(self):
+    def test_full_beta_version_in_archive_root_and_all_payload_names(self):
         self.installer.unlink()
-        self.version = "1.11.0-beta.13.32.1"
+        self.version = "1.12.1-beta.42.16.1"
         (self.setup / f"Evict-Setup-{self.version}.exe").write_bytes(pe_bytes())
         archive = self.build()
-        self.assertEqual(archive.name, f"Evict-{self.version}.zip")
+        self.assertEqual(archive.name, f"Evict_{self.version}.zip")
+        with zipfile.ZipFile(archive) as reader:
+            self.assertTrue(all(name.startswith(f"Evict_{self.version}/")
+                                and name.endswith((f"Evict_{self.version}.exe",
+                                                   f"Evict_{self.version}.dmg"))
+                                for name in reader.namelist()))
         release_zip.check_zip(archive)
 
     def test_reject_incomplete_or_unsafe_versions(self):
-        for version in ("1.10", "01.10.0", "../1.10.0", "1.10.0-beta",
-                        "1.10.0-beta.13.32", "1.10.0-beta.0.32.1", "1.10.0\n"):
+        for version in ("1.12", "01.12.1", "../1.12.1", "1.12.1-beta",
+                        "1.12.1-beta.42.16", "1.12.1-beta.0.16.1", "1.12.1\n"):
             with self.subTest(version=version):
                 self.version = version
                 with self.assertRaises(release_zip.ZipError):
                     self.build()
         self.assertFalse(self.output.exists())
 
-    def test_reject_unsafe_archive_version(self):
-        with self.assertRaises(release_zip.ZipError):
-            self.build(archive_version="../0.2.0")
+    def test_archive_version_must_match_every_payload_label(self):
+        for version in ("0.2.0", "../1.12.1", "1.12.1-beta.42.16.1"):
+            with self.subTest(version=version), self.assertRaises(release_zip.ZipError):
+                self.build(archive_version=version)
+        release_zip.check_zip(self.build(archive_version=self.version))
 
-    def test_require_exact_installer_version(self):
-        self.installer.rename(self.setup / "Evict-Setup-1.9.0.exe")
+    def test_require_exact_installer_version_and_one_installer(self):
+        self.installer.rename(self.setup / "Evict-Setup-1.11.0.exe")
         with self.assertRaises(release_zip.ZipError):
             self.build()
-
-    def test_reject_multiple_installers(self):
-        (self.setup / "other.exe").write_bytes(pe_bytes())
+        (self.setup / f"Evict-Setup-{self.version}.exe").write_bytes(pe_bytes())
         with self.assertRaises(release_zip.ZipError):
             self.build()
 
@@ -169,15 +174,279 @@ class ReleaseZipTests(unittest.TestCase):
                 with self.assertRaises(release_zip.ZipError):
                     self.build()
 
-    def test_reject_missing_mac_archive(self):
+    def test_reject_pe_header_offset_out_of_bounds(self):
+        raw = bytearray(pe_bytes())
+        for offset in (0, len(raw), 2 ** 32 - 1):
+            raw[60:64] = offset.to_bytes(4, "little")
+            self.installer.write_bytes(raw)
+            with self.subTest(offset=offset), self.assertRaises(release_zip.ZipError):
+                self.build()
+
+    def test_reject_missing_mac_image(self):
         self.mac.unlink()
         with self.assertRaises(release_zip.ZipError):
             self.build()
 
-    def test_reject_mac_placeholder(self):
-        self.mac.write_bytes(b"Build coming soon")
+    def test_reject_mac_placeholders_and_legacy_app_zip_as_new_payload(self):
+        for data in (b"", b"Build coming soon", b"koly" + bytes(508), bytes(512)):
+            self.mac.write_bytes(data)
+            with self.subTest(data=data[:4]), self.assertRaises(release_zip.ZipError):
+                self.build()
+        write_zip(self.mac, mac_entries())
         with self.assertRaises(release_zip.ZipError):
             self.build()
+
+    def test_accept_udif_standalone_zero_and_one_segment_conventions(self):
+        # Each field may be zero in standalone vendor images, or explicitly one.
+        for segment_number, segment_count in ((0, 0), (0, 1), (1, 0), (1, 1)):
+            raw = bytearray(dmg_bytes())
+            start = len(raw) - 512
+            raw[start + 56:start + 60] = segment_number.to_bytes(4, "big")
+            raw[start + 60:start + 64] = segment_count.to_bytes(4, "big")
+            self.mac.write_bytes(raw)
+            with self.subTest(number=segment_number, count=segment_count):
+                release_zip.check_zip(self.build())
+
+    def test_reject_udif_split_segments_with_zero_or_one_legacy_markers(self):
+        for number, count, running_offset in ((0, 2, 0), (1, 2, 0), (2, 2, 256),
+                                              (2, 1, 0), (0, 0, 1), (1, 0, 256)):
+            raw = bytearray(dmg_bytes())
+            start = len(raw) - 512
+            raw[start + 16:start + 24] = running_offset.to_bytes(8, "big")
+            raw[start + 56:start + 60] = number.to_bytes(4, "big")
+            raw[start + 60:start + 64] = count.to_bytes(4, "big")
+            with self.subTest(number=number, count=count, running_offset=running_offset):
+                with self.assertRaisesRegex(release_zip.ZipError, "segmented macOS"):
+                    release_zip.check_dmg(io.BytesIO(raw), len(raw), "split image")
+
+    def test_udif_rejections_report_numeric_trailer_fields(self):
+        raw = bytearray(dmg_bytes())
+        start = len(raw) - 512
+        raw[start + 56:start + 60] = (2).to_bytes(4, "big")
+        self.mac.write_bytes(raw)
+        with self.assertRaises(release_zip.ZipError) as error:
+            self.build()
+        message = str(error.exception)
+        for field in ("version=4", "header_size=512", "flags=1",
+                      "running_data_offset=0", "data_offset=0", "data_length=",
+                      "resource_offset=0", "resource_length=0",
+                      "segment_number=2", "segment_count=1", "xml_offset=",
+                      "xml_length=", "image_variant=1", "sector_count=1",
+                      f"file_size={len(raw)}"):
+            self.assertIn(field, message)
+
+    def test_reject_bad_udif_header_or_segment_fields(self):
+        for offset, value, width in ((4, 3, 4), (8, 0, 4), (56, 2, 4),
+                                     (60, 2, 4), (16, 1, 8)):
+            raw = bytearray(dmg_bytes())
+            start = len(raw) - 512 + offset
+            raw[start:start + width] = value.to_bytes(width, "big")
+            self.mac.write_bytes(raw)
+            with self.subTest(offset=offset), self.assertRaises(release_zip.ZipError):
+                self.build()
+
+    def test_reject_udif_bounds_and_empty_image(self):
+        for offset, value in ((24, 2 ** 64 - 1), (32, 0), (32, 2 ** 64 - 1),
+                              (40, 2 ** 64 - 1), (216, 0), (216, 2 ** 64 - 1),
+                              (224, 0), (224, 2 ** 64 - 1), (492, 0)):
+            raw = bytearray(dmg_bytes())
+            start = len(raw) - 512 + offset
+            raw[start:start + 8] = value.to_bytes(8, "big")
+            if offset == 40:
+                raw[len(raw) - 512 + 48:len(raw) - 512 + 56] = (1).to_bytes(8, "big")
+            self.mac.write_bytes(raw)
+            with self.subTest(offset=offset), self.assertRaises(release_zip.ZipError):
+                self.build()
+
+    def test_reject_invalid_udif_metadata(self):
+        raw = bytearray(dmg_bytes())
+        trailer = raw[-512:]
+        xml = int.from_bytes(trailer[216:224], "big")
+        raw[xml:xml + 8] = b"notplist"
+        self.mac.write_bytes(raw)
+        with self.assertRaises(release_zip.ZipError):
+            self.build()
+
+    def test_reject_missing_udif_block_descriptors(self):
+        original = dmg_bytes()
+        trailer = bytearray(original[-512:])
+        xml_offset = int.from_bytes(trailer[216:224], "big")
+        for metadata in ({}, {"resource-fork": {}}, {"resource-fork": {"blkx": []}},
+                         {"resource-fork": {"blkx": "not a list"}}):
+            xml = plistlib.dumps(metadata)
+            trailer[224:232] = len(xml).to_bytes(8, "big")
+            self.mac.write_bytes(original[:xml_offset] + xml + bytes(trailer))
+            with self.subTest(metadata=metadata), self.assertRaises(release_zip.ZipError):
+                self.build()
+
+    def test_reject_outer_extra_missing_duplicate_and_old_platform_folder(self):
+        transforms = (
+            lambda e: e + [("README.txt", b"extra", stat.S_IFREG | 0o644)],
+            lambda e: e[:-1],
+            lambda e: e[:-1] + [e[0]],
+            lambda e: [(n.replace("/windows-x64/", "/windows-installer/"), d, m) for n, d, m in e],
+            lambda e: e + [(e[0][0] + ".sha256", b"F" * 64, stat.S_IFREG | 0o644)],
+        )
+        for transform in transforms:
+            with self.subTest(transform=transform), self.assertRaises(release_zip.ZipError):
+                release_zip.check_zip(self.rewrite_outer(transform))
+
+    def test_reject_unversioned_payloads_mismatched_versions_and_wrong_extensions(self):
+        for old, new in (("Evict_1.12.1.exe", "Evict.exe"),
+                         ("Evict_1.12.1.dmg", "Evict_0.2.0.dmg"),
+                         ("Evict_1.12.1.dmg", "Evict_1.12.1.zip"),
+                         ("Evict_1.12.1.exe", "Evict_1.11.0.exe")):
+            with self.subTest(new=new), self.assertRaises(release_zip.ZipError):
+                release_zip.check_zip(self.rewrite_outer(
+                    lambda e: [(n.replace(old, new), d, m) for n, d, m in e]
+                ))
+
+    def test_reject_wrong_root_missing_root_and_multiple_roots(self):
+        transforms = (
+            lambda e: [(n.replace("Evict_1.12.1/", "Other_1.12.1/"), d, m) for n, d, m in e],
+            lambda e: [(n.split("/", 1)[1], d, m) for n, d, m in e],
+            lambda e: [(n.replace("Evict_1.12.1/", "Evict_01.12.1/"), d, m) for n, d, m in e],
+            lambda e: [(e[0][0].replace("Evict_1.12.1/", "Evict_1.11.0/"), e[0][1], e[0][2])] + e[1:],
+        )
+        for transform in transforms:
+            with self.subTest(transform=transform), self.assertRaises(release_zip.ZipError):
+                release_zip.check_zip(self.rewrite_outer(transform))
+
+    def test_reject_zip_filename_version_different_from_root(self):
+        archive = self.build()
+        archive = archive.rename(archive.with_name("Evict_1.11.0.zip"))
+        with self.assertRaises(release_zip.ZipError):
+            release_zip.check_zip(archive)
+
+    def test_reject_outer_traversal_backslash_nul_and_symlink(self):
+        for name, mode in (
+            ("Evict_1.12.1/portable/../Evict_1.12.1.exe", stat.S_IFREG | 0o644),
+            ("Evict_1.12.1\\portable\\Evict_1.12.1.exe", stat.S_IFREG | 0o644),
+            ("Evict_1.12.1/portable/Evict_1.12.1.exe\0hidden", stat.S_IFREG | 0o644),
+            ("Evict_1.12.1/portable/Evict_1.12.1.exe", stat.S_IFLNK | 0o777),
+            ("Evict_1.12.1/portable/Evict_1.12.1.exe", stat.S_IFDIR | 0o755),
+            ("/Evict_1.12.1/portable/Evict_1.12.1.exe", stat.S_IFREG | 0o644),
+        ):
+            with self.subTest(name=name, mode=mode), self.assertRaises(release_zip.ZipError):
+                release_zip.check_zip(self.rewrite_outer(
+                    lambda e: [(name, e[0][1], mode)] + e[1:]
+                ))
+
+    def test_reject_corrupt_outer_payload_headers(self):
+        for index in (0, 1, 2):
+            with self.subTest(index=index), self.assertRaises(release_zip.ZipError):
+                release_zip.check_zip(self.rewrite_outer(
+                    lambda e: e[:index] + [(e[index][0], b"corrupt", e[index][2])] + e[index + 1:]
+                ))
+
+    def test_reject_outer_member_crc_mismatch(self):
+        archive = self.build()
+        with zipfile.ZipFile(archive) as reader:
+            entries = [(item.filename, reader.read(item)) for item in reader.infolist()]
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as writer:
+            for name, data in entries:
+                writer.writestr(name, data)
+        with zipfile.ZipFile(archive) as reader:
+            info = reader.infolist()[2]
+        raw = bytearray(archive.read_bytes())
+        header = info.header_offset
+        name_size = int.from_bytes(raw[header + 26:header + 28], "little")
+        extra_size = int.from_bytes(raw[header + 28:header + 30], "little")
+        data_offset = header + 30 + name_size + extra_size
+        raw[data_offset] ^= 1
+        archive.write_bytes(raw)
+        with self.assertRaises(release_zip.ZipError):
+            release_zip.check_zip(archive)
+
+    def test_check_unpacked_wrapper_and_versioned_root(self):
+        wrapper, root = self.unpack()
+        release_zip.check_folder(wrapper)
+        release_zip.check_folder(root)
+        (root / "portable" / f"Evict_{self.version}.exe").write_bytes(b"tampered")
+        with self.assertRaises(release_zip.ZipError):
+            release_zip.check_folder(wrapper)
+
+    def test_cli_check_folder_accepts_wrapper_and_versioned_root(self):
+        wrapper, root = self.unpack()
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(release_zip.main(["--check-folder", str(wrapper)]), 0)
+            self.assertEqual(release_zip.main(["--check-folder", str(root)]), 0)
+        self.assertEqual(stdout.getvalue().count("native payloads verified"), 2)
+
+    def test_reject_unpacked_extra_root_platform_or_nested_folder(self):
+        for position in ("wrapper", "root", "payload"):
+            wrapper, root = self.unpack(f"unpacked-{position}")
+            parent = {"wrapper": wrapper, "root": root, "payload": root / "portable"}[position]
+            (parent / "extra").mkdir()
+            with self.subTest(position=position), self.assertRaises(release_zip.ZipError):
+                release_zip.check_folder(wrapper)
+
+    def test_reject_unpacked_root_or_payload_symlink(self):
+        wrapper, root = self.unpack()
+        payload = root / "portable" / f"Evict_{self.version}.exe"
+        target = self.root / "linked-native.exe"
+        payload.rename(target)
+        try:
+            payload.symlink_to(target)
+        except OSError:
+            self.skipTest("Creating symlinks is not available for this runner")
+        with self.assertRaises(release_zip.ZipError):
+            release_zip.check_folder(wrapper)
+
+    def test_cli_rejects_missing_required_mac_payload(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+            release_zip.main([self.version, "--setup", str(self.setup),
+                              "--exe", str(self.portable), "--out", str(self.output)])
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("--macos", stderr.getvalue())
+        self.assertFalse(self.output.exists())
+
+    def test_cli_build_and_verify(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = release_zip.main([self.version, "--setup", str(self.setup),
+                                       "--exe", str(self.portable), "--macos", str(self.mac),
+                                       "--out", str(self.output)])
+            archive = self.output / f"Evict_{self.version}.zip"
+            checked = release_zip.main(["--check", str(archive)])
+        self.assertEqual(result, 0)
+        self.assertEqual(checked, 0)
+        self.assertIn("native payloads verified", stdout.getvalue())
+
+    def test_invalid_inputs_preserve_previous_local_archive(self):
+        original = self.build()
+        previous = original.read_bytes()
+        checksum = Path(str(original) + ".sha256").read_bytes()
+        self.mac.write_bytes(b"invalid replacement")
+        with self.assertRaises(release_zip.ZipError):
+            self.build()
+        self.assertEqual(original.read_bytes(), previous)
+        self.assertEqual(Path(str(original) + ".sha256").read_bytes(), checksum)
+
+
+class LegacyMacArchiveTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.mac = self.root / "Evict-native.zip"
+        write_zip(self.mac, mac_entries())
+
+    def assert_invalid_mac(self, entries):
+        write_zip(self.mac, entries)
+        with self.assertRaises(release_zip.ZipError):
+            release_zip.check_macos_archive(self.mac)
+
+    def test_legacy_native_permissions_symlinks_and_version_survive(self):
+        self.assertEqual(release_zip.check_macos_archive(self.mac), "0.2.0")
+        with zipfile.ZipFile(self.mac) as inner:
+            binary = inner.getinfo("Evict.app/Contents/MacOS/Evict")
+            link = inner.getinfo("Evict.app/Contents/Resources/current")
+            self.assertEqual((binary.external_attr >> 16) & 0o777, 0o755)
+            self.assertTrue(stat.S_ISLNK(link.external_attr >> 16))
+            self.assertEqual(inner.read(link), b"../MacOS/Evict")
 
     def test_reject_empty_mac_app_zip(self):
         self.assert_invalid_mac([])
@@ -226,8 +495,7 @@ class ReleaseZipTests(unittest.TestCase):
         raw[data_offset + info.compress_size - 1] ^= 1
         self.mac.write_bytes(raw)
         with self.assertRaises(release_zip.ZipError):
-            self.build()
-        self.assertFalse(self.output.exists())
+            release_zip.check_macos_archive(self.mac)
 
     def test_reject_nested_duplicate_or_unrelated_files(self):
         for extra in (mac_entries()[0], ("README.txt", b"extra", stat.S_IFREG | 0o644)):
@@ -284,8 +552,7 @@ class ReleaseZipTests(unittest.TestCase):
             ("Evict.app/Contents/Frameworks/F.framework/Versions/A/F", b"framework", stat.S_IFREG | 0o755),
         ]
         write_zip(self.mac, entries)
-        archive = self.build()
-        release_zip.check_zip(archive)
+        release_zip.check_macos_archive(self.mac)
 
     def test_reject_directory_modes_masquerading_as_required_files(self):
         for index in (0, 1):
@@ -304,6 +571,46 @@ class ReleaseZipTests(unittest.TestCase):
         ):
             with self.subTest(name=name, mode=mode):
                 self.assert_invalid_mac(mac_entries() + [(name, data, mode)])
+
+
+class LegacyReleaseZipTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.mac = self.root / "native.zip"
+        write_zip(self.mac, mac_entries())
+        payloads = (
+            ("portable/Evict.exe", pe_bytes()),
+            ("windows-installer/Evict-Setup-1.10.0.exe", pe_bytes()),
+            ("macOS/Evict-macOS-0.2.0.zip", self.mac.read_bytes()),
+        )
+        self.entries = []
+        for name, data in payloads:
+            self.entries.extend((
+                (name, data, stat.S_IFREG | 0o644),
+                (name + ".sha256", hashlib.sha256(data).hexdigest().encode("ascii"),
+                 stat.S_IFREG | 0o644),
+            ))
+        self.archive = self.root / "Evict-1.10.0.zip"
+
+    def build(self):
+        write_zip(self.archive, self.entries)
+        return self.archive
+
+    def rewrite_outer(self, transform):
+        write_zip(self.archive, transform(list(self.entries)))
+        return self.archive
+
+    def test_historical_six_payload_zip_and_folder_remain_readable(self):
+        release_zip.check_zip(self.build())
+        folder = self.root / "unpacked"
+        with zipfile.ZipFile(self.archive) as reader:
+            reader.extractall(folder)
+        release_zip.check_folder(folder)
+        (folder / "portable" / "Evict.exe").write_bytes(b"tampered")
+        with self.assertRaises(release_zip.ZipError):
+            release_zip.check_folder(folder)
 
     def test_reject_outer_extra_missing_duplicate_and_old_installer_folder(self):
         transforms = (
@@ -346,56 +653,6 @@ class ReleaseZipTests(unittest.TestCase):
                     for n, d, m in entries]
         with self.assertRaises(release_zip.ZipError):
             release_zip.check_zip(self.rewrite_outer(transform))
-
-    def test_check_unpacked_folder_verifies_files_and_checksums(self):
-        archive = self.build()
-        unpacked = self.root / "unpacked"
-        with zipfile.ZipFile(archive) as reader:
-            reader.extractall(unpacked)
-        release_zip.check_folder(unpacked)
-        (unpacked / "portable" / "Evict.exe").write_bytes(b"tampered")
-        with self.assertRaises(release_zip.ZipError):
-            release_zip.check_folder(unpacked)
-
-    def test_reject_unpacked_extra_directory_or_nested_directory(self):
-        for nested in (False, True):
-            with self.subTest(nested=nested):
-                archive = self.build()
-                unpacked = self.root / ("unpacked-nested" if nested else "unpacked-extra")
-                with zipfile.ZipFile(archive) as reader:
-                    reader.extractall(unpacked)
-                (unpacked / "portable" / "nested" if nested else unpacked / "extra").mkdir()
-                with self.assertRaises(release_zip.ZipError):
-                    release_zip.check_folder(unpacked)
-
-    def test_cli_rejects_missing_required_mac_payload(self):
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
-            release_zip.main([self.version, "--setup", str(self.setup),
-                              "--exe", str(self.portable), "--out", str(self.output)])
-        self.assertEqual(error.exception.code, 2)
-        self.assertIn("--macos", stderr.getvalue())
-        self.assertFalse(self.output.exists())
-
-    def test_cli_build_and_verify(self):
-        stdout = io.StringIO()
-        with contextlib.redirect_stdout(stdout):
-            result = release_zip.main([self.version, "--setup", str(self.setup),
-                                       "--exe", str(self.portable), "--macos", str(self.mac),
-                                       "--out", str(self.output)])
-            archive = self.output / f"Evict-{self.version}.zip"
-            checked = release_zip.main(["--check", str(archive)])
-        self.assertEqual(result, 0)
-        self.assertEqual(checked, 0)
-        self.assertIn("windows-installer/", stdout.getvalue())
-
-    def test_invalid_inputs_preserve_previous_local_archive(self):
-        original = self.build()
-        previous = original.read_bytes()
-        self.mac.write_bytes(b"invalid replacement")
-        with self.assertRaises(release_zip.ZipError):
-            self.build()
-        self.assertEqual(original.read_bytes(), previous)
 
 
 if __name__ == "__main__":
