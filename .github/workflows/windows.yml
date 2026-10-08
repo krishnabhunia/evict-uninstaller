@@ -329,6 +329,7 @@ jobs:
           name: ${{ steps.ver.outputs.artifact }}-windows
           path: windows/CiWindows/
           if-no-files-found: error
+          retention-days: 1
 
   # One-time correction of the explicitly requested stable PR test. Its tag and bytes remain immutable.
   retire-stable-pr-test:
@@ -487,6 +488,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       core_version: ${{ steps.plan.outputs.core_version }}
       publish: ${{ steps.plan.outputs.publish }}
+      manifest_artifact: ${{ steps.plan.outputs.manifest_artifact }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -525,12 +527,16 @@ jobs:
           manifest = {"source_sha": os.environ["PREPARED_SOURCE"], "plan": plan,
                       "files": {path: pathlib.Path(path).read_text(encoding="utf-8-sig") for path in allowed}}
           pathlib.Path("GeneratedVersion/manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"manifest_artifact=generated-windows-version-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}\n")
           PY
       - uses: actions/upload-artifact@v7
+        id: version_manifest
         with:
-          name: generated-windows-version-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.plan.outputs.manifest_artifact }}
           path: GeneratedVersion/manifest.json
           if-no-files-found: error
+          retention-days: 1
 
   # This job reads a data manifest; it never checks out or executes PR code with a write token.
   freeze-beta:
@@ -545,7 +551,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: generated-windows-version-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.plan-beta.outputs.manifest_artifact }}
           path: GeneratedVersion
       - name: Validate generated metadata and freeze final source
         id: freeze
@@ -745,6 +751,7 @@ jobs:
           name: ${{ steps.bundle.outputs.artifact }}
           path: MacPackage/
           if-no-files-found: error
+          retention-days: 1
 
   package:
     needs: [build, pr-build, mac-package]
@@ -756,7 +763,9 @@ jobs:
       version: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
       core_version: ${{ needs.pr-build.outputs.core_version || needs.build.outputs.core_version }}
       source_sha: ${{ needs.pr-build.outputs.source_sha || needs.build.outputs.source_sha }}
-      artifact: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}
+      artifact: Evict-installation
+      artifact_id: ${{ steps.installation.outputs.artifact-id }}
+      transport_artifact: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}
       publish: ${{ needs.pr-build.outputs.publish || needs.build.outputs.publish }}
       channel: ${{ needs.pr-build.outputs.channel || needs.build.outputs.channel }}
       prerelease: ${{ needs.pr-build.outputs.prerelease || needs.build.outputs.prerelease }}
@@ -820,15 +829,31 @@ jobs:
           if (-not $notes) { $notes = @('- Validation build; no release publication.') }
           ($notes -join [char]10).Trim() | Set-Content -LiteralPath Zip/release-notes.md -Encoding utf8
       - uses: actions/upload-artifact@v7
+        id: installation
         with:
-          name: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}
+          name: Evict-installation
           path: windows/CiDownload/
           if-no-files-found: error
+          overwrite: true
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}-release-zip
           path: windows/Zip/
           if-no-files-found: error
+          retention-days: 1
+
+      - name: Installation download
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
+          MAC_VERSION: ${{ needs.mac-package.outputs.version }}
+          INSTALLATION_URL: ${{ steps.installation.outputs.artifact-url }}
+        run: |
+          @("### Installation download", "",
+            "[Download Evict installation]($env:INSTALLATION_URL)", "",
+            "Windows: $env:RELEASE_VERSION; macOS: $env:MAC_VERSION", "",
+            "Contains portable/, windows-installer/ and macOS/.") |
+            Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
   validate-dispatch:
     if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/win-v')
@@ -867,7 +892,7 @@ jobs:
           path: Download
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.package.outputs.artifact }}-release-zip
+          name: ${{ needs.package.outputs.transport_artifact }}-release-zip
           path: Zip
       - name: Verify native files, checksums and exact three-folder layout
         id: assets
@@ -1269,3 +1294,205 @@ jobs:
               await github.rest.git.deleteRef({...context.repo, ref});
             }
 
+
+  # Delete transfer files only after every consumer has successfully finished.
+  # This job executes inline API calls with no checkout and no repository code.
+  cleanup-artifacts:
+    needs: [build, pr-build, plan-beta, mac-package, package, publish, verify-published-update]
+    if: always() && needs.package.result == 'success' && (needs.package.outputs.publish == 'false' || (needs.publish.result == 'success' && needs.verify-published-update.result == 'success')) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && github.event.pull_request.user.type == 'User' && github.event.sender.type == 'User' && !endsWith(github.actor, '[bot]')))
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Retain final installation download and remove verified transfers
+        uses: actions/github-script@v9
+        env:
+          FINAL_ARTIFACT: ${{ needs.package.outputs.artifact }}
+          FINAL_ARTIFACT_ID: ${{ needs.package.outputs.artifact_id }}
+          INTERNAL_WINDOWS: ${{ needs.pr-build.outputs.artifact || needs.build.outputs.artifact }}-windows
+          INTERNAL_MAC: ${{ needs.mac-package.outputs.artifact }}
+          INTERNAL_ZIP: ${{ needs.package.outputs.transport_artifact }}-release-zip
+          GENERATED_ARTIFACT: ${{ needs.plan-beta.outputs.manifest_artifact }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          PUBLISH_REQUIRED: ${{ needs.package.outputs.publish }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          VERIFY_RESULT: ${{ needs.verify-published-update.result }}
+        with:
+          script: |
+            // Cleanup runs without checkout and receives only artifact metadata from successful jobs.
+            const EXPECTED_REPOSITORY = 'krishnabhunia/evict-uninstaller';
+            const WORKFLOW_PATH = '.github/workflows/windows.yml';
+            const VERSION_PATTERN = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-beta\\.[1-9]\\d*\\.[1-9]\\d*\\.[1-9]\\d*)?';
+            const LEGACY_FINAL = new RegExp('^Evict-(' + VERSION_PATTERN + ')-([a-f0-9]{40})$');
+            const NATIVE_WINDOWS = new RegExp('^(Evict-' + VERSION_PATTERN + '-([a-f0-9]{40}))-windows$');
+            // One-time migration of the three reviewed successful runs; never sweep workflow history.
+            const LEGACY_RUN_IDS = [37663956345, 37663958842, 37739868099];
+            const MAX_PAGES = 5;
+            const PAGE_SIZE = 100;
+            
+            function positiveInteger(value) {
+              return Number.isSafeInteger(Number(value)) && Number(value) > 0;
+            }
+            function human(user) {
+              return user?.type === 'User' && typeof user.login === 'string' && !/\[bot\]$/.test(user.login);
+            }
+            function ownedRun(run, workflowId) {
+              return positiveInteger(workflowId) && positiveInteger(run?.id) && positiveInteger(run?.run_attempt) &&
+                run.workflow_id === workflowId && run.path === WORKFLOW_PATH &&
+                run.repository?.full_name === EXPECTED_REPOSITORY &&
+                run.head_repository?.full_name === EXPECTED_REPOSITORY &&
+                human(run.actor) && human(run.triggering_actor) &&
+                ['push', 'pull_request', 'workflow_dispatch'].includes(run.event);
+            }
+            function validCollection(artifacts, runId) {
+              const ids = new Set(), names = new Set();
+              return artifacts.every(artifact => {
+                if (!positiveInteger(artifact.id) || ids.has(artifact.id) ||
+                    typeof artifact.name !== 'string' || names.has(artifact.name) ||
+                    artifact.workflow_run?.id !== runId) return false;
+                ids.add(artifact.id); names.add(artifact.name);
+                return true;
+              });
+            }
+            function finalAvailable(artifact) {
+              return artifact && !artifact.expired && positiveInteger(artifact.size_in_bytes);
+            }
+            function manifestOwned(name, runId, attempt) {
+              const match = name.match(/^generated-windows-version-([1-9]\d*)-([1-9]\d*)$/);
+              return match && Number(match[1]) === runId && positiveInteger(match[2]) &&
+                Number(match[2]) <= attempt;
+            }
+            function planCurrent(run, artifacts, env) {
+              if (!validCollection(artifacts, run.id)) throw new Error('Current artifact collection is ambiguous or belongs to another run.');
+              if (env.FINAL_ARTIFACT !== 'Evict-installation') throw new Error('Unexpected final installation artifact name.');
+              const finals = artifacts.filter(artifact => artifact.name === env.FINAL_ARTIFACT);
+              if (finals.length !== 1 || !finalAvailable(finals[0])) throw new Error('A complete final installation artifact is required before cleanup.');
+              if (env.FINAL_ARTIFACT_ID && Number(env.FINAL_ARTIFACT_ID) !== finals[0].id) throw new Error('Final artifact ID differs from the package output.');
+              const windows = env.INTERNAL_WINDOWS?.match(NATIVE_WINDOWS);
+              if (!windows || env.INTERNAL_MAC !== 'Evict-macOS-' + windows[2] ||
+                  env.INTERNAL_ZIP !== windows[1] + '-release-zip') throw new Error('Internal artifact names do not identify one version/source pair.');
+              if (env.GENERATED_ARTIFACT && !manifestOwned(env.GENERATED_ARTIFACT, run.id, run.run_attempt)) {
+                throw new Error('Generated manifest does not belong to this workflow run and attempt.');
+              }
+              const names = new Set([env.INTERNAL_WINDOWS, env.INTERNAL_MAC, env.INTERNAL_ZIP]);
+              const remove = artifacts.filter(artifact => names.has(artifact.name) ||
+                manifestOwned(artifact.name, run.id, run.run_attempt));
+              return {run, final: finals[0], remove, historical: false};
+            }
+            function planHistorical(run, artifacts, workflowId) {
+              if (!ownedRun(run, workflowId) || run.status !== 'completed' || run.conclusion !== 'success' ||
+                  !validCollection(artifacts, run.id)) return null;
+              const finals = artifacts.filter(artifact => LEGACY_FINAL.test(artifact.name));
+              if (finals.length !== 1 || !finalAvailable(finals[0])) return null;
+              const match = finals[0].name.match(LEGACY_FINAL);
+              const names = new Set([finals[0].name + '-windows', 'Evict-macOS-' + match[2],
+                finals[0].name + '-release-zip']);
+              // Unknown artifacts, a second source pair, or malformed manifest names make the run ineligible.
+              if (artifacts.some(artifact => artifact.id !== finals[0].id && !names.has(artifact.name) &&
+                  !manifestOwned(artifact.name, run.id, run.run_attempt))) return null;
+              const remove = artifacts.filter(artifact => artifact.id !== finals[0].id);
+              return remove.length ? {run, final: finals[0], remove, historical: true} : null;
+            }
+            async function boundedList(method, key, parameters) {
+              const items = [], ids = new Set();
+              let total;
+              for (let page = 1; page <= MAX_PAGES; page++) {
+                const {data} = await method({...parameters, per_page: PAGE_SIZE, page});
+                const batch = data[key];
+                if (!Array.isArray(batch) || !Number.isSafeInteger(data.total_count) || data.total_count < 0 ||
+                    data.total_count > MAX_PAGES * PAGE_SIZE || (total !== undefined && total !== data.total_count)) {
+                  throw new Error('Cleanup pagination is incomplete, changed during inspection, or exceeds its bound.');
+                }
+                total = data.total_count;
+                for (const item of batch) {
+                  if (!positiveInteger(item.id) || ids.has(item.id)) throw new Error('Cleanup pagination contains a duplicate or malformed ID.');
+                  ids.add(item.id); items.push(item);
+                }
+                if (items.length === total) return items;
+                if (batch.length !== PAGE_SIZE || items.length > total) throw new Error('Cleanup pagination did not provide the complete collection.');
+              }
+              throw new Error('Cleanup pagination exceeded its bound; no cleanup was performed.');
+            }
+            
+            const repository = context.repo.owner + '/' + context.repo.repo;
+            const attempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (repository !== EXPECTED_REPOSITORY || !positiveInteger(context.runId) || !positiveInteger(attempt)) {
+              throw new Error('Cleanup is limited to the expected repository and a valid workflow run.');
+            }
+            const pr = context.payload.pull_request;
+            if (context.eventName === 'pull_request') {
+              if (!pr || pr.head?.repo?.full_name !== repository || pr.base?.repo?.full_name !== repository ||
+                  pr.base.ref !== 'main' || !human(pr.user) || !human(context.payload.sender) ||
+                  /\[bot\]$/.test(context.actor)) {
+                core.info('Artifact cleanup is skipped for fork or bot pull requests.');
+                return;
+              }
+            } else if (!['push', 'workflow_dispatch'].includes(context.eventName) ||
+                (context.ref !== 'refs/heads/main' && !/^refs\/tags\/win-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(context.ref))) {
+              throw new Error('Artifact cleanup requires a trusted PR, main, or normal Windows release tag.');
+            }
+            if (process.env.PACKAGE_RESULT !== 'success' ||
+                !['true', 'false'].includes(process.env.PUBLISH_REQUIRED) ||
+                (process.env.PUBLISH_REQUIRED === 'true' &&
+                 (process.env.PUBLISH_RESULT !== 'success' || process.env.VERIFY_RESULT !== 'success'))) {
+              core.info('Preserving diagnostics because packaging, publication, or published-update verification did not succeed.');
+              return;
+            }
+            const {data: current} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: context.runId});
+            if (!ownedRun(current, current.workflow_id) || current.id !== context.runId ||
+                current.event !== context.eventName || current.run_attempt !== attempt) {
+              throw new Error('Cleanup workflow identity or latest attempt changed.');
+            }
+            const currentArtifacts = await boundedList(github.rest.actions.listWorkflowRunArtifacts, 'artifacts',
+              {...context.repo, run_id: context.runId});
+            const plans = [planCurrent(current, currentArtifacts, process.env)];
+            // Only these three reviewed legacy runs may be migrated, including after a trusted PR succeeds.
+            for (const runId of LEGACY_RUN_IDS) {
+              if (runId === current.id) continue;
+              let run;
+              try { run = (await github.rest.actions.getWorkflowRun({...context.repo, run_id: runId})).data; }
+              catch (error) { if (error.status === 404) continue; throw error; }
+              if (!ownedRun(run, current.workflow_id) || run.id !== runId ||
+                  run.status !== 'completed' || run.conclusion !== 'success') continue;
+              const artifacts = await boundedList(github.rest.actions.listWorkflowRunArtifacts, 'artifacts',
+                {...context.repo, run_id: runId});
+              const plan = planHistorical(run, artifacts, current.workflow_id);
+              if (plan) plans.push(plan);
+            }
+            // All pagination and planning completes before any deletion. Recheck runs and retained artifacts.
+            let deleted = 0;
+            for (const plan of plans) {
+              const {data: live} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: plan.run.id});
+              if (!ownedRun(live, current.workflow_id) || live.run_attempt !== plan.run.run_attempt ||
+                  (plan.historical && (live.status !== 'completed' || live.conclusion !== 'success'))) {
+                core.warning('Preserving artifacts because run ' + plan.run.id + ' changed during cleanup.');
+                continue;
+              }
+              const {data: final} = await github.rest.actions.getArtifact({...context.repo, artifact_id: plan.final.id});
+              if (final.id !== plan.final.id || final.name !== plan.final.name ||
+                  final.workflow_run?.id !== plan.run.id || !finalAvailable(final)) {
+                throw new Error('The retained installation artifact changed; cleanup stopped.');
+              }
+              for (const artifact of plan.remove) {
+                const {data: beforeDelete} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: plan.run.id});
+                if (!ownedRun(beforeDelete, current.workflow_id) || beforeDelete.run_attempt !== plan.run.run_attempt ||
+                    (plan.historical && (beforeDelete.status !== 'completed' || beforeDelete.conclusion !== 'success'))) {
+                  core.warning('A workflow retry started; leaving remaining transfer artifacts intact.');
+                  break;
+                }
+                if (artifact.id === final.id) throw new Error('Cleanup attempted to select the installation artifact.');
+                try {
+                  const {data: liveArtifact} = await github.rest.actions.getArtifact({...context.repo, artifact_id: artifact.id});
+                  if (liveArtifact.id !== artifact.id || liveArtifact.name !== artifact.name ||
+                      liveArtifact.workflow_run?.id !== plan.run.id) throw new Error('Artifact identity changed; cleanup stopped.');
+                  await github.rest.actions.deleteArtifact({...context.repo, artifact_id: artifact.id});
+                  deleted++;
+                  core.info('Removed internal artifact ' + artifact.name + ' from run ' + plan.run.id + '.');
+                } catch (error) {
+                  if (error.status !== 404) throw error; // A previously deleted artifact makes retries harmless.
+                }
+              }
+            }
+            await core.summary.addHeading('Installation artifacts')
+              .addRaw('Retained ' + process.env.FINAL_ARTIFACT + ' for this run. Removed ' + deleted +
+                ' internal transfer artifacts from eligible runs; releases and logs were unchanged.').write();

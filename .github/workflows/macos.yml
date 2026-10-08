@@ -135,11 +135,23 @@ jobs:
           python windows/build/release_zip.py --check-folder "$RUNNER_TEMP/evict-macos-delivery"
 
       - name: Upload installation folders
+        id: installation
         uses: actions/upload-artifact@v7
         with:
-          name: Evict-macOS-validation
+          name: Evict-macOS-installation
           path: ${{ runner.temp }}/evict-macos-delivery/
           if-no-files-found: error
+          overwrite: true
+
+      - name: Installation download
+        env:
+          MAC_VERSION: ${{ steps.version.outputs.version }}
+          WINDOWS_VERSION: ${{ steps.windows_components.outputs.windows_version }}
+          INSTALLATION_URL: ${{ steps.installation.outputs.artifact-url }}
+        run: |
+          printf '### Installation download\n\n[Download Evict installation](%s)\n\nmacOS: %s; Windows: %s (stable).\n\nContains portable/, windows-installer/ and macOS/.\n' \
+            "$INSTALLATION_URL" "$MAC_VERSION" "$WINDOWS_VERSION" >> "$GITHUB_STEP_SUMMARY"
+
 
   release:
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/mac-v'))
@@ -358,11 +370,22 @@ jobs:
           python windows/build/release_zip.py --check-folder "$RUNNER_TEMP/evict-macos-delivery"
 
       - name: Upload installation folders
+        id: installation
         uses: actions/upload-artifact@v7
         with:
-          name: Evict-app
+          name: Evict-macOS-installation
           path: ${{ runner.temp }}/evict-macos-delivery/
           if-no-files-found: error
+          overwrite: true
+
+      - name: Installation download
+        env:
+          MAC_VERSION: ${{ steps.prepare.outputs.core_version }}
+          WINDOWS_VERSION: ${{ steps.windows_components.outputs.windows_version }}
+          INSTALLATION_URL: ${{ steps.installation.outputs.artifact-url }}
+        run: |
+          printf '### Installation download\n\n[Download Evict installation](%s)\n\nmacOS: %s; Windows: %s (stable).\n\nContains portable/, windows-installer/ and macOS/.\n' \
+            "$INSTALLATION_URL" "$MAC_VERSION" "$WINDOWS_VERSION" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Release notes from CHANGELOG.md
         if: steps.publish.outputs.publish == 'true'

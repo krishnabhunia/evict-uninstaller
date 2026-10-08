@@ -56,6 +56,8 @@ The nested macOS archive contains the native app bundle and retains its executab
 
 The separate Windows installer and portable assets remain available for in-app updates. PR releases are always beta; normal releases publish after merge into `main`. Evict checks GitHub after each application restart when automatic checks are enabled; beta remains optional.
 
+Actions downloads are named **Evict-installation** (Windows workflow) and **Evict-macOS-installation** (macOS workflow). Each contains the three folders above. The run summary shows the actual versions and download link. Successful Windows runs remove their temporary build transfers; see [build artifacts](docs/build-artifacts.md).
+
 ## History
 
 This repository was `krishnabhunia/evict` (Windows only) and was renamed to `evict-uninstaller` on 29 Sep 2026; GitHub
