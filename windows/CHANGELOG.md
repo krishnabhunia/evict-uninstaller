@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.3 — 2026-10-09
+
+<!-- Evict automatic release; base: win-v1.12.2 -->
+
+- fix(ui): keep the version at the top and add top-right updates
+
 ## 1.12.2 — 2026-10-08
 
 <!-- Evict automatic release; base: win-v1.12.1 -->
