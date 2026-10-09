@@ -88,6 +88,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _isCheckingForUpdates;
     partial void OnIsCheckingForUpdatesChanged(bool value)
     {
+        OpenUpdatesCommand.NotifyCanExecuteChanged();
         if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel vm) vm.RefreshUpdateCheckState();
     }
 
@@ -103,6 +104,21 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand] private void OpenUpdateSettings() => Navigate(PageKey.Settings);
+
+    private bool CanOpenUpdates() => !IsCheckingForUpdates;
+
+    [RelayCommand(CanExecute = nameof(CanOpenUpdates))]
+    private async Task OpenUpdatesAsync()
+    {
+        if (AvailableUpdate is { } release && (!release.IsPreview || IncludeBetaUpdates))
+        {
+            ShowUpdate();
+            return;
+        }
+
+        Navigate(PageKey.Settings);
+        await GetPage<SettingsViewModel>(PageKey.Settings).CheckForUpdatesNowCommand.ExecuteAsync(null);
+    }
 
     public void Navigate(PageKey key)
     {
