@@ -94,6 +94,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void UpdateChannelChanged()
     {
+        LastUpdateCheckResult = null;
         OnPropertyChanged(nameof(IncludeBetaUpdates));
         if (AvailableUpdate?.IsPreview == true && !IncludeBetaUpdates)
         {
@@ -355,8 +356,11 @@ public sealed partial class MainViewModel : ObservableObject
         return result;
     }
 
+    public UpdateCheckResult? LastUpdateCheckResult { get; private set; }
+
     private void RecordUpdateCheck(UpdateCheckResult result)
     {
+        LastUpdateCheckResult = result;
         _services.Settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
         _services.Settings.Save();
         Log.Info("Update check: " + result.Message);

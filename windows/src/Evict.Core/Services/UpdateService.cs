@@ -31,7 +31,10 @@ public enum UpdateStatus { UpToDate, UpdateAvailable, Unavailable }
 
 public sealed record UpdateCheckResult(UpdateStatus Status, Version CurrentVersion, ReleaseInfo? Release, string Message)
 {
-    public static UpdateCheckResult Unavailable(Version current, string message) => new(UpdateStatus.Unavailable, current, null, message);
+    public bool NetworkAccessBlocked { get; init; }
+
+    public static UpdateCheckResult Unavailable(Version current, string message, bool networkAccessBlocked = false) =>
+        new(UpdateStatus.Unavailable, current, null, message) { NetworkAccessBlocked = networkAccessBlocked };
 }
 
 /// <summary>
@@ -330,6 +333,9 @@ public sealed class UpdateService
         catch (Exception ex)
         {
             LogWarn("Update check failed: " + ex.Message);
+            if (UpdateNetworkDiagnostics.IsSocketAccessDenied(ex))
+                return UpdateCheckResult.Unavailable(current,
+                    UpdateNetworkDiagnostics.PermissionDeniedMessage(ExePath), networkAccessBlocked: true);
             return UpdateCheckResult.Unavailable(current, "Could not check GitHub releases: " + (ex.InnerException?.Message ?? ex.Message));
         }
     }
@@ -378,7 +384,12 @@ public sealed class UpdateService
             expectedHash = UpdateChecker.ParseSha256(text);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception ex) { throw new InvalidDataException("The update checksum could not be downloaded. The update was stopped; please try again.", ex); }
+        catch (Exception ex)
+        {
+            if (UpdateNetworkDiagnostics.IsSocketAccessDenied(ex))
+                throw new InvalidDataException(UpdateNetworkDiagnostics.PermissionDeniedMessage(ExePath), ex);
+            throw new InvalidDataException("The update checksum could not be downloaded. The update was stopped; please try again.", ex);
+        }
         if (expectedHash is null) throw new InvalidDataException("The published update checksum is invalid. The update was stopped.");
 
         try
@@ -409,9 +420,11 @@ public sealed class UpdateService
             LogInfo($"Downloaded update {asset.Name} → {target} (checksum OK)");
             return target;
         }
-        catch
+        catch (Exception ex)
         {
             try { File.Delete(partial); } catch { /* keep the original download failure */ }
+            if (UpdateNetworkDiagnostics.IsSocketAccessDenied(ex))
+                throw new InvalidDataException(UpdateNetworkDiagnostics.PermissionDeniedMessage(ExePath), ex);
             throw;
         }
     }
