@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.14.0 — 2026-10-09
+
+<!-- Evict automatic release; base: win-v1.13.0 -->
+
+- chore(release): test v1.14.0 beta → stable updates
+
 ## 1.13.0 — 2026-10-09
 
 <!-- Evict automatic release; base: win-v1.12.3 -->
