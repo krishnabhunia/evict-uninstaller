@@ -96,6 +96,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         LastUpdateCheckResult = null;
         OnPropertyChanged(nameof(IncludeBetaUpdates));
+        OnPropertyChanged(nameof(HasAvailableUpdate));
         if (AvailableUpdate?.IsPreview == true && !IncludeBetaUpdates)
         {
             AvailableUpdate = null;
@@ -327,7 +328,13 @@ public sealed partial class MainViewModel : ObservableObject
     // ───────────────────────────── updates ─────────────────────────────
 
     /// <summary>Latest release found by the start-up check (or Settings → Check now); drives the blue banner.</summary>
-    [ObservableProperty] private ReleaseInfo? _availableUpdate;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasAvailableUpdate))]
+    [NotifyPropertyChangedFor(nameof(AvailableUpdateButtonText))]
+    private ReleaseInfo? _availableUpdate;
+    public bool HasAvailableUpdate => AvailableUpdate is { } release && (!release.IsPreview || IncludeBetaUpdates);
+    public string AvailableUpdateButtonText => AvailableUpdate is { } release ? $"Update to v{release.DisplayVersion}" : "";
+
     [ObservableProperty] private bool _showUpdateBanner;
     [ObservableProperty] private string? _updateBannerText;
     /// <summary>Green "Evict was updated" notice shown once after a self-update (--updated).</summary>
@@ -363,6 +370,7 @@ public sealed partial class MainViewModel : ObservableObject
         LastUpdateCheckResult = result;
         _services.Settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
         _services.Settings.Save();
+        if (result.Status == UpdateStatus.UpToDate) { AvailableUpdate = null; ShowUpdateBanner = false; }
         Log.Info("Update check: " + result.Message);
         if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel vm) vm.RefreshUpdateResult(result);
     }

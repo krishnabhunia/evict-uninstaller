@@ -47,6 +47,9 @@ public sealed class AppSettings
     /// <summary>How many winget upgrades run at the same time (1–6).</summary>
     public int ParallelUpdates { get; set; } = 3;
 
+    /// <summary>Packages hidden from Software Updater until explicitly restored.</summary>
+    public List<SoftwareUpdateExclusion> SoftwareUpdateExclusions { get; set; } = new();
+
     // ── tray & background (1.3.0) ──
     public bool ShowTrayIcon { get; set; } = true;
     public bool MinimizeToTray { get; set; } = false;
@@ -109,10 +112,14 @@ public sealed class SettingsStore
             // 1.3.0: default text size became 120 %. Users who never touched the setting still have the old default (100 %).
             if (Math.Abs(s.UiScale - 1.0) < 0.001) s.UiScale = 1.2;
         }
+        s.SoftwareUpdateExclusions ??= new();
         s.SettingsVersion = AppSettings.CurrentVersion;
     }
 
-    public void Save()
+    public void Save() => TrySave();
+
+    /// <summary>Reports persistence failure to features that must keep their previous state.</summary>
+    public bool TrySave()
     {
         lock (_gate)
         {
@@ -120,10 +127,12 @@ public sealed class SettingsStore
             {
                 var json = JsonSerializer.Serialize(Current, Options);
                 File.WriteAllText(AppPaths.SettingsFile, json);
+                return true;
             }
             catch
             {
                 // Settings are a convenience; never crash for them.
+                return false;
             }
         }
     }
