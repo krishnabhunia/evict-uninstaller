@@ -17,6 +17,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _main = main;
         App.UiState.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(UiState.Scale)) OnPropertyChanged(nameof(TextSize)); };
         UpdateStatusText = S.LastUpdateCheckUtc is { } t ? $"Last checked {t.ToLocalTime():g}." : "Not checked yet.";
+        if (_main.LastUpdateCheckResult is { } result) RefreshUpdateResult(result);
         _ = RefreshScheduleStatusAsync();
     }
 
@@ -157,6 +158,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public void RefreshUpdateChannel()
     {
         UpdateAvailable = false;
+        HasUpdateNetworkAccessIssue = false;
         UpdateStatusText = "Update channel changed. Check again to see releases in this channel.";
         OnPropertyChanged(nameof(IncludeBetaUpdates));
         OnPropertyChanged(nameof(UpdateChannelText));
@@ -167,6 +169,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnIsCheckingForUpdatesChanged(bool value) => RefreshUpdateCheckState();
     public void RefreshUpdateCheckState() => OnPropertyChanged(nameof(CanChangeUpdateChannel));
     [ObservableProperty] private bool _updateAvailable;
+    [ObservableProperty] private bool _hasUpdateNetworkAccessIssue;
+    public string ExecutablePath => UpdateService.ExePath;
     public string EditionText => UpdateService.IsInstalledMode() ? "Installed with Setup (updates run the new installer)" : "Portable edition (updates replace Evict.exe in place)";
     public string ReleasesUrl => UpdateChecker.ReleasesUrl;
 
@@ -174,6 +178,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         UpdateStatusText = result.Message;
         UpdateAvailable = result.Status == UpdateStatus.UpdateAvailable;
+        HasUpdateNetworkAccessIssue = result.NetworkAccessBlocked;
     }
 
     [RelayCommand(IncludeCancelCommand = true)]
@@ -181,6 +186,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (IsCheckingForUpdates || _main.IsCheckingForUpdates) return;
         IsCheckingForUpdates = true;
+        HasUpdateNetworkAccessIssue = false;
+        UpdateAvailable = false;
         UpdateStatusText = "Checking GitHub Releases…";
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct, App.ShutdownToken);
         try
@@ -203,6 +210,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     [RelayCommand] private void ShowUpdate() => _main.ShowUpdateCommand.Execute(null);
     [RelayCommand] private void OpenReleases() => Dialogs.OpenUrl(UpdateChecker.ReleasesUrl);
+    [RelayCommand] private void OpenUpdateConnectionHelp() => Dialogs.OpenUrl(UpdateNetworkDiagnostics.FirewallHelpUrl);
+    [RelayCommand] private void OpenApplicationFolder() => Dialogs.OpenFolder(Path.GetDirectoryName(ExecutablePath) ?? AppContext.BaseDirectory);
     public bool CreateRestorePoint { get => S.CreateRestorePoint; set { S.CreateRestorePoint = value; Save(); OnPropertyChanged(); } }
     public bool QuietUninstall { get => S.QuietUninstall; set { S.QuietUninstall = value; Save(); OnPropertyChanged(); } }
     public bool AutoCleanLeftovers { get => S.AutoCleanLeftovers; set { S.AutoCleanLeftovers = value; Save(); OnPropertyChanged(); } }
