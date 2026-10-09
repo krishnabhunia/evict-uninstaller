@@ -26,12 +26,19 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
 {
     private readonly AppServices _services;
     private bool _loaded;
+    private IReadOnlyList<UpgradablePackage> _lastPackages = Array.Empty<UpgradablePackage>();
+    public ObservableCollection<SoftwareUpdateExclusion> Exclusions { get; } = new();
+    public string ExclusionsLabel => $"Excluded software ({Exclusions.Count})";
+    public bool CanEditSelection => !IsBusy && !IsUpdating;
+
     private CancellationTokenSource? _cts;
 
     public SoftwareUpdaterViewModel(AppServices services)
     {
         _services = services;
         WingetAvailable = WingetService.IsAvailable;
+        foreach (var exclusion in services.Settings.Current.SoftwareUpdateExclusions ?? new())
+            Exclusions.Add(exclusion);
     }
 
     public ObservableCollection<UpgradeItemViewModel> Items { get; } = new();
@@ -47,7 +54,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     [ObservableProperty] private DateTime? _lastChecked;
 
     public string Summary => IsBusy ? "Checking for updates." : Error != null ? "Updates could not be checked."
-        : Items.Count == 0 ? (LastChecked is null ? "Not checked yet." : "Everything is up to date.") : $"{Items.Count} update(s) available";
+        : Items.Count == 0 ? (LastChecked is null ? "Not checked yet." : (Exclusions.Count > 0 ? "No updates available outside your exclusions." : "Everything is up to date.")) : $"{Items.Count} update(s) available";
 
     /// <summary>How many updates run concurrently (setting). MSI-based installers still serialise themselves; winget retries those.</summary>
     public IReadOnlyList<KeyValuePair<int, string>> ParallelOptions { get; } = new[]
@@ -74,8 +81,19 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         if (!_loaded && WingetAvailable) _ = CheckAsync();
     }
 
-    partial void OnIsBusyChanged(bool value) { UpdateSelectedCommand.NotifyCanExecuteChanged(); OnPropertyChanged(nameof(Summary)); }
-    partial void OnIsUpdatingChanged(bool value) => UpdateSelectedCommand.NotifyCanExecuteChanged();
+    partial void OnIsBusyChanged(bool value) { RefreshCommands(); OnPropertyChanged(nameof(Summary)); }
+    partial void OnIsUpdatingChanged(bool value) => RefreshCommands();
+
+    private void RefreshCommands()
+    {
+        OnPropertyChanged(nameof(CanEditSelection));
+        UpdateSelectedCommand.NotifyCanExecuteChanged();
+        SelectAllCommand.NotifyCanExecuteChanged();
+        SelectNoneCommand.NotifyCanExecuteChanged();
+        ExcludeSelectedCommand.NotifyCanExecuteChanged();
+        ManageExclusionsCommand.NotifyCanExecuteChanged();
+    }
+
     partial void OnErrorChanged(string? value) => OnPropertyChanged(nameof(Summary));
 
     [RelayCommand]
@@ -88,14 +106,8 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         try
         {
             var (pkgs, err) = await _services.Winget.GetUpgradesAsync(IncludeUnknown, CancellationToken.None);
-            foreach (var i in Items) i.PropertyChanged -= ItemChanged;
-            Items.Clear();
-            foreach (var p in pkgs)
-            {
-                var vm = new UpgradeItemViewModel(p);
-                vm.PropertyChanged += ItemChanged;
-                Items.Add(vm);
-            }
+            _lastPackages = pkgs.ToList();
+            RebuildItems();
             Error = err;
             if (err is null) LastChecked = DateTime.Now;
             _loaded = err is null;
@@ -120,6 +132,64 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     {
         SelectedCount = Items.Count(i => i.IsSelected);
         UpdateSelectedCommand.NotifyCanExecuteChanged();
+        ExcludeSelectedCommand.NotifyCanExecuteChanged();
+    }
+
+    private void RebuildItems()
+    {
+        var previous = Items.ToList();
+        foreach (var item in previous) item.PropertyChanged -= ItemChanged;
+        Items.Clear();
+        foreach (var package in SoftwareUpdateExclusion.Visible(_lastPackages, Exclusions))
+        {
+            var old = previous.FirstOrDefault(i => i.Id == package.Id && i.Source == (package.Source ?? ""));
+            var item = new UpgradeItemViewModel(package) { IsSelected = old?.IsSelected ?? true };
+            item.PropertyChanged += ItemChanged;
+            Items.Add(item);
+        }
+        UpdateSelection();
+        OnPropertyChanged(nameof(Summary));
+    }
+
+    private bool SaveExclusions(List<SoftwareUpdateExclusion> updated)
+    {
+        var previous = _services.Settings.Current.SoftwareUpdateExclusions;
+        _services.Settings.Current.SoftwareUpdateExclusions = updated;
+        if (!_services.Settings.TrySave())
+        {
+            _services.Settings.Current.SoftwareUpdateExclusions = previous;
+            Error = "Could not save exclusions. Check that Evict's settings folder is writable and try again.";
+            return false;
+        }
+        Exclusions.Clear();
+        foreach (var exclusion in updated) Exclusions.Add(exclusion);
+        OnPropertyChanged(nameof(ExclusionsLabel));
+        RebuildItems();
+        return true;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanUpdate))]
+    private void ExcludeSelected()
+    {
+        if (!CanUpdate()) return;
+        SaveExclusions(SoftwareUpdateExclusion.Add(Exclusions, Items.Where(i => i.IsSelected).Select(i => i.Package)));
+    }
+
+    public bool RestoreExclusions(IEnumerable<SoftwareUpdateExclusion> selected)
+    {
+        if (!CanEditSelection) return false;
+        var restoring = selected.ToHashSet();
+        return SaveExclusions(Exclusions.Where(e => !restoring.Contains(e)).ToList());
+    }
+
+    [RelayCommand(CanExecute = nameof(CanEditSelection))]
+    private void ManageExclusions()
+    {
+        if (!CanEditSelection) return;
+        new Evict.App.Views.SoftwareUpdateExclusionsWindow
+        {
+            DataContext = this, Owner = System.Windows.Application.Current.MainWindow
+        }.ShowDialog();
     }
 
     private bool CanUpdate() => SelectedCount > 0 && !IsBusy && !IsUpdating;
@@ -196,15 +266,17 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     [RelayCommand]
     private void CancelUpdate() => _cts?.Cancel();
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanEditSelection))]
     private void SelectAll()
     {
+        if (!CanEditSelection) return;
         foreach (var i in Items) i.IsSelected = true;
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanEditSelection))]
     private void SelectNone()
     {
+        if (!CanEditSelection) return;
         foreach (var i in Items) i.IsSelected = false;
     }
 

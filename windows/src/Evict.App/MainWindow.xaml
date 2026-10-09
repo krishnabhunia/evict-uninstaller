@@ -41,7 +41,7 @@
                     <TextBlock Text="Uninstaller" FontSize="16" FontWeight="Light" Margin="5,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" />
                     <!-- Version in the title bar: always visible (the sidebar scrolls with the text-size zoom). -->
                     <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="6,1" Margin="8,2,0,0" VerticalAlignment="Center"
-                            ToolTip="Installed version – use Updates at the top right to check for a newer one">
+                            ToolTip="Installed version – check Settings → Updates for newer releases">
                         <TextBlock Text="{Binding VersionText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Accent}" />
                     </Border>
                 </StackPanel>
@@ -56,27 +56,11 @@
                             <TextBlock Text="Administrator" FontSize="11" FontWeight="SemiBold" Margin="5,0,0,0" Foreground="{DynamicResource Brush.Success}" />
                         </StackPanel>
                     </Border>
-                    <Button Command="{Binding OpenUpdatesCommand}" VerticalAlignment="Center" Height="28" MinWidth="88"
-                            Padding="10,4" Margin="0,0,8,0" FontSize="12"
-                            WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Evict application updates">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource Button.Secondary}">
-                                <Setter Property="Content" Value="Updates" />
-                                <Setter Property="ToolTip" Value="Check for Evict updates or review the available release" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding ShowUpdateBanner}" Value="True">
-                                        <Setter Property="Content" Value="Update available" />
-                                        <Setter Property="ToolTip" Value="{Binding UpdateBannerText}" />
-                                        <Setter Property="Foreground" Value="{DynamicResource Brush.Accent}" />
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding IsCheckingForUpdates}" Value="True">
-                                        <Setter Property="Content" Value="Checking…" />
-                                        <Setter Property="ToolTip" Value="Checking GitHub Releases for a newer version" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
+                    <Button Command="{Binding OpenUpdatesCommand}" Content="{Binding AvailableUpdateButtonText}"
+                            Visibility="{Binding HasAvailableUpdate, Converter={StaticResource BoolToVis}}"
+                            Style="{StaticResource Button.Secondary}" ToolTip="{Binding UpdateBannerText}"
+                            VerticalAlignment="Center" Height="28" Padding="10,4" Margin="0,0,8,0" FontSize="12"
+                            WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="{Binding AvailableUpdateButtonText}" />
                     <Button Style="{StaticResource Button.Caption}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimize" />
                     <Button x:Name="MaxRestoreButton" Style="{StaticResource Button.Caption}" Content="&#xE922;" Click="OnMaximizeRestore" ToolTip="Maximize" />
                     <Button Style="{StaticResource Button.Caption.Close}" Content="&#xE8BB;" Click="OnClose" ToolTip="Close" />

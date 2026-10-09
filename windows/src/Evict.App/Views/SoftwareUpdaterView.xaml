@@ -26,8 +26,8 @@
                 <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Finds outdated programs and updates them in place, powered by the Windows Package Manager (winget) that ships with Windows 10/11." />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-                <ToggleButton Style="{StaticResource Button.Chip}" IsChecked="{Binding IncludeUnknown}" Content="Include unknown versions" MinHeight="34" ToolTip="Also list programs whose installed version winget cannot determine" />
-                <Button Style="{StaticResource Button.Primary}" Command="{Binding CheckCommand}" IsEnabled="{Binding IsBusy, Converter={StaticResource InvBool}}" Margin="8,0,0,0" Padding="12,7">
+                <ToggleButton Style="{StaticResource Button.Chip}" IsChecked="{Binding IncludeUnknown}" IsEnabled="{Binding CanEditSelection}" Content="Include unknown versions" MinHeight="34" ToolTip="Also list programs whose installed version winget cannot determine" />
+                <Button Style="{StaticResource Button.Primary}" Command="{Binding CheckCommand}" IsEnabled="{Binding CanEditSelection}" Margin="8,0,0,0" Padding="12,7">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE895;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
                         <TextBlock Text="Check for updates" Margin="7,0,0,0" />
@@ -61,7 +61,7 @@
                         <DataGridTemplateColumn Width="44" CanUserResize="False" CanUserSort="False">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}">
-                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="2,0,0,0" />
+                                    <CheckBox IsEnabled="{Binding DataContext.CanEditSelection, RelativeSource={RelativeSource AncestorType=DataGrid}}" IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="2,0,0,0" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
@@ -107,23 +107,27 @@
             <ListBox Style="{StaticResource ListBox.Flat}" ItemsSource="{Binding LogLines}" Height="140" Margin="0,6,0,0" FontFamily="{StaticResource Font.Mono}" FontSize="11.5" Background="{DynamicResource Brush.Code.Background}" />
         </Expander>
 
-        <Grid Grid.Row="4" Margin="0,12,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource BoolToVis}}">
+        <Grid Grid.Row="4" Margin="0,12,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Style="{StaticResource Button.Link}" Content="Select all" Command="{Binding SelectAllCommand}" />
-                <TextBlock Text="·" Margin="8,0" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center" />
-                <Button Style="{StaticResource Button.Link}" Content="None" Command="{Binding SelectNoneCommand}" />
-                <TextBlock Text="·" Margin="8,0" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center" />
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <WrapPanel Grid.ColumnSpan="2" Margin="0,0,0,10">
+                <Button Style="{StaticResource Button.Secondary}" Content="Select All" Command="{Binding SelectAllCommand}" Margin="0,0,8,4" />
+                <Button Style="{StaticResource Button.Secondary}" Content="Select None" Command="{Binding SelectNoneCommand}" Margin="0,0,8,4" />
+                <Button Style="{StaticResource Button.Secondary}" Content="Exclude selected" Command="{Binding ExcludeSelectedCommand}" Margin="0,0,8,4"
+                        ToolTip="Hide selected packages from this and future checks until restored." />
+                <Button Style="{StaticResource Button.Secondary}" Content="{Binding ExclusionsLabel}" Command="{Binding ManageExclusionsCommand}" Margin="0,0,0,4" />
+            </WrapPanel>
+            <StackPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="Run" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="0,0,6,0" />
                 <ComboBox ItemsSource="{Binding ParallelOptions}" DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding ParallelUpdates, Mode=TwoWay}" Width="130"
                           IsEnabled="{Binding IsUpdating, Converter={StaticResource InvBool}}" ToolTip="How many updates run in parallel. Windows Installer (MSI) packages still install one at a time; Evict waits and retries those automatically." />
                 <Button Style="{StaticResource Button.Link}" Content="Cancel updates" Command="{Binding CancelUpdateCommand}" Margin="20,0,0,0" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
                 <ProgressBar Value="{Binding OverallProgress, Mode=OneWay}" Maximum="100" Width="160" Height="6" Margin="14,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
             </StackPanel>
-            <Button Grid.Column="1" Style="{StaticResource Button.Primary}" Command="{Binding UpdateSelectedCommand}" MinWidth="200" Padding="18,9">
+            <Button Grid.Row="1" Grid.Column="1" Style="{StaticResource Button.Primary}" Command="{Binding UpdateSelectedCommand}" MinWidth="200" Padding="18,9">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE896;" Style="{StaticResource Icon}" FontSize="15" Foreground="White" />
                     <TextBlock Margin="9,0,0,0" Text="{Binding SelectedCount, Converter={StaticResource CountLabel}, ConverterParameter='Update selected|Update {0} program|Update {0} programs'}" />
