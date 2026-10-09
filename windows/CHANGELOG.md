@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.4 — 2026-10-09
+
+<!-- Evict automatic release; base: win-v1.12.3 -->
+
+- fix(updates): explain blocked connections and show startup results in Settings
+
 ## 1.12.3 — 2026-10-09
 
 <!-- Evict automatic release; base: win-v1.12.2 -->
