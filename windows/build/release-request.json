@@ -1,0 +1,8 @@
+{
+  "purpose": "installed-update-delivery-test",
+  "release_type": "minor",
+  "expected_core_version": "1.14.0",
+  "beta_from": "pull-request",
+  "stable_from": "main-after-merge",
+  "application_changes": false
+}
