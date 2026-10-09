@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.13.0 — 2026-10-09
+
+<!-- Evict automatic release; base: win-v1.12.3 -->
+
+- fix(updates): explain blocked connections and show startup results in Settings
+- feat(updater): add saved exclusions and a versioned update button
+
 ## 1.12.3 — 2026-10-09
 
 <!-- Evict automatic release; base: win-v1.12.2 -->
