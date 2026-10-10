@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.1 — 2026-10-10
+## 1.0.0 — 2026-10-10
 
 <!-- Evict automatic release; base: mac-v0.2.0 -->
 
@@ -9,6 +9,7 @@
 - fix(ci): keep one installation download and clean build artifacts
 - fix(ci): one Windows and macOS workflow with versioned installation ZIP
 - fix(macos): prove the app opens and get past Gatekeeper on first launch
+- feat(macos)!: selectable Applications table with shaded rows and movable columns
 
 ## 0.2.0 — 2026-10-07
 
