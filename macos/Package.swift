@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Evict",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: [
         .library(name: "EvictKit", targets: ["EvictKit"]),
         .executable(name: "Evict", targets: ["EvictApp"]),

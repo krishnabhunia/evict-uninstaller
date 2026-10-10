@@ -42,6 +42,9 @@ struct UninstallSheet: View {
                 Text(subtitle).font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
+            if !state.queue.progressText.isEmpty {
+                Chip(text: state.queue.progressText, tint: .accentColor)
+            }
         }
         .padding(16)
     }
@@ -145,7 +148,15 @@ struct UninstallSheet: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
-            Button(step == .done ? "Close" : "Cancel") { dismiss() }
+            if state.queue.isBatch && step != .working {
+                Button("Stop here") {
+                    state.cancelQueue()
+                    dismiss()
+                }
+                .disabled(state.isRemoving)
+                .help("Close this review and leave the remaining apps installed")
+            }
+            Button(closeTitle) { dismiss() }
                 .keyboardShortcut(.cancelAction)
                 .disabled(step == .working || state.isRemoving)
             if step == .review {
@@ -158,6 +169,15 @@ struct UninstallSheet: View {
             }
         }
         .padding(16)
+    }
+
+    /// In a batch, closing a review moves on to the next app.
+    private var closeTitle: String {
+        let more = state.queue.isBatch && state.queue.position + 1 < state.queue.apps.count
+        switch step {
+        case .done: return more ? "Next app" : "Close"
+        default: return more ? "Skip this app" : "Cancel"
+        }
     }
 
     private func startRemoval() {
