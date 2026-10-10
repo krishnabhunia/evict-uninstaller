@@ -784,6 +784,10 @@ jobs:
     runs-on: macos-15
     permissions:
       contents: read
+    env:
+      # Developer ID signing + notarization switch on by themselves once all five secrets exist
+      # (macos/README.md → "Signing and notarization"). Until then builds stay ad-hoc signed.
+      NOTARIZE: ${{ secrets.MACOS_CERT_P12_BASE64 != '' && secrets.MACOS_CERT_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
     outputs:
       version: ${{ steps.bundle.outputs.version }}
       artifact: ${{ steps.bundle.outputs.artifact }}
@@ -799,9 +803,35 @@ jobs:
       - name: Test macOS application
         working-directory: macos
         run: swift test
+      - name: Import the Developer ID certificate (only when notarization secrets exist)
+        if: env.NOTARIZE == 'true'
+        env:
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/evict-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          printf '%s' "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/evict-signing.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/evict-signing.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/evict-signing.p12"
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+          test -n "$identity" || { echo "::error::No 'Developer ID Application' identity in MACOS_CERT_P12_BASE64"; exit 1; }
+          echo "SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "::notice::Signing with $identity"
       - name: Build native universal macOS app
         working-directory: macos
         run: Scripts/make-app.sh --universal
+      - name: Prove the app opens (launch test)
+        working-directory: macos
+        run: |
+          bash -n Scripts/smoke-launch.sh
+          Scripts/smoke-launch.sh build/Evict.app
       - name: Build and verify native macOS disk image
         working-directory: macos
         env:
@@ -809,6 +839,30 @@ jobs:
         run: |
           bash -n Scripts/make-dmg.sh
           Scripts/make-dmg.sh "$RELEASE_VERSION"
+      - name: Notarize and staple the disk image (only when notarization secrets exist)
+        if: env.NOTARIZE == 'true'
+        working-directory: macos
+        env:
+          RELEASE_VERSION: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          bash -n Scripts/notarize.sh
+          Scripts/notarize.sh "build/Evict_$RELEASE_VERSION.dmg"
+      - name: Report what Gatekeeper will say to people who download it
+        working-directory: macos
+        env:
+          RELEASE_VERSION: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
+        run: |
+          set -uo pipefail
+          codesign -dvv build/Evict.app 2>&1 | grep -E '^(Authority|TeamIdentifier|Runtime|Signature)' || true
+          if spctl --assess --type execute -vv build/Evict.app 2>&1; then
+            echo "::notice::Gatekeeper accepts Evict.app: downloaded copies open with a normal double-click."
+          else
+            echo "::warning::Gatekeeper rejects Evict.app (not notarized). Downloaded copies only open after Privacy & Security → Open Anyway, or 'xattr -dr com.apple.quarantine /Applications/Evict.app'. Add the notarization secrets to fix this for everyone (macos/README.md)."
+          fi
       - name: Verify disk image identity and transfer bytes
         id: bundle
         env:
@@ -1477,8 +1531,13 @@ jobs:
           assert os.access(volume / "Evict.app/Contents/MacOS/Evict", os.X_OK)
           print("Published DMG verified: read-only installation, original component version, signed arm64/x86_64 app.")
           PY
+          ditto "$mount_point/Evict.app" "$RUNNER_TEMP/published-install/Evict.app"
           hdiutil detach "$mount_point"
           trap - EXIT
+      - name: Prove the published app opens after a drag-install (launch test)
+        run: |
+          bash -n macos/Scripts/smoke-launch.sh
+          macos/Scripts/smoke-launch.sh "$RUNNER_TEMP/published-install/Evict.app"
 
   record-macos-version:
     needs: [package, publish, verify-published-update, verify-published-macos]
