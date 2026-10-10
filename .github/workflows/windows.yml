@@ -826,19 +826,19 @@ jobs:
           echo "::notice::Signing with $identity"
       - name: Build native universal macOS app
         working-directory: macos
-        run: Scripts/make-app.sh --universal
+        run: bash Scripts/make-app.sh --universal
       - name: Prove the app opens (launch test)
         working-directory: macos
         run: |
           bash -n Scripts/smoke-launch.sh
-          Scripts/smoke-launch.sh build/Evict.app
+          bash Scripts/smoke-launch.sh build/Evict.app
       - name: Build and verify native macOS disk image
         working-directory: macos
         env:
           RELEASE_VERSION: ${{ needs.pr-build.outputs.version || needs.build.outputs.version }}
         run: |
           bash -n Scripts/make-dmg.sh
-          Scripts/make-dmg.sh "$RELEASE_VERSION"
+          bash Scripts/make-dmg.sh "$RELEASE_VERSION"
       - name: Notarize and staple the disk image (only when notarization secrets exist)
         if: env.NOTARIZE == 'true'
         working-directory: macos
@@ -850,7 +850,7 @@ jobs:
         run: |
           set -euo pipefail
           bash -n Scripts/notarize.sh
-          Scripts/notarize.sh "build/Evict_$RELEASE_VERSION.dmg"
+          bash Scripts/notarize.sh "build/Evict_$RELEASE_VERSION.dmg"
       - name: Report what Gatekeeper will say to people who download it
         working-directory: macos
         env:
@@ -1537,7 +1537,7 @@ jobs:
       - name: Prove the published app opens after a drag-install (launch test)
         run: |
           bash -n macos/Scripts/smoke-launch.sh
-          macos/Scripts/smoke-launch.sh "$RUNNER_TEMP/published-install/Evict.app"
+          bash macos/Scripts/smoke-launch.sh "$RUNNER_TEMP/published-install/Evict.app"
 
   record-macos-version:
     needs: [package, publish, verify-published-update, verify-published-macos]
