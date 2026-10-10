@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 — 2026-10-10
+
+<!-- Evict automatic release; base: mac-v0.2.0 -->
+
+- feat(updates): publish 1.10.0 for stable update verification
+- feat(updates): test beta restart updates and native packages
+- fix(ci): keep one installation download and clean build artifacts
+- fix(ci): one Windows and macOS workflow with versioned installation ZIP
+- fix(macos): prove the app opens and get past Gatekeeper on first launch
+
 ## 0.2.0 — 2026-10-07
 
 <!-- Evict automatic release; base: mac-v0.1.0 -->

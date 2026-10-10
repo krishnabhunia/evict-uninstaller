@@ -41,11 +41,20 @@ so nothing it does is permanent.
 
 ## Installing
 
-Builds are not signed with an Apple Developer ID yet, so Gatekeeper will complain on first launch:
-
 1. Download `Evict_<fullversion>.zip` from **Evict Build & Release** in Actions or from a Release, then unzip it.
 2. Open `Evict_<fullversion>/macOS/Evict_<fullversion>.dmg`, then drag `Evict.app` into `/Applications`.
-3. **Right-click the app → Open → Open.** After that it starts normally.
+3. Open Evict from Applications.
+
+**If macOS says it can't verify Evict** (builds are not notarized until the Apple secrets below are added):
+
+| Step | Do this |
+|---|---|
+| 1 | Double-click Evict once and close the message. |
+| 2 |  → **System Settings → Privacy & Security**, scroll to *"Evict was blocked…"*, click **Open Anyway**, enter your Mac password, click **Open**. |
+| or | In Terminal: `xattr -dr com.apple.quarantine /Applications/Evict.app` then `open /Applications/Evict.app` |
+
+Right-click → Open no longer skips this check on macOS 15 and later. The DMG carries the same steps in
+`If Evict won't open.txt` whenever the build is not notarized.
 
 The DMG preserves executable permissions and bundle symlinks. The same enclosing folder contains `portable/Evict_<fullversion>.exe` and `windows-x64/Evict_<fullversion>.exe` for Windows. The installation ZIP contains exactly these three payload files; checksums are separate release assets. Filenames use the suite version, while the native Mac app keeps its independent numeric version.
 
@@ -62,7 +71,27 @@ With a Developer ID certificate in the keychain:
 
 ```bash
 SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" Scripts/make-app.sh --universal
+Scripts/make-dmg.sh <version>
+APPLE_ID=… APPLE_TEAM_ID=… APPLE_APP_PASSWORD=… SIGN_IDENTITY="…" Scripts/notarize.sh build/Evict_<version>.dmg
+Scripts/smoke-launch.sh build/Evict.app      # opens the app and checks it shows a window and stays up
 ```
+
+### Signing and notarization in CI
+
+The **mac-package** job signs with a Developer ID, notarizes and staples the DMG by itself as soon as these
+five repository secrets exist (Settings → Secrets and variables → Actions). Without them builds stay ad-hoc
+signed and every run prints a Gatekeeper warning.
+
+| Secret | What it holds |
+|---|---|
+| `MACOS_CERT_P12_BASE64` | The *Developer ID Application* certificate + private key exported as `.p12`, base64-encoded (`base64 -i cert.p12 \| pbcopy`) |
+| `MACOS_CERT_PASSWORD` | The password chosen when exporting that `.p12` |
+| `APPLE_ID` | The Apple ID of the Apple Developer Program account |
+| `APPLE_TEAM_ID` | The 10-character Team ID (developer.apple.com → Membership) |
+| `APPLE_APP_PASSWORD` | An app-specific password for that Apple ID (appleid.apple.com → Sign-In and Security) |
+
+Every build — with or without them — is opened on the macOS runner by `Scripts/smoke-launch.sh`: the app must
+start, show a window and stay up, both straight after the build and from the published DMG.
 
 ## Layout
 
