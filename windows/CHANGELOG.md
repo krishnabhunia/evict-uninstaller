@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0 — 2026-10-10
+
+<!-- Evict automatic release; base: win-v1.14.0 -->
+
+- fix(macos): prove the app opens and get past Gatekeeper on first launch
+- feat(macos)!: selectable Applications table with shaded rows and movable columns
+
 ## 1.14.0 — 2026-10-09
 
 <!-- Evict automatic release; base: win-v1.13.0 -->
