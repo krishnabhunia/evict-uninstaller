@@ -36,8 +36,14 @@ sed -e "s/@VERSION@/$VERSION/g" -e "s/@BUILD@/$BUILD_NUMBER/g" Resources/Info.pl
 # Ad-hoc signature. With a Developer ID in the keychain, set SIGN_IDENTITY to use it instead.
 IDENTITY="${SIGN_IDENTITY:--}"
 echo "==> Signing with identity: $IDENTITY"
-codesign --force --deep --options runtime --sign "$IDENTITY" "$APP" 2>/dev/null || codesign --force --deep --sign "$IDENTITY" "$APP"
-codesign --verify --verbose=2 "$APP" || true
+if [[ "$IDENTITY" == "-" ]]; then
+  codesign --force --deep --options runtime --sign - "$APP"
+else
+  # Notarization needs the hardened runtime and a secure timestamp from Apple.
+  codesign --force --deep --options runtime --timestamp --sign "$IDENTITY" "$APP"
+fi
+# A bundle whose signature doesn't verify is refused by macOS ("damaged"), so this must not be skipped.
+codesign --verify --deep --strict --verbose=2 "$APP"
 
 (cd build && rm -f "Evict-$VERSION.zip" && ditto -c -k --sequesterRsrc --keepParent Evict.app "Evict-$VERSION.zip")
 shasum -a 256 "build/Evict-$VERSION.zip" | tee "build/Evict-$VERSION.zip.sha256"

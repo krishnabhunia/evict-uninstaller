@@ -129,6 +129,26 @@ trap 'exit 143' TERM
 mkdir -p "$STAGING" "$MOUNT_POINT"
 ditto "$APP" "$STAGING/Evict.app"
 ln -s /Applications "$STAGING/Applications"
+if [[ "${SIGN_IDENTITY:--}" == "-" ]]; then
+  # Ad-hoc signed, so it can't be notarized: macOS blocks the first open of a downloaded copy, and
+  # since macOS 15 the old right-click → Open trick no longer works. Put the ways that do work next
+  # to the app. (A Developer ID build is notarized by Scripts/notarize.sh and needs no note.)
+  cat > "$STAGING/If Evict won't open.txt" <<'NOTE'
+Evict isn't notarized by Apple yet, so the first time you open it macOS says it can't verify it.
+
+1. Drag Evict into Applications (the folder next to it in this window).
+2. Double-click Evict once, then close the message.
+3. Open  > System Settings > Privacy & Security, scroll down to
+   "Evict was blocked to protect your Mac" and click Open Anyway.
+   Enter your Mac password and click Open.
+
+Or, in Terminal:
+   xattr -dr com.apple.quarantine /Applications/Evict.app
+   open /Applications/Evict.app
+
+You only do this once. Later updates open normally.
+NOTE
+fi
 echo "==> Creating Evict $RELEASE_VERSION installer (Mac component $MAC_VERSION, build $MAC_BUILD)"
 hdiutil create -ov -format UDZO -fs HFS+ -volname "Evict_$RELEASE_VERSION" \
   -srcfolder "$STAGING" "$DMG_TEMP"
