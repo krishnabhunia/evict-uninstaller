@@ -13,7 +13,7 @@ so nothing it does is permanent.
 
 | Page | What it does |
 |---|---|
-| Applications | Every app on the Mac, with size, version, bundle ID and where it came from (App Store, installer package, Homebrew, drag-installed). Search, sort, drag an app onto the window to remove it. |
+| Applications | Every app on the Mac in a native table: size, version, bundle ID and where it came from (App Store, installer package, Homebrew, drag-installed). Click a row to select it (⌘ / ⇧ for several), every second row is shaded, click a header to sort, drag headers to move columns, drag edges to resize, right-click a header to show Installed, Last used or Location — the layout is remembered. Double-click, Return or ⌘⌫ opens the review; several apps are reviewed one after another. Drag an app onto the window to remove it. |
 | Uninstall | Finds everything belonging to the app across `~/Library` and `/Library`, groups it by kind, and lets you tick each item before anything moves. |
 | Force Uninstall | For apps that are already gone: search by name, or drop a bundle, and clean up what is left. |
 | Startup Items | Launch agents and daemons, with the ones whose program no longer exists flagged as orphans. |
@@ -35,7 +35,7 @@ so nothing it does is permanent.
 
 ## Requirements
 
-- macOS 13 Ventura or later (Apple Silicon or Intel — the release build is universal).
+- macOS 14 Sonoma or later (Apple Silicon or Intel — the release build is universal). Macs on macOS 13 stay on Evict for Mac 0.2.x.
 - **Full Disk Access** for Evict, otherwise other apps' Library folders stay invisible to it.
   Evict shows a banner and a button that opens the right System Settings pane.
 

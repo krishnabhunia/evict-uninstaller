@@ -42,6 +42,8 @@ final class AppState: ObservableObject {
     @Published var isPlanning = false
     @Published var removalResult: RemovalResult?
     @Published var isRemoving = false
+    /// Several selected apps are reviewed and removed one after another (design AT3, choice M2).
+    @Published private(set) var queue = UninstallQueue()
 
     // ── environment ──
     @Published var fullDiskAccess: Bool = FullDiskAccess.isGranted
@@ -136,6 +138,19 @@ final class AppState: ObservableObject {
         isPlanning = false
     }
 
+    /// Uninstalls one or more apps: each gets its own review sheet, one after another.
+    func uninstall(_ picked: [InstalledApp]) async {
+        guard !isPlanning, !isRemoving, plan == nil else { return }
+        queue = UninstallQueue(picked)
+        guard let first = queue.current else { return }
+        await preparePlan(for: first)
+    }
+
+    /// Stops after the review that is open now; the remaining apps are left alone.
+    func cancelQueue() {
+        queue.clear()
+    }
+
     func performRemoval() async {
         guard !isRemoving, !isPlanning, let plan else { return }
         isRemoving = true
@@ -152,9 +167,19 @@ final class AppState: ObservableObject {
 
     func dismissPlan() {
         guard !isRemoving else { return }
+        // The sheet can report its dismissal more than once; only a real close moves the queue on.
+        let hadPlan = plan != nil
         plan = nil
         planSelection = []
         removalResult = nil
+        guard hadPlan, !queue.isEmpty else { queue.clear(); return }
+        guard let next = queue.advance() else { queue.clear(); return }
+        Task { @MainActor in
+            // Let the closing sheet finish its animation before the next one opens.
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard queue.current?.id == next.id else { return }
+            await preparePlan(for: next)
+        }
     }
 }
 
