@@ -7,6 +7,7 @@ public sealed class AppServices
 {
     public SettingsStore Settings { get; } = new();
     public HistoryStore History { get; } = new();
+    public SoftwareUpdateHistoryStore SoftwareUpdateHistory { get; } = new();
     public InstalledProgramsService Programs { get; } = new();
     public UninstallOrchestrator Orchestrator { get; } = new();
     public LeftoverScanner Scanner { get; } = new();

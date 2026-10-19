@@ -1,0 +1,98 @@
+<Window x:Class="Evict.App.Views.SoftwareUpdateHistoryDetailsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="clr-namespace:Evict.Core.Models;assembly=Evict.Core"
+        Title="Update details" Style="{StaticResource Window.Dialog}"
+        Width="680" Height="760" MinWidth="560" MinHeight="440"
+        Icon="pack://application:,,,/Assets/app.ico">
+    <Window.Resources>
+        <DataTemplate x:Key="UpdateResultTemplate">
+            <Border x:Name="Badge" Background="{DynamicResource Brush.Badge.Background}" CornerRadius="5" Padding="7,4" HorizontalAlignment="Left">
+                <TextBlock x:Name="BadgeText" Text="{Binding Result}" FontSize="12" Foreground="{DynamicResource Brush.Text.Secondary}" />
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Outcome}" Value="{x:Static models:SoftwareUpdateOutcome.Updated}">
+                    <Setter TargetName="Badge" Property="Background" Value="{DynamicResource Brush.Success.Subtle}" />
+                    <Setter TargetName="BadgeText" Property="Foreground" Value="{DynamicResource Brush.Success}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Outcome}" Value="{x:Static models:SoftwareUpdateOutcome.Failed}">
+                    <Setter TargetName="Badge" Property="Background" Value="{DynamicResource Brush.Danger.Subtle}" />
+                    <Setter TargetName="BadgeText" Property="Foreground" Value="{DynamicResource Brush.Danger}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Outcome}" Value="{x:Static models:SoftwareUpdateOutcome.RestartRequired}">
+                    <Setter TargetName="Badge" Property="Background" Value="{DynamicResource Brush.Warning.Subtle}" />
+                    <Setter TargetName="BadgeText" Property="Foreground" Value="{DynamicResource Brush.Warning}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Outcome}" Value="{x:Static models:SoftwareUpdateOutcome.InProgress}">
+                    <Setter TargetName="Badge" Property="Background" Value="{DynamicResource Brush.Accent.Subtle}" />
+                    <Setter TargetName="BadgeText" Property="Foreground" Value="{DynamicResource Brush.Accent}" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+    </Window.Resources>
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,16">
+            <TextBlock Text="Update details" Style="{StaticResource Text.Title}" />
+            <TextBlock Text="Recorded software update attempt" Style="{StaticResource Text.Caption}" Margin="0,4,0,0" />
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="This record has expired or was cleared. Completed history is kept for 7 days."
+                           Style="{StaticResource Text.Body}" TextWrapping="Wrap"
+                           Visibility="{Binding IsExpired, Converter={StaticResource BoolToVis}}" />
+                <StackPanel Visibility="{Binding HasRecord, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding Item.Name}" Style="{StaticResource Text.Section}" />
+                    <TextBlock Text="{Binding Item.PackageId}" Style="{StaticResource Text.Caption}" Margin="0,4,0,12" />
+                    <ContentControl Content="{Binding Item}" ContentTemplate="{StaticResource UpdateResultTemplate}" Margin="0,0,0,14" />
+                    <Border Background="{DynamicResource Brush.Code.Background}" CornerRadius="8" Padding="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Version before attempt" Style="{StaticResource Text.Caption}" />
+                                <TextBlock Text="{Binding Item.PreviousVersion}" Style="{StaticResource Text.Section}" Margin="0,5,0,0" TextWrapping="Wrap" /></StackPanel>
+                            <TextBlock Grid.Column="1" Text="→" Margin="18,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                            <StackPanel Grid.Column="2"><TextBlock Text="Requested version" Style="{StaticResource Text.Caption}" />
+                                <TextBlock Text="{Binding Item.TargetVersion}" Style="{StaticResource Text.Section}" Margin="0,5,0,0" TextWrapping="Wrap" /></StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Background="{DynamicResource Brush.Info.Subtle}" CornerRadius="8" Padding="12" Margin="0,14,0,14">
+                        <TextBlock Text="{Binding Item.Message}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" />
+                    </Border>
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="145" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <TextBlock Text="Started" Style="{StaticResource Text.Caption}" Margin="0,5" />
+                        <TextBlock Grid.Column="1" Text="{Binding Item.Started}" TextWrapping="Wrap" Margin="0,5" />
+                        <TextBlock Grid.Row="1" Text="Finished / detected" Style="{StaticResource Text.Caption}" Margin="0,5" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Item.Finished}" TextWrapping="Wrap" Margin="0,5" />
+                        <TextBlock Grid.Row="2" Text="Duration" Style="{StaticResource Text.Caption}" Margin="0,5" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Item.Duration}" Margin="0,5" />
+                        <TextBlock Grid.Row="3" Text="Package source" Style="{StaticResource Text.Caption}" Margin="0,5" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Item.Source}" TextWrapping="Wrap" Margin="0,5" />
+                        <TextBlock Grid.Row="4" Text="Exit code" Style="{StaticResource Text.Caption}" Margin="0,5" />
+                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Item.ExitCode}" TextWrapping="Wrap" Margin="0,5" />
+                        <TextBlock Grid.Row="5" Text="Removed from history" Style="{StaticResource Text.Caption}" Margin="0,5" />
+                        <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Item.Expires}" TextWrapping="Wrap" Margin="0,5" />
+                    </Grid>
+                    <Expander Header="Activity log" Foreground="{DynamicResource Brush.Text.Secondary}">
+                        <TextBox Text="{Binding Item.Output, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                                 MaxHeight="220" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12" Margin="0,8,0,8"
+                                 AutomationProperties.Name="Installer activity log" />
+                    </Expander>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+        <StackPanel Grid.Row="2" Margin="0,14,0,0">
+            <TextBlock Text="{Binding CopyStatus}" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+            <WrapPanel HorizontalAlignment="Right" Margin="0,6,0,0">
+                <Button Content="Copy details" Command="{Binding CopyDetailsCommand}" Style="{StaticResource Button.Secondary}" Margin="0,0,8,6" />
+                <Button Content="Check for latest update" Command="{Binding RecheckCommand}" Style="{StaticResource Button.Primary}" Margin="0,0,8,6"
+                        Visibility="{Binding CanRecheck, Converter={StaticResource BoolToVis}}" />
+                <Button Content="Go to active update" Command="{Binding GoToActiveUpdateCommand}" Style="{StaticResource Button.Primary}" Margin="0,0,8,6"
+                        Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}" />
+                <Button Content="Done" Style="{StaticResource Button.Secondary}" Click="CloseWindow" IsCancel="True" Margin="0,0,0,6" />
+            </WrapPanel>
+        </StackPanel>
+    </Grid>
+</Window>

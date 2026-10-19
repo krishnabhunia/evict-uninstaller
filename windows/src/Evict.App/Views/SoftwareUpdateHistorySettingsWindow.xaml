@@ -1,0 +1,39 @@
+<Window x:Class="Evict.App.Views.SoftwareUpdateHistorySettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="History settings" Style="{StaticResource Window.Dialog}" Width="640" Height="570" MinWidth="530" MinHeight="420"
+        Icon="pack://application:,,,/Assets/app.ico">
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,18"><TextBlock Text="History settings" Style="{StaticResource Text.Title}" />
+            <TextBlock Text="Software Updater · retention and privacy" Style="{StaticResource Text.Caption}" Margin="0,4,0,0" /></StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                    <DockPanel><TextBlock DockPanel.Dock="Right" Text="7 days" Style="{StaticResource Text.Section}" Margin="18,0,0,0" />
+                        <StackPanel><TextBlock Text="Keep update history" Style="{StaticResource Text.Section}" />
+                            <TextBlock Text="A rolling 168 hours, including unsuccessful attempts." Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,6,0,0" /></StackPanel></DockPanel>
+                </Border>
+                <TextBlock Text="Automatic cleanup · always on" Style="{StaticResource Text.Section}" />
+                <TextBlock Text="Older completed records are removed automatically. Active attempts stay visible until a result is recorded."
+                           Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,7,0,18" />
+                <TextBlock Text="Stored on this device" Style="{StaticResource Text.Section}" />
+                <TextBlock Text="History is saved locally and stays available after restarting Evict."
+                           Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,7,0,18" />
+                <Border Background="{DynamicResource Brush.Info.Subtle}" CornerRadius="8" Padding="12" Margin="0,0,0,18">
+                    <TextBlock Text="{Binding CutoffText}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" />
+                </Border>
+                <TextBlock Text="Only updates attempted through Evict are recorded. Excluding or restoring software does not erase past attempts. Expired or cleared records cannot be recovered."
+                           Style="{StaticResource Text.Caption}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding PersistenceError}" Foreground="{DynamicResource Brush.Danger}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                <TextBlock Text="{Binding Feedback}" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,8,0,0" />
+            </StackPanel>
+        </ScrollViewer>
+        <WrapPanel Grid.Row="2" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="Retry saving history" Command="{Binding RetryPersistenceCommand}" Style="{StaticResource Button.Secondary}" Margin="0,0,8,6"
+                    Visibility="{Binding HasPersistenceError, Converter={StaticResource BoolToVis}}" />
+            <Button Content="Clear history…" Command="{Binding ClearHistoryCommand}" Style="{StaticResource Button.Secondary}" Margin="0,0,8,6" />
+            <Button Content="Done" Style="{StaticResource Button.Primary}" Click="CloseWindow" IsCancel="True" Margin="0,0,0,6" />
+        </WrapPanel>
+    </Grid>
+</Window>

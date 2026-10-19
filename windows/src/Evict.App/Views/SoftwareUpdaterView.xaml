@@ -1,13 +1,54 @@
 <UserControl x:Class="Evict.App.Views.SoftwareUpdaterView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:Evict.App.ViewModels"
-             mc:Ignorable="d"
-             d:DataContext="{d:DesignInstance Type=vm:SoftwareUpdaterViewModel}">
-
+             xmlns:views="clr-namespace:Evict.App.Views">
+    <UserControl.Resources>
+        <Style x:Key="UpdaterTabItem" TargetType="TabItem">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Line" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,2" Padding="0,9,0,11" Margin="0,0,24,0">
+                            <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Line" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Accent}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
     <Grid Margin="24,18,24,16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,16">
+            <TextBlock Text="Software Updater" Style="{StaticResource Text.Title}" />
+            <TextBlock Text="Keep your programs current. See what changed." Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" />
+        </StackPanel>
+        <Border Grid.Row="1" Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="8" Padding="12" Margin="0,0,0,14"
+                Visibility="{Binding History.HasPersistenceError, Converter={StaticResource BoolToVis}}">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Retry history" Command="{Binding History.RetryPersistenceCommand}" Style="{StaticResource Button.Secondary}" Margin="12,0,0,0" />
+                <TextBlock Text="{Binding History.PersistenceError}" TextWrapping="Wrap" Style="{StaticResource Text.Body}" AutomationProperties.LiveSetting="Polite" />
+            </DockPanel>
+        </Border>
+        <TabControl Grid.Row="2" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}" Background="Transparent" BorderThickness="0">
+            <TabControl.Template>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
+                        <ContentPresenter Grid.Row="1" ContentSource="SelectedContent" Margin="0,16,0,0" />
+                    </Grid>
+                </ControlTemplate>
+            </TabControl.Template>
+            <TabItem Header="{Binding Items.Count, StringFormat='Available updates ({0})'}" Style="{StaticResource UpdaterTabItem}">
+    <Grid Margin="0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -21,10 +62,7 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel>
-                <TextBlock Text="Software Updater" Style="{StaticResource Text.Title}" />
-                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Finds outdated programs and updates them in place, powered by the Windows Package Manager (winget) that ships with Windows 10/11." />
-            </StackPanel>
+            <TextBlock Text="Find and install current program updates." Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="0,0,16,0" TextWrapping="Wrap" />
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                 <ToggleButton Style="{StaticResource Button.Chip}" IsChecked="{Binding IncludeUnknown}" IsEnabled="{Binding CanEditSelection}" Content="Include unknown versions" MinHeight="34" ToolTip="Also list programs whose installed version winget cannot determine" />
                 <Button Style="{StaticResource Button.Primary}" Command="{Binding CheckCommand}" IsEnabled="{Binding CanEditSelection}" Margin="8,0,0,0" Padding="12,7">
@@ -102,10 +140,20 @@
             </Grid>
         </Border>
 
-        <Expander Grid.Row="3" Header="winget output" Margin="0,10,0,0" IsExpanded="{Binding IsUpdating, Mode=OneWay}" Foreground="{DynamicResource Brush.Text.Secondary}"
+        <StackPanel Grid.Row="3">
+            <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="12" Margin="0,12,0,0"
+                    Visibility="{Binding HasCompletedSession, Converter={StaticResource BoolToVis}}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="View update history" Style="{StaticResource Button.Link}" Command="{Binding ShowUpdateHistoryCommand}" Margin="12,0,0,0" />
+                    <StackPanel><TextBlock Text="Update session complete" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding BatchResultSummary}" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,4,0,0" /></StackPanel>
+                </DockPanel>
+            </Border>
+        <Expander Header="winget output" Margin="0,10,0,0" IsExpanded="{Binding IsUpdating, Mode=OneWay}" Foreground="{DynamicResource Brush.Text.Secondary}"
                   Visibility="{Binding LogLines.Count, Converter={StaticResource BoolToVis}}">
             <ListBox Style="{StaticResource ListBox.Flat}" ItemsSource="{Binding LogLines}" Height="140" Margin="0,6,0,0" FontFamily="{StaticResource Font.Mono}" FontSize="11.5" Background="{DynamicResource Brush.Code.Background}" />
         </Expander>
+        </StackPanel>
 
         <Grid Grid.Row="4" Margin="0,12,0,0">
             <Grid.ColumnDefinitions>
@@ -134,5 +182,11 @@
                 </StackPanel>
             </Button>
         </Grid>
+    </Grid>
+            </TabItem>
+            <TabItem Header="{Binding History.TabTitle}" Style="{StaticResource UpdaterTabItem}">
+                <views:SoftwareUpdateHistoryView DataContext="{Binding History}" />
+            </TabItem>
+        </TabControl>
     </Grid>
 </UserControl>

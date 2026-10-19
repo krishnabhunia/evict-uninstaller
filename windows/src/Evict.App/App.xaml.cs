@@ -9,6 +9,8 @@ namespace Evict.App;
 
 public partial class App : Application
 {
+    private System.Windows.Threading.DispatcherTimer? _softwareHistoryCleanup;
+
     private static readonly CancellationTokenSource ShutdownCancellation = new();
     public static CancellationToken ShutdownToken => ShutdownCancellation.Token;
     public static AppServices Services { get; private set; } = null!;
@@ -43,6 +45,11 @@ public partial class App : Application
         Services = new AppServices();
         Services.Settings.Load();
         Services.History.Load();
+        Services.SoftwareUpdateHistory.Load();
+        _softwareHistoryCleanup = new System.Windows.Threading.DispatcherTimer
+        { Interval = TimeSpan.FromMinutes(1) };
+        _softwareHistoryCleanup.Tick += (_, _) => Services.SoftwareUpdateHistory.PruneExpired();
+        _softwareHistoryCleanup.Start();
         ApplyTheme(Services.Settings.Current.Theme);
         UiState.Scale = UiState.Clamp(Services.Settings.Current.UiScale);
         UiState.PropertyChanged += (_, args) =>
@@ -173,6 +180,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _softwareHistoryCleanup?.Stop();
         ShutdownCancellation.Cancel();
         try { Background?.Shutdown(); } catch { /* ignore */ }
         try { Services?.Settings.Save(); } catch { /* ignore */ }

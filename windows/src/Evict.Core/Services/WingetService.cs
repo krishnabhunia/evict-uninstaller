@@ -165,25 +165,37 @@ public sealed class WingetService
 
     public async Task<(bool Ok, string Message)> UpgradeAsync(UpgradablePackage pkg, CancellationToken ct, Action<string>? onLine = null, bool includeUnknown = false)
     {
-        var winget = _findWinget();
-        if (winget is null) return (false, "winget not found.");
-        var args = BuildUpgradeArguments(pkg, includeUnknown);
+        var result = await UpgradeWithResultAsync(pkg, ct, onLine, includeUnknown).ConfigureAwait(false);
+        return (result.Ok, result.Message);
+    }
 
-        // Several upgrades run at the same time; Windows Installer allows only one MSI at once (error 1618 /
-        // 0x80070652 "another installation is already in progress"), so such failures are retried with a pause.
+    public async Task<SoftwareUpgradeResult> UpgradeWithResultAsync(UpgradablePackage pkg, CancellationToken ct,
+        Action<string>? onLine = null, bool includeUnknown = false)
+    {
+        ct.ThrowIfCancellationRequested();
+        var winget = _findWinget();
+        if (winget is null) return new(SoftwareUpdateOutcome.Failed, "winget not found; the installer was not started.");
+        var args = BuildUpgradeArguments(pkg, includeUnknown);
         for (int attempt = 1; ; attempt++)
         {
+            ct.ThrowIfCancellationRequested();
             var res = await _runCaptured(winget, args, ct, TimeSpan.FromMinutes(30), onLine).ConfigureAwait(false);
-            var text = (res.StdOut + "\n" + res.StdErr);
-            bool ok = res.ExitCode == 0 || text.Contains("Successfully installed", StringComparison.OrdinalIgnoreCase);
-            if (ok) return (true, "Updated.");
+            var text = res.StdOut + "\n" + res.StdErr;
+            if (res.TimedOut)
+                return new(SoftwareUpdateOutcome.Interrupted, "The update timed out. The final installer result is unknown; check the installed version before trying again.", res.ExitCode);
+            if (res.ExitCode == 0) return new(SoftwareUpdateOutcome.Updated, "The installer completed successfully.", res.ExitCode);
+            if (unchecked((uint)res.ExitCode) is 3010 or 1641 or 0x8A150109 or 0x8A15010B)
+                return new(SoftwareUpdateOutcome.RestartRequired, "The installer reported success and requires a Windows restart. Save your work and restart when convenient.", res.ExitCode);
+            if (unchecked((uint)res.ExitCode) is 1223 or 1602 or 0x800704C7 or 0x80070642 or 0x8A15010C)
+                return new(SoftwareUpdateOutcome.Cancelled, "The installer reported cancellation. Check the installed version before trying again.", res.ExitCode);
             if (IsInstallerBusy(res.ExitCode, text) && attempt < 6)
             {
                 onLine?.Invoke($"Another installation is in progress – retrying in 20 s (attempt {attempt}/5)…");
                 await Task.Delay(TimeSpan.FromSeconds(20), ct).ConfigureAwait(false);
                 continue;
             }
-            return (false, DescribeFailure(res.ExitCode, text));
+            // A nonzero failure remains a failure even if captured output contains a success phrase.
+            return new(SoftwareUpdateOutcome.Failed, DescribeFailure(res.ExitCode, text), res.ExitCode);
         }
     }
 

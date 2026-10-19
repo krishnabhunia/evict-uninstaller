@@ -36,11 +36,17 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     public SoftwareUpdaterViewModel(AppServices services)
     {
         _services = services;
+        History = new SoftwareUpdateHistoryViewModel(services.SoftwareUpdateHistory,
+            CheckLatestFromHistoryAsync, () => CanEditSelection, () => SelectedTabIndex = 0);
         WingetAvailable = WingetService.IsAvailable;
         foreach (var exclusion in services.Settings.Current.SoftwareUpdateExclusions ?? new())
             Exclusions.Add(exclusion);
     }
 
+    public SoftwareUpdateHistoryViewModel History { get; }
+    [ObservableProperty] private int _selectedTabIndex;
+    [ObservableProperty] private bool _hasCompletedSession;
+    [ObservableProperty] private string _batchResultSummary = "";
     public ObservableCollection<UpgradeItemViewModel> Items { get; } = new();
     public ObservableCollection<string> LogLines { get; } = new();
 
@@ -77,6 +83,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
 
     public void OnActivated()
     {
+        History.Refresh();
         WingetAvailable = WingetService.IsAvailable;
         if (!_loaded && WingetAvailable) _ = CheckAsync();
     }
@@ -92,6 +99,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         SelectNoneCommand.NotifyCanExecuteChanged();
         ExcludeSelectedCommand.NotifyCanExecuteChanged();
         ManageExclusionsCommand.NotifyCanExecuteChanged();
+        CancelUpdateCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnErrorChanged(string? value) => OnPropertyChanged(nameof(Summary));
@@ -197,74 +205,103 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     [RelayCommand(CanExecute = nameof(CanUpdate))]
     private async Task UpdateSelectedAsync()
     {
+        if (!CanUpdate()) return;
         var targets = Items.Where(i => i.IsSelected).ToList();
         if (targets.Count == 0) return;
-        bool includeUnknown = IncludeUnknown;
-        _cts = new CancellationTokenSource();
-        var ct = _cts.Token;
+        using var cancellation = new CancellationTokenSource();
+        _cts = cancellation;
         IsUpdating = true;
+        HasCompletedSession = false;
         LogLines.Clear();
-        int ok = 0, fail = 0, started = 0;
         TotalCount = targets.Count; DoneCount = 0; OverallProgress = 0;
-        int parallel = Math.Min(ParallelUpdates, targets.Count);
-        foreach (var t in targets) { t.Status = "Waiting…"; t.IsUpdating = false; }
-        StatusText = parallel > 1 ? $"Updating {targets.Count} programs, {parallel} at a time…" : $"Updating {targets.Count} program(s)…";
         var ui = System.Windows.Application.Current.Dispatcher;
-        var gate = new SemaphoreSlim(parallel);
+        var latest = new Dictionary<Guid, SoftwareUpdateAttempt>();
+        void ApplyProgress(SoftwareUpdateAttempt attempt)
+        {
+            if (latest.TryGetValue(attempt.Id, out var previous)
+                && previous.Outcome != SoftwareUpdateOutcome.InProgress
+                && attempt.Outcome == SoftwareUpdateOutcome.InProgress) return;
+            latest[attempt.Id] = attempt;
+            var identity = new SoftwareUpdateExclusion(attempt.PackageId, attempt.Name, attempt.Source);
+            var item = targets.FirstOrDefault(t => identity.Matches(t.Package));
+            if (item != null)
+            {
+                item.IsUpdating = attempt.Outcome == SoftwareUpdateOutcome.InProgress;
+                item.Status = attempt.Message;
+                if (attempt.Outcome is SoftwareUpdateOutcome.Updated or SoftwareUpdateOutcome.RestartRequired) item.IsSelected = false;
+            }
+            DoneCount = latest.Values.Count(r => r.Outcome != SoftwareUpdateOutcome.InProgress);
+            OverallProgress = 100.0 * DoneCount / Math.Max(1, TotalCount);
+            StatusText = $"Updating… {DoneCount} of {TotalCount} finished";
+        }
+        foreach (var item in targets) { item.Status = "Waiting…"; item.IsUpdating = false; }
+        StatusText = $"Updating {targets.Count} program(s)…";
+        bool anyUpdated = false;
         App.Background?.SuspendDetection(true);
         try
         {
-            var tasks = targets.Select(async t =>
-            {
-                await gate.WaitAsync(ct);
-                try
+            var session = new SoftwareUpdateSession(_services.SoftwareUpdateHistory, _services.Winget);
+            var results = await session.RunAsync(targets.Select(t => t.Package).ToArray(),
+                ParallelUpdates, IncludeUnknown, cancellation.Token,
+                attempt => { _ = ui.BeginInvoke(new Action(() => ApplyProgress(attempt))); },
+                (package, line) =>
                 {
-                    if (ct.IsCancellationRequested) { await ui.InvokeAsync(() => t.Status = "Cancelled."); return; }
-                    await ui.InvokeAsync(() =>
+                    if (string.IsNullOrWhiteSpace(line)) return;
+                    var clean = line.Trim();
+                    if (clean.All(c => c is '-' or '\\' or '|' or '/' or ' ' or '█' or '▒' or '▓')) return;
+                    _ = ui.BeginInvoke(new Action(() =>
                     {
-                        started++;
-                        t.IsUpdating = true;
-                        t.Status = "Updating…";
-                        StatusText = $"Updating… {DoneCount} of {TotalCount} done, {started - DoneCount} running";
-                    });
-                    var (success, msg) = await _services.Winget.UpgradeAsync(t.Package, ct, line =>
-                    {
-                        if (string.IsNullOrWhiteSpace(line)) return;
-                        var clean = line.Trim();
-                        if (clean.All(c => c is '-' or '\\' or '|' or '/' or ' ' or '█' or '▒')) return;
-                        ui.BeginInvoke(() => { LogLines.Add($"[{t.Name}] {clean}"); if (LogLines.Count > 600) LogLines.RemoveAt(0); });
-                    }, includeUnknown: includeUnknown);
-                    await ui.InvokeAsync(() =>
-                    {
-                        t.IsUpdating = false;
-                        t.Status = msg;
-                        if (success) { ok++; t.IsSelected = false; } else fail++;
-                        DoneCount++;
-                        OverallProgress = 100.0 * DoneCount / Math.Max(1, TotalCount);
-                        StatusText = $"Updating… {DoneCount} of {TotalCount} done, {started - DoneCount} running";
-                    });
-                }
-                catch (OperationCanceledException) { await ui.InvokeAsync(() => { t.IsUpdating = false; t.Status = "Cancelled."; }); }
-                catch (Exception ex) { await ui.InvokeAsync(() => { t.IsUpdating = false; t.Status = "Failed: " + ex.Message; fail++; DoneCount++; }); }
-                finally { gate.Release(); }
-            }).ToList();
-            await Task.WhenAll(tasks);
-            StatusText = ct.IsCancellationRequested
-                ? $"Cancelled – {ok} updated, {fail} failed."
-                : $"Updated {ok} package(s)" + (fail > 0 ? $", {fail} failed." : ".");
+                        LogLines.Add($"[{package.Name}] {clean}");
+                        if (LogLines.Count > 600) LogLines.RemoveAt(0);
+                    }));
+                });
+            foreach (var result in results) ApplyProgress(result);
+            int updated = results.Count(r => r.Outcome == SoftwareUpdateOutcome.Updated);
+            int restart = results.Count(r => r.Outcome == SoftwareUpdateOutcome.RestartRequired);
+            int failed = results.Count(r => r.Outcome == SoftwareUpdateOutcome.Failed);
+            int cancelled = results.Count(r => r.Outcome == SoftwareUpdateOutcome.Cancelled);
+            int interrupted = results.Count(r => r.Outcome == SoftwareUpdateOutcome.Interrupted);
+            BatchResultSummary = $"{updated} updated · {restart} restart required · {failed} failed · {cancelled} cancelled · {interrupted} interrupted";
+            StatusText = BatchResultSummary;
+            HasCompletedSession = true;
+            anyUpdated = updated + restart > 0;
         }
-        catch (OperationCanceledException) { StatusText = "Cancelled."; }
         finally
         {
             IsUpdating = false;
-            foreach (var t in Items) t.IsUpdating = false;
+            foreach (var item in targets) item.IsUpdating = false;
+            _cts = null;
+            History.Refresh();
             App.Background?.SuspendDetection(false);
         }
-        if (ok > 0) await CheckAsync();
+        if (anyUpdated) await CheckAsync();
     }
 
-    [RelayCommand]
-    private void CancelUpdate() => _cts?.Cancel();
+    [RelayCommand] private void ShowUpdateHistory() { SelectedTabIndex = 1; History.Refresh(); }
+
+    private async Task CheckLatestFromHistoryAsync(SoftwareUpdateAttempt attempt)
+    {
+        if (!CanEditSelection) return;
+        SelectedTabIndex = 0;
+        await CheckAsync();
+        var identity = new SoftwareUpdateExclusion(attempt.PackageId, attempt.Name, attempt.Source);
+        foreach (var item in Items) item.IsSelected = identity.Matches(item.Package);
+        if (Error != null) return;
+        StatusText = Exclusions.Any(e => e.Matches(attempt.PackageId, attempt.Source))
+            ? "This program is excluded. Restore it from Excluded software to include it in a new check."
+            : Items.Any(i => i.IsSelected)
+                ? "Review the latest available version, then select Update. No update has been started."
+                : "No applicable update was found for this program.";
+    }
+
+    [RelayCommand(CanExecute = nameof(IsUpdating))]
+    private void CancelUpdate()
+    {
+        if (!IsUpdating || !Dialogs.Confirm("Queued updates will not start. Installers already running may continue until they finish.\n\n" +
+            "Their final results will be kept in history. If a result cannot be confirmed, the attempt will be marked Interrupted.",
+            "Cancel remaining updates?")) return;
+        _cts?.Cancel();
+    }
 
     [RelayCommand(CanExecute = nameof(CanEditSelection))]
     private void SelectAll()
