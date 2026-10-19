@@ -66,6 +66,7 @@ public sealed class EqualsConverter : IValueConverter
     {
         // Used by RadioButton-style bindings: when checked, push the parameter back.
         if (value is bool b && b && parameter != null && targetType.IsEnum) return Enum.Parse(targetType, parameter.ToString()!, true);
+        if (value is bool s && s && parameter != null && targetType == typeof(string)) return parameter.ToString()!;
         return Binding.DoNothing;
     }
 }

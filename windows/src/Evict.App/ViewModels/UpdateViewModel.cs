@@ -74,6 +74,17 @@ public sealed partial class UpdateViewModel : ObservableObject
         IsBusy = true;
         IsIndeterminate = true;
         StatusText = "Connecting…";
+        // Evict's own update goes into the Software Updater history (design SH1, choice E1).
+        var fromVersion = _services.Updater.CurrentVersionLabel;
+        var toVersion = Release.DisplayVersion;
+        var startedUtc = DateTime.UtcNow;
+        var output = new List<string> { $"Found Evict {toVersion} on GitHub ({Release.TagName})" };
+        bool handedOver = false;
+        void RecordFailure(string reason)
+        {
+            try { _services.UpdateHistory.FailSelfUpdate(fromVersion, toVersion, Release.TagName, "You", startedUtc, reason, output); }
+            catch (Exception ex) { Log.Warn("Could not record the failed update: " + ex.Message); }
+        }
         try
         {
             var progress = new Progress<(long Done, long Total)>(p =>
@@ -87,10 +98,14 @@ public sealed partial class UpdateViewModel : ObservableObject
                 else StatusText = $"Downloading… {SizeFormatter.Format(p.Done)}";
             });
             var path = await _services.Updater.DownloadAsync(Release, Asset, progress, ct);
+            output.Add($"Downloaded {Asset?.Name} and checked it against the release");
 
             IsIndeterminate = true;
             StatusText = InstalledMode ? "Starting the installer…" : "Replacing Evict.exe…";
             await Task.Delay(300, ct);
+            output.Add(InstalledMode ? "Started the installer; Evict closes and starts again" : "Swapped Evict.exe; Evict starts again");
+            _services.UpdateHistory.BeginSelfUpdate(fromVersion, toVersion, Release.TagName, "You", output);
+            handedOver = true;
 
             var (ok, error) = _services.Updater.Apply(path, InstalledMode, beforeRestart: Program.ReleaseSingleInstance,
                 restartFailed: () =>
@@ -107,12 +122,14 @@ public sealed partial class UpdateViewModel : ObservableObject
                 return;
             }
             Error = error;
+            RecordFailure(error ?? "The update could not be applied");
         }
-        catch (OperationCanceledException) { StatusText = "Cancelled."; }
+        catch (OperationCanceledException) when (!handedOver) { StatusText = "Cancelled."; }
         catch (Exception ex)
         {
             Log.Error("Update failed", ex);
             Error = ex.Message;
+            RecordFailure(ex.Message);
         }
         finally
         {

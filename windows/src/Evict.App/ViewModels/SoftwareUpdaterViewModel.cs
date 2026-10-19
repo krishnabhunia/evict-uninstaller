@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Evict.App.Services;
@@ -15,6 +16,12 @@ public sealed partial class UpgradeItemViewModel : ObservableObject
     [ObservableProperty] private bool _isSelected = true;
     [ObservableProperty] private string _status = "";
     [ObservableProperty] private bool _isUpdating;
+    /// <summary>"Failed today 16:41 — why?" from the update history (design SH1·2); empty when there is nothing to say.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasLastResultNote))]
+    private string _lastResultNote = "";
+    public bool HasLastResultNote => LastResultNote.Length > 0;
+    public Guid? LastHistoryId { get; set; }
     public string Name => Package.Name;
     public string Id => Package.Id;
     public string Installed => Package.InstalledVersion ?? "—";
@@ -39,6 +46,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         WingetAvailable = WingetService.IsAvailable;
         foreach (var exclusion in services.Settings.Current.SoftwareUpdateExclusions ?? new())
             Exclusions.Add(exclusion);
+        HookHistory();
     }
 
     public ObservableCollection<UpgradeItemViewModel> Items { get; } = new();
@@ -149,6 +157,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         }
         UpdateSelection();
         OnPropertyChanged(nameof(Summary));
+        RebuildHistory();
     }
 
     private bool SaveExclusions(List<SoftwareUpdateExclusion> updated)
@@ -199,6 +208,13 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     {
         var targets = Items.Where(i => i.IsSelected).ToList();
         if (targets.Count == 0) return;
+        await RunUpdatesAsync(targets, targets.Count == 1 ? "You · Update 1 program" : $"You · Update {targets.Count} programs");
+    }
+
+    /// <summary>Runs winget for <paramref name="targets"/>; every finished one is written to the update history at once (design SH1·4).</summary>
+    private async Task RunUpdatesAsync(List<UpgradeItemViewModel> targets, string startedBy)
+    {
+        if (targets.Count == 0 || IsBusy || IsUpdating) return;
         bool includeUnknown = IncludeUnknown;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
@@ -207,24 +223,62 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         int ok = 0, fail = 0, started = 0;
         TotalCount = targets.Count; DoneCount = 0; OverallProgress = 0;
         int parallel = Math.Min(ParallelUpdates, targets.Count);
-        foreach (var t in targets) { t.Status = "Waiting…"; t.IsUpdating = false; }
+        var live = new Dictionary<UpgradeItemViewModel, SoftwareUpdateHistoryEntry>();
+        var output = new Dictionary<UpgradeItemViewModel, List<string>>();
+        foreach (var t in targets)
+        {
+            t.Status = "Waiting…"; t.IsUpdating = false; t.LastResultNote = "";
+            var entry = new SoftwareUpdateHistoryEntry
+            {
+                Name = t.Name, PackageId = t.Id, Source = string.IsNullOrEmpty(t.Package.Source) ? "winget" : t.Package.Source,
+                FromVersion = t.Package.InstalledVersion, ToVersion = t.Package.AvailableVersion,
+                StartedUtc = DateTime.UtcNow, Outcome = SoftwareUpdateOutcome.Waiting, StartedBy = startedBy,
+                Message = "Starts when a slot is free.",
+            };
+            live[t] = entry;
+            output[t] = new List<string>();
+            _liveEntries[entry.Id] = entry;
+        }
+        RebuildHistory();
         StatusText = parallel > 1 ? $"Updating {targets.Count} programs, {parallel} at a time…" : $"Updating {targets.Count} program(s)…";
         var ui = System.Windows.Application.Current.Dispatcher;
         var gate = new SemaphoreSlim(parallel);
+
+        void Finish(UpgradeItemViewModel t, bool success, string msg, bool cancelled)
+        {
+            var entry = live[t];
+            _liveEntries.Remove(entry.Id);
+            if (entry.Outcome == SoftwareUpdateOutcome.Waiting && cancelled) { RebuildHistory(); return; } // never started: nothing to record
+            var (outcome, message) = SoftwareUpdateHistory.Describe(t.Name, t.Package.InstalledVersion, success, msg, cancelled);
+            entry.Outcome = outcome;
+            entry.Message = message;
+            entry.FinishedUtc = DateTime.UtcNow;
+            lock (output[t]) entry.Output = SoftwareUpdateHistory.TrimOutput(output[t]);
+            try { _services.UpdateHistory.Add(entry); }
+            catch (Exception ex) { Log.Warn("Could not record the update of " + t.Name + ": " + ex.Message); RebuildHistory(); }
+        }
+
         App.Background?.SuspendDetection(true);
         try
         {
             var tasks = targets.Select(async t =>
             {
-                await gate.WaitAsync(ct);
+                bool entered = false;
                 try
                 {
-                    if (ct.IsCancellationRequested) { await ui.InvokeAsync(() => t.Status = "Cancelled."); return; }
+                    await gate.WaitAsync(ct);
+                    entered = true;
+                    if (ct.IsCancellationRequested) { await ui.InvokeAsync(() => { t.Status = "Cancelled."; Finish(t, false, "Cancelled.", true); }); return; }
                     await ui.InvokeAsync(() =>
                     {
                         started++;
                         t.IsUpdating = true;
                         t.Status = "Updating…";
+                        var entry = live[t];
+                        entry.StartedUtc = DateTime.UtcNow;
+                        entry.Outcome = SoftwareUpdateOutcome.Running;
+                        entry.Message = "winget is updating it now.";
+                        RebuildHistory();
                         StatusText = $"Updating… {DoneCount} of {TotalCount} done, {started - DoneCount} running";
                     });
                     var (success, msg) = await _services.Winget.UpgradeAsync(t.Package, ct, line =>
@@ -232,6 +286,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
                         if (string.IsNullOrWhiteSpace(line)) return;
                         var clean = line.Trim();
                         if (clean.All(c => c is '-' or '\\' or '|' or '/' or ' ' or '█' or '▒')) return;
+                        lock (output[t]) { output[t].Add(clean); if (output[t].Count > 200) output[t].RemoveAt(0); }
                         ui.BeginInvoke(() => { LogLines.Add($"[{t.Name}] {clean}"); if (LogLines.Count > 600) LogLines.RemoveAt(0); });
                     }, includeUnknown: includeUnknown);
                     await ui.InvokeAsync(() =>
@@ -242,11 +297,12 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
                         DoneCount++;
                         OverallProgress = 100.0 * DoneCount / Math.Max(1, TotalCount);
                         StatusText = $"Updating… {DoneCount} of {TotalCount} done, {started - DoneCount} running";
+                        Finish(t, success, msg, cancelled: false);
                     });
                 }
-                catch (OperationCanceledException) { await ui.InvokeAsync(() => { t.IsUpdating = false; t.Status = "Cancelled."; }); }
-                catch (Exception ex) { await ui.InvokeAsync(() => { t.IsUpdating = false; t.Status = "Failed: " + ex.Message; fail++; DoneCount++; }); }
-                finally { gate.Release(); }
+                catch (OperationCanceledException) { await ui.InvokeAsync(() => { t.IsUpdating = false; t.Status = "Cancelled."; Finish(t, false, "Cancelled.", true); }); }
+                catch (Exception ex) { await ui.InvokeAsync(() => { t.IsUpdating = false; t.Status = "Failed: " + ex.Message; fail++; DoneCount++; Finish(t, false, ex.Message, false); }); }
+                finally { if (entered) gate.Release(); }
             }).ToList();
             await Task.WhenAll(tasks);
             StatusText = ct.IsCancellationRequested
@@ -258,7 +314,9 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         {
             IsUpdating = false;
             foreach (var t in Items) t.IsUpdating = false;
+            foreach (var t in targets) _liveEntries.Remove(live[t].Id);
             App.Background?.SuspendDetection(false);
+            RebuildHistory();
         }
         if (ok > 0) await CheckAsync();
     }

@@ -7,13 +7,34 @@
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:SoftwareUpdaterViewModel}">
 
+    <UserControl.Resources>
+        <!-- Result pill of a history row (design SH1): colour follows the outcome. -->
+        <Style x:Key="Pill.Outcome" TargetType="Border" BasedOn="{StaticResource Pill}">
+            <Setter Property="Background" Value="{DynamicResource Brush.Control.Pressed}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Updated"><Setter Property="Background" Value="{DynamicResource Brush.Success.Subtle}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="UpdatedRestartNeeded"><Setter Property="Background" Value="{DynamicResource Brush.Warning.Subtle}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Failed"><Setter Property="Background" Value="{DynamicResource Brush.Danger.Subtle}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Running"><Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}" /></DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Pill.Outcome.Text" TargetType="TextBlock" BasedOn="{StaticResource Pill.Text}">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Updated"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="UpdatedRestartNeeded"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Failed"><Setter Property="Foreground" Value="{DynamicResource Brush.Danger}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Running"><Setter Property="Foreground" Value="{DynamicResource Brush.Accent}" /></DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
     <Grid Margin="24,18,24,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
@@ -36,103 +57,299 @@
             </StackPanel>
         </Grid>
 
-        <!-- winget missing -->
-        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,14,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource InvBoolToVis}}">
-            <StackPanel>
-                <TextBlock Text="winget is not available" Style="{StaticResource Text.Section}" />
-                <TextBlock Style="{StaticResource Text.Body}" Margin="0,6,0,10" Text="The Software Updater uses Microsoft's Windows Package Manager. Install 'App Installer' from the Microsoft Store (free, by Microsoft), then come back here." />
-                <Button Style="{StaticResource Button.Primary}" Content="Open App Installer in Microsoft Store" Command="{Binding InstallWingetCommand}" HorizontalAlignment="Left" />
+        <!-- ═══ Tabs (design SH1 choice H1) ═══ -->
+        <Border Grid.Row="1" Margin="0,14,0,0" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal">
+                <RadioButton Style="{StaticResource Button.Tab}" GroupName="UpdaterTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Updates, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Updates" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding Items.Count}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                </RadioButton>
+                <RadioButton Style="{StaticResource Button.Tab}" GroupName="UpdaterTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=History, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="History · last 7 days" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding HistoryCount}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                </RadioButton>
             </StackPanel>
         </Border>
 
-        <Grid Grid.Row="1" Margin="0,12,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource BoolToVis}}">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Body}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBlock Text="{Binding LastCheckedText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="10,0,0,0" />
-                <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="10,0,0,0" />
-            </StackPanel>
-            <ProgressBar IsIndeterminate="True" Width="220" HorizontalAlignment="Right" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
+        <!-- ═══ Updates tab ═══ -->
+        <Grid Grid.Row="2" Visibility="{Binding SelectedTab, Converter={StaticResource EqualsToVis}, ConverterParameter=Updates}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- 7-day summary (SH1·2) -->
+            <Border Grid.Row="0" Style="{StaticResource Card}" Padding="14,9" Margin="0,12,0,0" Visibility="{Binding HasRecentSummary, Converter={StaticResource BoolToVis}}">
+                <DockPanel LastChildFill="False">
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE81C;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Accent}" VerticalAlignment="Center" />
+                    <TextBlock DockPanel.Dock="Left" Text="Last 7 days:" Style="{StaticResource Text.Body}" FontWeight="SemiBold" Margin="9,0,0,0" VerticalAlignment="Center" />
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding RecentSummary}" Style="{StaticResource Text.Body}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding LastRunText}" Style="{StaticResource Text.Caption}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="See history" Command="{Binding ShowHistoryCommand}" />
+                </DockPanel>
+            </Border>
+
+            <!-- winget missing -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,14,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource InvBoolToVis}}">
+                <StackPanel>
+                    <TextBlock Text="winget is not available" Style="{StaticResource Text.Section}" />
+                    <TextBlock Style="{StaticResource Text.Body}" Margin="0,6,0,10" Text="The Software Updater uses Microsoft's Windows Package Manager. Install 'App Installer' from the Microsoft Store (free, by Microsoft), then come back here." />
+                    <Button Style="{StaticResource Button.Primary}" Content="Open App Installer in Microsoft Store" Command="{Binding InstallWingetCommand}" HorizontalAlignment="Left" />
+                </StackPanel>
+            </Border>
+
+            <Grid Grid.Row="2" Margin="0,12,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource BoolToVis}}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Body}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding LastCheckedText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="10,0,0,0" />
+                    <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="10,0,0,0" />
+                </StackPanel>
+                <ProgressBar IsIndeterminate="True" Width="220" HorizontalAlignment="Right" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
+            </Grid>
+
+            <Border Grid.Row="3" Style="{StaticResource Card}" Padding="0" Margin="0,8,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource BoolToVis}}">
+                <Grid>
+                    <DataGrid Style="{StaticResource DataGrid.Flat}" ItemsSource="{Binding Items}">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Width="44" CanUserResize="False" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}">
+                                        <CheckBox IsEnabled="{Binding DataContext.CanEditSelection, RelativeSource={RelativeSource AncestorType=DataGrid}}" IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="2,0,0,0" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Program" Width="*" MinWidth="200" SortMemberPath="Name">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource Cell.Primary}" />
+                                            <TextBlock Text="{Binding Id}" Style="{StaticResource Cell.Secondary}" FontSize="11" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Installed" Width="140" SortMemberPath="Installed">
+                                <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}"><TextBlock Text="{Binding Installed}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Available" Width="140" SortMemberPath="Available">
+                                <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}"><TextBlock Text="{Binding Available}" Style="{StaticResource Cell.Primary}" Foreground="{DynamicResource Brush.Success}" FontWeight="SemiBold" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Source" Width="90" SortMemberPath="Source">
+                                <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}"><TextBlock Text="{Binding Source}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Status" Width="240">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <ProgressBar IsIndeterminate="True" Width="60" Margin="0,0,8,0" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
+                                            <TextBlock Text="{Binding Status}" Style="{StaticResource Cell.Secondary}" ToolTip="{Binding Status}" />
+                                            <!-- Last try did not work (SH1·2): opens that entry in History -->
+                                            <Button Style="{StaticResource Button.Link}" Content="{Binding LastResultNote}" Visibility="{Binding HasLastResultNote, Converter={StaticResource BoolToVis}}"
+                                                    Command="{Binding DataContext.OpenHistoryEntryCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}"
+                                                    ToolTip="Show what happened in the update history" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <Border VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="560" Visibility="{Binding Error, Converter={StaticResource BoolToVis}}" Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="8" Padding="16">
+                        <TextBlock Text="{Binding Error}" Style="{StaticResource Text.Body}" />
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Expander Grid.Row="4" Header="winget output" Margin="0,10,0,0" IsExpanded="{Binding IsUpdating, Mode=OneWay}" Foreground="{DynamicResource Brush.Text.Secondary}"
+                      Visibility="{Binding LogLines.Count, Converter={StaticResource BoolToVis}}">
+                <ListBox Style="{StaticResource ListBox.Flat}" ItemsSource="{Binding LogLines}" Height="140" Margin="0,6,0,0" FontFamily="{StaticResource Font.Mono}" FontSize="11.5" Background="{DynamicResource Brush.Code.Background}" />
+            </Expander>
+
+            <Grid Grid.Row="5" Margin="0,12,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <WrapPanel Grid.ColumnSpan="2" Margin="0,0,0,10">
+                    <Button Style="{StaticResource Button.Secondary}" Content="Select All" Command="{Binding SelectAllCommand}" Margin="0,0,8,4" />
+                    <Button Style="{StaticResource Button.Secondary}" Content="Select None" Command="{Binding SelectNoneCommand}" Margin="0,0,8,4" />
+                    <Button Style="{StaticResource Button.Secondary}" Content="Exclude selected" Command="{Binding ExcludeSelectedCommand}" Margin="0,0,8,4"
+                            ToolTip="Hide selected packages from this and future checks until restored." />
+                    <Button Style="{StaticResource Button.Secondary}" Content="{Binding ExclusionsLabel}" Command="{Binding ManageExclusionsCommand}" Margin="0,0,0,4" />
+                </WrapPanel>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Run" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ComboBox ItemsSource="{Binding ParallelOptions}" DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding ParallelUpdates, Mode=TwoWay}" Width="130"
+                              IsEnabled="{Binding IsUpdating, Converter={StaticResource InvBool}}" ToolTip="How many updates run in parallel. Windows Installer (MSI) packages still install one at a time; Evict waits and retries those automatically." />
+                    <Button Style="{StaticResource Button.Link}" Content="Cancel updates" Command="{Binding CancelUpdateCommand}" Margin="20,0,0,0" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
+                    <ProgressBar Value="{Binding OverallProgress, Mode=OneWay}" Maximum="100" Width="160" Height="6" Margin="14,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
+                <Button Grid.Row="1" Grid.Column="1" Style="{StaticResource Button.Primary}" Command="{Binding UpdateSelectedCommand}" MinWidth="200" Padding="18,9">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE896;" Style="{StaticResource Icon}" FontSize="15" Foreground="White" />
+                        <TextBlock Margin="9,0,0,0" Text="{Binding SelectedCount, Converter={StaticResource CountLabel}, ConverterParameter='Update selected|Update {0} program|Update {0} programs'}" />
+                    </StackPanel>
+                </Button>
+            </Grid>
         </Grid>
 
-        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0" Margin="0,8,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource BoolToVis}}">
-            <Grid>
-                <DataGrid Style="{StaticResource DataGrid.Flat}" ItemsSource="{Binding Items}">
-                    <DataGrid.Columns>
-                        <DataGridTemplateColumn Width="44" CanUserResize="False" CanUserSort="False">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}">
-                                    <CheckBox IsEnabled="{Binding DataContext.CanEditSelection, RelativeSource={RelativeSource AncestorType=DataGrid}}" IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="2,0,0,0" />
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Program" Width="*" MinWidth="200" SortMemberPath="Name">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}">
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding Name}" Style="{StaticResource Cell.Primary}" />
-                                        <TextBlock Text="{Binding Id}" Style="{StaticResource Cell.Secondary}" FontSize="11" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Installed" Width="140" SortMemberPath="Installed">
-                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}"><TextBlock Text="{Binding Installed}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Available" Width="140" SortMemberPath="Available">
-                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}"><TextBlock Text="{Binding Available}" Style="{StaticResource Cell.Primary}" Foreground="{DynamicResource Brush.Success}" FontWeight="SemiBold" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Source" Width="90" SortMemberPath="Source">
-                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}"><TextBlock Text="{Binding Source}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Status" Width="220">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}">
-                                    <StackPanel Orientation="Horizontal">
-                                        <ProgressBar IsIndeterminate="True" Width="60" Margin="0,0,8,0" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
-                                        <TextBlock Text="{Binding Status}" Style="{StaticResource Cell.Secondary}" ToolTip="{Binding Status}" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                    </DataGrid.Columns>
-                </DataGrid>
-                <Border VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="560" Visibility="{Binding Error, Converter={StaticResource BoolToVis}}" Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="8" Padding="16">
-                    <TextBlock Text="{Binding Error}" Style="{StaticResource Text.Body}" />
+        <!-- ═══ History tab (SH1·1, SH1·3–SH1·5, SH1·7) ═══ -->
+        <Grid Grid.Row="2" Visibility="{Binding SelectedTab, Converter={StaticResource EqualsToVis}, ConverterParameter=History}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Filters, search, export, clear -->
+            <DockPanel Grid.Row="0" Margin="0,12,0,0" LastChildFill="False">
+                <RadioButton DockPanel.Dock="Left" Style="{StaticResource Button.Chip}" GroupName="HistoryFilter" MinHeight="32" IsChecked="{Binding HistoryFilter, Converter={StaticResource EqualsToBool}, ConverterParameter=All, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="All" /><TextBlock Text="{Binding HistoryCount}" Margin="6,0,0,0" FontWeight="SemiBold" /></StackPanel>
+                </RadioButton>
+                <RadioButton DockPanel.Dock="Left" Style="{StaticResource Button.Chip}" GroupName="HistoryFilter" MinHeight="32" Margin="8,0,0,0" IsChecked="{Binding HistoryFilter, Converter={StaticResource EqualsToBool}, ConverterParameter=Updated, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Updated" /><TextBlock Text="{Binding HistoryUpdatedCount}" Margin="6,0,0,0" FontWeight="SemiBold" /></StackPanel>
+                </RadioButton>
+                <RadioButton DockPanel.Dock="Left" Style="{StaticResource Button.Chip}" GroupName="HistoryFilter" MinHeight="32" Margin="8,0,0,0" IsChecked="{Binding HistoryFilter, Converter={StaticResource EqualsToBool}, ConverterParameter=Failed, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Failed" /><TextBlock Text="{Binding HistoryFailedCount}" Margin="6,0,0,0" FontWeight="SemiBold" /></StackPanel>
+                </RadioButton>
+                <RadioButton DockPanel.Dock="Left" Style="{StaticResource Button.Chip}" GroupName="HistoryFilter" MinHeight="32" Margin="8,0,0,0" IsChecked="{Binding HistoryFilter, Converter={StaticResource EqualsToBool}, ConverterParameter=Cancelled, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Cancelled" /><TextBlock Text="{Binding HistoryCancelledCount}" Margin="6,0,0,0" FontWeight="SemiBold" /></StackPanel>
+                </RadioButton>
+                <Button DockPanel.Dock="Right" Style="{StaticResource Button.Ghost}" Content="Clear history…" Command="{Binding ClearHistoryCommand}" Margin="8,0,0,0" Foreground="{DynamicResource Brush.Danger}" />
+                <Button DockPanel.Dock="Right" Style="{StaticResource Button.Secondary}" Content="Export CSV" Command="{Binding ExportHistoryCommand}" Margin="8,0,0,0" />
+                <TextBox DockPanel.Dock="Right" Style="{StaticResource TextBox.Search}" Width="220" Tag="Search history…" Text="{Binding HistorySearch, UpdateSourceTrigger=PropertyChanged, Delay=150}" />
+            </DockPanel>
+
+            <!-- While a run is going (SH1·4) -->
+            <Border Grid.Row="1" Margin="0,10,0,0" Padding="14,9" CornerRadius="8" Background="{DynamicResource Brush.Accent.Subtle}" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}">
+                <DockPanel LastChildFill="True">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="Cancel updates" Command="{Binding CancelUpdateCommand}" />
+                    <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" VerticalAlignment="Center"
+                               Text="Updates are running. Each program is written to the history the moment it finishes — even if Evict or Windows closes before the run ends." />
+                </DockPanel>
+            </Border>
+
+            <Grid Grid.Row="2" Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Border Style="{StaticResource Card}" Padding="0">
+                    <Grid>
+                        <DataGrid Style="{StaticResource DataGrid.Flat}" ItemsSource="{Binding HistoryView}" SelectedItem="{Binding SelectedHistoryItem, Mode=TwoWay}"
+                                  Visibility="{Binding HasHistoryRows, Converter={StaticResource BoolToVis}}" CanUserSortColumns="False">
+                            <DataGrid.GroupStyle>
+                                <GroupStyle>
+                                    <GroupStyle.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource Text.Caption}" FontWeight="Bold" Margin="14,10,0,4" />
+                                        </DataTemplate>
+                                    </GroupStyle.HeaderTemplate>
+                                </GroupStyle>
+                            </DataGrid.GroupStyle>
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="When" Width="70">
+                                    <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpdateHistoryItemViewModel}"><TextBlock Text="{Binding Time}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Program" Width="*" MinWidth="180">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate DataType="{x:Type vm:UpdateHistoryItemViewModel}">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" Style="{StaticResource Cell.Primary}" />
+                                                <TextBlock Text="{Binding PackageId}" Style="{StaticResource Cell.Secondary}" FontSize="11" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Version" Width="230">
+                                    <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpdateHistoryItemViewModel}"><TextBlock Text="{Binding VersionChange}" Style="{StaticResource Cell.Secondary}" ToolTip="{Binding VersionChange}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Result" Width="190">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate DataType="{x:Type vm:UpdateHistoryItemViewModel}">
+                                            <Border Style="{StaticResource Pill.Outcome}"><TextBlock Text="{Binding Result}" Style="{StaticResource Pill.Outcome.Text}" /></Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Took" Width="80">
+                                    <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpdateHistoryItemViewModel}"><TextBlock Text="{Binding Took}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- Nothing in the last 7 days (SH1·5) -->
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="460" Visibility="{Binding HistoryIsEmpty, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="&#xE81C;" Style="{StaticResource Icon}" FontSize="40" Foreground="{DynamicResource Brush.Text.Tertiary}" HorizontalAlignment="Center" />
+                            <TextBlock Text="No software updates in the last 7 days" Style="{StaticResource Text.Section}" HorizontalAlignment="Center" Margin="0,10,0,0" />
+                            <TextBlock Style="{StaticResource Text.Body}" Foreground="{DynamicResource Brush.Text.Secondary}" TextWrapping="Wrap" TextAlignment="Center" Margin="0,6,0,12"
+                                       Text="Every program you update here — and Evict's own updates — shows up for 7 days, with what changed and whether it worked." />
+                            <Button Style="{StaticResource Button.Primary}" Content="Check for updates" Command="{Binding CheckCommand}" HorizontalAlignment="Center" />
+                        </StackPanel>
+
+                        <TextBlock Text="No entries match this filter." Style="{StaticResource Text.Body}" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="{Binding HistoryHasNoMatch, Converter={StaticResource BoolToVis}}" />
+                    </Grid>
+                </Border>
+
+                <!-- Details of one update (SH1·3) -->
+                <Border Grid.Column="1" Width="380" Margin="12,0,0,0" Style="{StaticResource Card}" Padding="0" Visibility="{Binding HasSelectedHistoryItem, Converter={StaticResource BoolToVis}}">
+                    <Grid DataContext="{Binding SelectedHistoryItem}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <DockPanel Grid.Row="0" Margin="16,14,10,10" LastChildFill="True">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource Button.Ghost}" Content="&#xE711;" FontFamily="{StaticResource Font.Icons}" ToolTip="Close details" Padding="8,4" VerticalAlignment="Top"
+                                    Command="{Binding DataContext.CloseHistoryDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                            <StackPanel>
+                                <TextBlock Text="{Binding Name}" Style="{StaticResource Text.Section}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding PackageId}" Style="{StaticResource Text.Caption}" />
+                            </StackPanel>
+                        </DockPanel>
+                        <Border Grid.Row="1" Style="{StaticResource Pill.Outcome}" CornerRadius="8" Padding="12,9" Margin="16,0,16,0" HorizontalAlignment="Stretch">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Result}" Style="{StaticResource Pill.Outcome.Text}" FontSize="13" />
+                                <TextBlock Text="{Binding Message}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Grid Grid.Row="2" Margin="16,12,16,8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="105" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="Version" Style="{StaticResource Text.Caption}" Margin="0,0,0,6" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding VersionChange}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="1" Text="Started" Style="{StaticResource Text.Caption}" Margin="0,0,0,6" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding StartedText}" Style="{StaticResource Text.Body}" />
+                            <TextBlock Grid.Row="2" Text="Took" Style="{StaticResource Text.Caption}" Margin="0,0,0,6" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Took}" Style="{StaticResource Text.Body}" />
+                            <TextBlock Grid.Row="3" Text="Updated from" Style="{StaticResource Text.Caption}" Margin="0,0,0,6" />
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Source}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="4" Text="Started by" Style="{StaticResource Text.Caption}" />
+                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding StartedBy}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" />
+                        </Grid>
+                        <TextBlock Grid.Row="3" Text="{Binding OutputHeader}" Style="{StaticResource Text.Caption}" FontWeight="Bold" Margin="16,4,16,4" />
+                        <TextBox Grid.Row="4" Style="{StaticResource TextBox.Log}" Text="{Binding OutputText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Margin="16,0,16,0"
+                                 VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Font.Mono}" FontSize="11.5" />
+                        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,12,16,14">
+                            <Button Style="{StaticResource Button.Secondary}" Content="Copy details" Command="{Binding DataContext.CopyHistoryDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                            <Button Style="{StaticResource Button.Primary}" Content="Try this update again" Margin="8,0,0,0" Visibility="{Binding CanRetry, Converter={StaticResource BoolToVis}}"
+                                    Command="{Binding DataContext.RetryHistoryItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                        </StackPanel>
+                    </Grid>
                 </Border>
             </Grid>
-        </Border>
 
-        <Expander Grid.Row="3" Header="winget output" Margin="0,10,0,0" IsExpanded="{Binding IsUpdating, Mode=OneWay}" Foreground="{DynamicResource Brush.Text.Secondary}"
-                  Visibility="{Binding LogLines.Count, Converter={StaticResource BoolToVis}}">
-            <ListBox Style="{StaticResource ListBox.Flat}" ItemsSource="{Binding LogLines}" Height="140" Margin="0,6,0,0" FontFamily="{StaticResource Font.Mono}" FontSize="11.5" Background="{DynamicResource Brush.Code.Background}" />
-        </Expander>
-
-        <Grid Grid.Row="4" Margin="0,12,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-            <WrapPanel Grid.ColumnSpan="2" Margin="0,0,0,10">
-                <Button Style="{StaticResource Button.Secondary}" Content="Select All" Command="{Binding SelectAllCommand}" Margin="0,0,8,4" />
-                <Button Style="{StaticResource Button.Secondary}" Content="Select None" Command="{Binding SelectNoneCommand}" Margin="0,0,8,4" />
-                <Button Style="{StaticResource Button.Secondary}" Content="Exclude selected" Command="{Binding ExcludeSelectedCommand}" Margin="0,0,8,4"
-                        ToolTip="Hide selected packages from this and future checks until restored." />
-                <Button Style="{StaticResource Button.Secondary}" Content="{Binding ExclusionsLabel}" Command="{Binding ManageExclusionsCommand}" Margin="0,0,0,4" />
-            </WrapPanel>
-            <StackPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="Run" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                <ComboBox ItemsSource="{Binding ParallelOptions}" DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding ParallelUpdates, Mode=TwoWay}" Width="130"
-                          IsEnabled="{Binding IsUpdating, Converter={StaticResource InvBool}}" ToolTip="How many updates run in parallel. Windows Installer (MSI) packages still install one at a time; Evict waits and retries those automatically." />
-                <Button Style="{StaticResource Button.Link}" Content="Cancel updates" Command="{Binding CancelUpdateCommand}" Margin="20,0,0,0" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
-                <ProgressBar Value="{Binding OverallProgress, Mode=OneWay}" Maximum="100" Width="160" Height="6" Margin="14,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
+            <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,10,0,0">
+                <TextBlock Text="&#xE946;" Style="{StaticResource Icon}" FontSize="13" Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding HistoryKeepText}" Style="{StaticResource Text.Caption}" Margin="8,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" />
             </StackPanel>
-            <Button Grid.Row="1" Grid.Column="1" Style="{StaticResource Button.Primary}" Command="{Binding UpdateSelectedCommand}" MinWidth="200" Padding="18,9">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE896;" Style="{StaticResource Icon}" FontSize="15" Foreground="White" />
-                    <TextBlock Margin="9,0,0,0" Text="{Binding SelectedCount, Converter={StaticResource CountLabel}, ConverterParameter='Update selected|Update {0} program|Update {0} programs'}" />
-                </StackPanel>
-            </Button>
         </Grid>
     </Grid>
 </UserControl>

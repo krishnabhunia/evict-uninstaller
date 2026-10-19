@@ -175,6 +175,8 @@ public sealed class WingetService
         {
             var res = await _runCaptured(winget, args, ct, TimeSpan.FromMinutes(30), onLine).ConfigureAwait(false);
             var text = (res.StdOut + "\n" + res.StdErr);
+            // Installed but Windows must restart to finish: a success, not a failure (design SH1 "restart needed").
+            if (IsRestartToFinish(res.ExitCode, text)) return (true, RestartToFinishMessage);
             bool ok = res.ExitCode == 0 || text.Contains("Successfully installed", StringComparison.OrdinalIgnoreCase);
             if (ok) return (true, "Updated.");
             if (IsInstallerBusy(res.ExitCode, text) && attempt < 6)
@@ -268,6 +270,20 @@ public sealed class WingetService
             _ => null,
         };
     }
+
+    public const string RestartToFinishMessage = "Updated – restart Windows to finish.";
+
+    /// <summary>
+    /// The package was installed but needs a restart: winget's 0x8A150109, an installer's 3010 / 1641 (Windows
+    /// Installer "reboot required" / "reboot started"), or winget's "Restart your PC to finish installation".
+    /// </summary>
+    public static bool IsRestartToFinish(int exitCode, string output)
+        => unchecked((uint)exitCode) == 0x8A150109 || exitCode is 3010 or 1641
+           || output.Contains("0x8A150109", StringComparison.OrdinalIgnoreCase)
+           || output.Contains("restart your pc to finish", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True for the message <see cref="UpgradeAsync"/> returns when a restart is needed to finish.</summary>
+    public static bool IsRestartToFinish(string? message) => string.Equals(message, RestartToFinishMessage, StringComparison.Ordinal);
 
     /// <summary>MSI "another installation is already in progress" – 1618 as a raw code or wrapped in an HRESULT (0x80070652).</summary>
     public static bool IsInstallerBusy(int exitCode, string output)
