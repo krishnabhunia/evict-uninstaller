@@ -124,7 +124,12 @@ public sealed partial class UpdateViewModel : ObservableObject
             Error = error;
             RecordFailure(error ?? "The update could not be applied");
         }
-        catch (OperationCanceledException) when (!handedOver) { StatusText = "Cancelled."; }
+        catch (OperationCanceledException) when (!handedOver)
+        {
+            StatusText = "Cancelled.";
+            try { _services.UpdateHistory.CancelSelfUpdate(fromVersion, toVersion, Release.TagName, "You", startedUtc, output); }
+            catch (Exception ex) { Log.Warn("Could not record the cancelled update: " + ex.Message); }
+        }
         catch (Exception ex)
         {
             Log.Error("Update failed", ex);

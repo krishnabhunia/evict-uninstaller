@@ -223,6 +223,31 @@ public sealed class SoftwareUpdateHistoryTests : IDisposable
         Assert.Contains("\"44 s\"", csv[1]);
     }
 
+    [Theory]
+    [InlineData("=HYPERLINK(\"x\")", "\"'=HYPERLINK(\"\"x\"\")\"")]
+    [InlineData("+1", "\"'+1\"")]
+    [InlineData("-cmd", "\"'-cmd\"")]
+    [InlineData("@SUM(A1)", "\"'@SUM(A1)\"")]
+    [InlineData("Git", "\"Git\"")]
+    [InlineData(null, "\"\"")]
+    public void CsvCellsNeverStartAFormula(string? value, string expected) =>
+        Assert.Equal(expected, SoftwareUpdateHistory.Csv(value));
+
+    [Fact]
+    public void CancelledSelfUpdateIsRecorded()
+    {
+        var store = NewStore();
+        var started = _nowLocal.AddSeconds(-14).ToUniversalTime();
+        store.CancelSelfUpdate("2.0.0", "2.1.0", "win-v2.1.0", "You", started, new[] { "Found Evict 2.1.0 on GitHub" });
+
+        var entry = Assert.Single(store.Entries);
+        Assert.Equal(SoftwareUpdateOutcome.Cancelled, entry.Outcome);
+        Assert.True(entry.IsEvict);
+        Assert.Equal(TimeSpan.FromSeconds(14), entry.Duration);
+        Assert.Equal(new[] { "Found Evict 2.1.0 on GitHub", "Cancelled" }, entry.Output);
+        Assert.Null(store.Pending);
+    }
+
     [Fact]
     public void LongOutputLinesAreShortened()
     {

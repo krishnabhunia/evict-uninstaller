@@ -182,7 +182,16 @@ public static class SoftwareUpdateHistory
         return sb.ToString();
     }
 
-    private static string Csv(string? s) => "\"" + (s ?? "").Replace("\"", "\"\"") + "\"";
+    /// <summary>
+    /// Quoted CSV cell. Values winget controls (names, versions, messages) that start like a spreadsheet formula
+    /// (= + - @, tab, carriage return) get a leading apostrophe so Excel shows them as text instead of running them.
+    /// </summary>
+    internal static string Csv(string? s)
+    {
+        var value = s ?? "";
+        if (value.Length > 0 && value[0] is '=' or '+' or '-' or '@' or '\t' or '\r') value = "'" + value;
+        return "\"" + value.Replace("\"", "\"\"") + "\"";
+    }
     private static string Capitalise(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
 }
 
@@ -305,6 +314,20 @@ public sealed class SoftwareUpdateHistoryStore
             StartedUtc = startedUtc, FinishedUtc = _nowUtc(), Outcome = SoftwareUpdateOutcome.Failed, StartedBy = startedBy,
             Message = $"{reason.Trim().TrimEnd('.')}. Evict is still on {fromVersion}.",
             Output = output?.ToList() ?? new(),
+        });
+    }
+
+    /// <summary>You cancelled Evict's own update before Evict closed (while it was downloading).</summary>
+    public void CancelSelfUpdate(string fromVersion, string toVersion, string? tag, string startedBy, DateTime startedUtc, IEnumerable<string>? output = null)
+    {
+        lock (_gate) { _data.PendingSelfUpdate = null; }
+        Add(new SoftwareUpdateHistoryEntry
+        {
+            Name = "Evict", PackageId = SoftwareUpdateHistory.EvictPackageId, IsEvict = true,
+            Source = SelfSource(tag), FromVersion = fromVersion, ToVersion = toVersion,
+            StartedUtc = startedUtc, FinishedUtc = _nowUtc(), Outcome = SoftwareUpdateOutcome.Cancelled, StartedBy = startedBy,
+            Message = $"You cancelled the update before it was installed. Evict is still on {fromVersion}.",
+            Output = (output ?? Array.Empty<string>()).Concat(new[] { "Cancelled" }).ToList(),
         });
     }
 

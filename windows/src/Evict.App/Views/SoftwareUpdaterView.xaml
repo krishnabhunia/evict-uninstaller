@@ -339,7 +339,7 @@
                                  VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Font.Mono}" FontSize="11.5" />
                         <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,12,16,14">
                             <Button Style="{StaticResource Button.Secondary}" Content="Copy details" Command="{Binding DataContext.CopyHistoryDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
-                            <Button Style="{StaticResource Button.Primary}" Content="Try this update again" Margin="8,0,0,0" Visibility="{Binding CanRetry, Converter={StaticResource BoolToVis}}"
+                            <Button Style="{StaticResource Button.Primary}" Content="Try this update again" Margin="8,0,0,0" Visibility="{Binding DataContext.CanRetrySelected, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVis}}"
                                     Command="{Binding DataContext.RetryHistoryItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
                         </StackPanel>
                     </Grid>
