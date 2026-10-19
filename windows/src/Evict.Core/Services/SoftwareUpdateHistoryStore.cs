@@ -75,7 +75,7 @@ public sealed class SoftwareUpdateHistoryStore
             _dirty |= PruneCore();
             if (_dirty) SaveCore();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or NotSupportedException)
         {
             _loadError = "History could not be loaded. Existing records have not been replaced. " + ex.Message;
         }
@@ -158,23 +158,26 @@ public sealed class SoftwareUpdateHistoryStore
         }
     }
 
-    public void Complete(Guid id, SoftwareUpgradeResult result)
+    public SoftwareUpdateAttempt? Complete(Guid id, SoftwareUpgradeResult result)
     {
         if (result.Outcome == SoftwareUpdateOutcome.InProgress || !Enum.IsDefined(result.Outcome))
             throw new ArgumentException("A known final result is required.", nameof(result));
+        SoftwareUpdateAttempt completed;
         lock (_gate)
         {
             int index = _records.FindIndex(r => r.Id == id && r.Outcome == SoftwareUpdateOutcome.InProgress);
-            if (index < 0) return;
+            if (index < 0) return null;
             _records[index] = _records[index] with
             {
                 Outcome = result.Outcome, FinishedAtUtc = _utcNow().ToUniversalTime(),
                 ExitCode = result.ExitCode, Message = result.Message,
             };
+            completed = _records[index] with { Output = _records[index].Output.ToArray() };
             _dirty = true;
             SaveCore();
         }
         NotifyChanged();
+        return completed;
     }
 
     public void PruneExpired()
@@ -233,7 +236,7 @@ public sealed class SoftwareUpdateHistoryStore
             _dirty = false;
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or NotSupportedException)
         {
             _saveError = "History could not be saved. Keep Evict open and retry saving. " + ex.Message;
             return false;

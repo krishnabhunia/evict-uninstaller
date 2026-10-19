@@ -11,7 +11,7 @@ public enum SelfCleanupParts
     None = 0,
     /// <summary>settings.json, diagnostic log, downloaded updates, scheduled-scan definition, bundleware list.</summary>
     Settings = 1,
-    /// <summary>Uninstall history, Install Monitor logs and registry backups – the things that let you undo.</summary>
+    /// <summary>Uninstall/update history, Install Monitor logs and registry backups.</summary>
     History = 2,
     /// <summary>Orphaned Windows Installer packages System Cleanup moved to ProgramData\Evict\InstallerCacheBackup.</summary>
     InstallerCacheBackup = 4,
@@ -156,7 +156,7 @@ public static class SelfCleanupService
 
     private static readonly HashSet<string> HistoryEntries = new(StringComparer.OrdinalIgnoreCase)
     {
-        "history.json", "history.json.bak", "install-logs", "registry-backups",
+        "history.json", "history.json.bak", "software-update-history.json", "install-logs", "registry-backups",
     };
 
     /// <summary>Which part a file or folder directly inside %LocalAppData%\Evict belongs to.</summary>
@@ -224,7 +224,7 @@ public static class SelfCleanupService
         }
         list.Add(new SelfCleanupEntry(SelfCleanupParts.Settings, "Settings, diagnostic log and downloaded updates",
             DataRoot, settingsBytes, settingsCount, NeedsAdmin: false, Recommended: true));
-        list.Add(new SelfCleanupEntry(SelfCleanupParts.History, "Uninstall history, Install Monitor logs and registry backups",
+        list.Add(new SelfCleanupEntry(SelfCleanupParts.History, "Uninstall/update history, Install Monitor logs and registry backups",
             "Keep these if you may want to undo a registry cleanup or reuse an install log later. " + DataRoot, historyBytes, historyCount, NeedsAdmin: false, Recommended: false));
 
         long cacheBytes = Directory.Exists(InstallerCacheBackupRoot) ? SizeOf(InstallerCacheBackupRoot) : 0;

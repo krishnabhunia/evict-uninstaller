@@ -56,9 +56,11 @@ public sealed class SoftwareUpdateSession
                 result = new(SoftwareUpdateOutcome.Interrupted, "The installer result could not be confirmed. Check the installed version before trying again. " + ex.Message);
             }
             finally { if (entered) slots.Release(); }
-            _history.Complete(item.Id, result);
-            Report();
-            return _history.Snapshot().First(r => r.Id == item.Id);
+            var completed = _history.Complete(item.Id, result)
+                ?? throw new InvalidOperationException("The active update attempt was unexpectedly removed.");
+            // A user may clear completed history immediately. Keep this detached result for the session.
+            try { onChanged?.Invoke(completed); } catch { /* presentation observer */ }
+            return completed;
         })).ConfigureAwait(false);
     }
 }

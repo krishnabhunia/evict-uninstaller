@@ -337,6 +337,50 @@ public sealed class SoftwareUpdateHistoryTests : IDisposable
         Assert.False(result.Ok);
     }
 
+    [Fact]
+    public void UpdateJournalIsHistoryRatherThanOrdinarySettings()
+    {
+        Assert.Equal(SelfCleanupParts.History, SelfCleanupService.ClassifyDataEntry("software-update-history.json"));
+        Assert.Equal(SelfCleanupParts.History, SelfCleanupService.ClassifyDataEntry("SOFTWARE-UPDATE-HISTORY.JSON"));
+    }
+
+    [Fact]
+    public void StructurallyIncompleteAttemptsDoNotBecomeInventedInterruptedUpdates()
+    {
+        var incomplete = JsonSerializer.Serialize(new
+        {
+            SchemaVersion = 1,
+            Attempts = new[] { new { Id = Guid.NewGuid(), Name = "Fixture", PackageId = "Fixture.App", StartedAtUtc = _now } },
+        });
+        File.WriteAllText(JournalPath, incomplete);
+        var store = Store();
+        Assert.Empty(store.Snapshot());
+        Assert.NotNull(store.LoadError);
+        store.Complete(store.Begin(Package()), Success);
+        Assert.Equal(incomplete, File.ReadAllText(JournalPath));
+    }
+
+    [Fact]
+    public void ARepeatedCallbackCannotReplaceAnAlreadyFinalResult()
+    {
+        var store = Store();
+        var id = store.Begin(Package());
+        store.Complete(id, Success);
+        store.Complete(id, new(SoftwareUpdateOutcome.Failed, "late callback"));
+        Assert.Equal(SoftwareUpdateOutcome.Updated, Assert.Single(store.Snapshot()).Outcome);
+    }
+
+    [Fact]
+    public async Task ClearingACompletedRecordDuringProgressReportingDoesNotBreakTheSession()
+    {
+        var store = Store();
+        var session = new SoftwareUpdateSession(store, (_, _, _, _) => Task.FromResult(Success));
+        var results = await session.RunAsync(new[] { Package() }, 1, false, CancellationToken.None,
+            record => { if (record.Outcome != SoftwareUpdateOutcome.InProgress) store.ClearCompleted(); });
+        Assert.Equal(SoftwareUpdateOutcome.Updated, Assert.Single(results).Outcome);
+        Assert.Empty(store.Snapshot());
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_directory, recursive: true); } catch (IOException) { }
