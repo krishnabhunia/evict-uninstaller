@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0 — 2026-10-19
+
+<!-- Evict automatic release; base: win-v2.0.0 -->
+
+- feat(updater): keep a 7-day update history in the Software Updater
+
 ## 2.0.0 — 2026-10-10
 
 <!-- Evict automatic release; base: win-v1.14.0 -->
