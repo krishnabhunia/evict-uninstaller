@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0 — 2026-10-19
+
+<!-- Evict automatic release; base: win-v2.0.0 -->
+
+- feat(updater): add seven-day update history, details and recovery
+
 ## 2.0.0 — 2026-10-10
 
 <!-- Evict automatic release; base: win-v1.14.0 -->
