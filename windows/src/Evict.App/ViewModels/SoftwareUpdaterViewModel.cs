@@ -241,8 +241,12 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         try
         {
             var session = new SoftwareUpdateSession(_services.SoftwareUpdateHistory, _services.Winget);
-            var results = await session.RunAsync(targets.Select(t => t.Package).ToArray(),
-                ParallelUpdates, IncludeUnknown, cancellation.Token,
+            var packages = targets.Select(t => t.Package).ToArray();
+            int parallel = ParallelUpdates;
+            bool includeUnknown = IncludeUnknown;
+            // Flushing queued records must not block selection, cancellation or history navigation.
+            var results = await Task.Run(() => session.RunAsync(packages,
+                parallel, includeUnknown, cancellation.Token,
                 attempt => { _ = ui.BeginInvoke(new Action(() => ApplyProgress(attempt))); },
                 (package, line) =>
                 {
@@ -254,7 +258,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
                         LogLines.Add($"[{package.Name}] {clean}");
                         if (LogLines.Count > 600) LogLines.RemoveAt(0);
                     }));
-                });
+                }));
             foreach (var result in results) ApplyProgress(result);
             int updated = results.Count(r => r.Outcome == SoftwareUpdateOutcome.Updated);
             int restart = results.Count(r => r.Outcome == SoftwareUpdateOutcome.RestartRequired);
