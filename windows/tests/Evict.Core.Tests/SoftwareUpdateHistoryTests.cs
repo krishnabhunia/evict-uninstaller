@@ -37,7 +37,7 @@ public sealed class SoftwareUpdateHistoryTests : IDisposable
     public void AddDropsEntriesOlderThanSevenDaysAndKeepsNewestFirst()
     {
         var store = NewStore();
-        store.Add(Entry(new DateTime(2026, 10, 12, 19, 10, 0, DateTimeKind.Local), name: "Old"));
+        store.Add(Entry(new DateTime(2026, 10, 12, 16, 10, 0, DateTimeKind.Local), name: "Old"));
         store.Add(Entry(new DateTime(2026, 10, 13, 19, 10, 0, DateTimeKind.Local), name: "Edge"));
         store.Add(Entry(new DateTime(2026, 10, 19, 16, 42, 0, DateTimeKind.Local), name: "New"));
 
