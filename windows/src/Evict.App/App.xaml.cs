@@ -43,6 +43,10 @@ public partial class App : Application
         Services = new AppServices();
         Services.Settings.Load();
         Services.History.Load();
+        Services.UpdateHistory.Load();
+        // A self-update handed over before the last exit is resolved now: did this start reach the new version?
+        try { Services.UpdateHistory.ResolveSelfUpdate(Services.Updater.CurrentVersionLabel); }
+        catch (Exception ex) { Log.Warn("Could not record Evict's own update: " + ex.Message); }
         ApplyTheme(Services.Settings.Current.Theme);
         UiState.Scale = UiState.Clamp(Services.Settings.Current.UiScale);
         UiState.PropertyChanged += (_, args) =>

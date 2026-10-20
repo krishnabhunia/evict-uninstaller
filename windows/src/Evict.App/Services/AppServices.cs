@@ -7,6 +7,8 @@ public sealed class AppServices
 {
     public SettingsStore Settings { get; } = new();
     public HistoryStore History { get; } = new();
+    /// <summary>Software Updater results of the last 7 days, Evict's own updates included (design SH1).</summary>
+    public SoftwareUpdateHistoryStore UpdateHistory { get; } = new();
     public InstalledProgramsService Programs { get; } = new();
     public UninstallOrchestrator Orchestrator { get; } = new();
     public LeftoverScanner Scanner { get; } = new();

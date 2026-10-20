@@ -31,6 +31,8 @@ public static class AppPaths
 
     public static string SettingsFile => Path.Combine(DataRoot, "settings.json");
     public static string HistoryFile => Path.Combine(DataRoot, "history.json");
+    /// <summary>Software Updater results of the last 7 days (design SH1).</summary>
+    public static string SoftwareUpdateHistoryFile => Path.Combine(DataRoot, "update-history.json");
     public static string InstallLogsDir
     {
         get
