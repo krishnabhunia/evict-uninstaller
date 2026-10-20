@@ -41,7 +41,7 @@ public sealed class UpdateHistoryItemViewModel
     public string OutputText => Entry.Output.Count == 0 ? "No output was recorded." : string.Join(Environment.NewLine, Entry.Output);
     public string OutputHeader => Entry.IsEvict ? "UPDATE STEPS" : "WINGET OUTPUT";
     /// <summary>Only finished winget updates that did not work can be tried again from here; Evict's own goes through Settings.</summary>
-    public bool CanRetry => !Entry.IsEvict && Entry.Outcome is SoftwareUpdateOutcome.Failed or SoftwareUpdateOutcome.Cancelled;
+    public bool CanRetry => !Entry.IsEvict && Entry.Outcome is SoftwareUpdateOutcome.Failed or SoftwareUpdateOutcome.Cancelled or SoftwareUpdateOutcome.Interrupted;
     public bool IsEvictEntry => Entry.IsEvict;
 
     public bool Matches(string filter, string search)
@@ -51,6 +51,8 @@ public sealed class UpdateHistoryItemViewModel
             "Updated" => Entry.IsSuccess,
             "Failed" => Entry.Outcome == SoftwareUpdateOutcome.Failed,
             "Cancelled" => Entry.Outcome == SoftwareUpdateOutcome.Cancelled,
+            "Interrupted" => Entry.Outcome == SoftwareUpdateOutcome.Interrupted,
+            "Restart required" => Entry.Outcome == SoftwareUpdateOutcome.UpdatedRestartNeeded,
             _ => true,
         };
         if (!kind) return false;
@@ -74,7 +76,7 @@ public sealed partial class SoftwareUpdaterViewModel
     private UpdateHistoryItemViewModel? _selectedHistoryItem;
 
     /// <summary>"Try this update again" is shown only when winget can actually run it.</summary>
-    public bool CanRetrySelected => SelectedHistoryItem is { CanRetry: true } && WingetAvailable;
+    public bool CanRetrySelected => SelectedHistoryItem is { CanRetry: true } && WingetAvailable && CanEditSelection;
     partial void OnWingetAvailableChanged(bool value) => OnPropertyChanged(nameof(CanRetrySelected));
 
     /// <summary>Unfinished rows of the run on screen (Waiting / Updating…), shown on top of the saved history.</summary>
@@ -108,8 +110,12 @@ public sealed partial class SoftwareUpdaterViewModel
     public bool HasHistoryRows => !HistoryIsEmpty;
     public bool HasRecentSummary => RecentSummary != null;
     public bool HasSelectedHistoryItem => SelectedHistoryItem != null;
+    public string? HistoryPersistenceError => _services.UpdateHistory.PersistenceError;
+    public bool HasHistoryPersistenceError => HistoryPersistenceError != null;
+    public bool CanClearHistory => _services.UpdateHistory.LoadError is null && _services.UpdateHistory.Entries.Any(e => e.IsFinished);
+    public IReadOnlyList<string> HistoryFilters { get; } = new[] { "All", "Updated", "Failed", "Cancelled", "Interrupted", "Restart required" };
     public string HistoryKeepText =>
-        $"Kept for {SoftwareUpdateHistory.KeepDays} days. Entries older than {SoftwareUpdateHistory.OldestKeptDay(DateTime.Now).ToString("ddd d MMM", CultureInfo.InvariantCulture)} are removed by themselves, each time Evict starts and after every update run.";
+        "Completed attempts are kept locally for a rolling 7 days (168 hours). Cleanup runs at startup, every minute and on refresh. Active attempts are kept until their result is known.";
 
     partial void OnHistoryIsEmptyChanged(bool value) => OnPropertyChanged(nameof(HasHistoryRows));
     partial void OnRecentSummaryChanged(string? value) => OnPropertyChanged(nameof(HasRecentSummary));
@@ -119,8 +125,7 @@ public sealed partial class SoftwareUpdaterViewModel
     {
         if (value == "History")
         {
-            _services.UpdateHistory.PruneNow();
-            RebuildHistory();
+            _ = RefreshHistoryAsync();
         }
     }
 
@@ -139,7 +144,7 @@ public sealed partial class SoftwareUpdaterViewModel
     private void RebuildHistory()
     {
         var now = DateTime.Now;
-        var saved = _services.UpdateHistory.Entries.Where(e => SoftwareUpdateHistory.IsKept(e, now)).ToList();
+        var saved = _services.UpdateHistory.Entries.Where(e => SoftwareUpdateHistory.IsKept(e, now) && !_liveEntries.ContainsKey(e.Id)).ToList();
         var all = _liveEntries.Values.OrderByDescending(e => e.StartedUtc).Concat(saved).ToList();
         var keepSelection = SelectedHistoryItem?.Id;
 
@@ -151,15 +156,18 @@ public sealed partial class SoftwareUpdaterViewModel
         }
         SelectedHistoryItem = keepSelection is { } id ? HistoryItems.FirstOrDefault(r => r.Id == id) : null;
 
-        HistoryCount = saved.Count;
+        HistoryCount = all.Count;
         HistoryUpdatedCount = saved.Count(e => e.IsSuccess);
         HistoryFailedCount = saved.Count(e => e.Outcome == SoftwareUpdateOutcome.Failed);
         HistoryCancelledCount = saved.Count(e => e.Outcome == SoftwareUpdateOutcome.Cancelled);
-        HistoryIsEmpty = all.Count == 0;
+        HistoryIsEmpty = all.Count == 0 && _services.UpdateHistory.LoadError is null;
         HistoryHasNoMatch = all.Count > 0 && HistoryItems.Count == 0;
         RecentSummary = SoftwareUpdateHistory.Summary(saved);
         LastRunText = saved.FirstOrDefault() is { } newest ? "· last run " + SoftwareUpdateHistory.WhenText(newest.StartedUtc, now) : "";
         OnPropertyChanged(nameof(HistoryKeepText));
+        OnPropertyChanged(nameof(HistoryPersistenceError));
+        OnPropertyChanged(nameof(HasHistoryPersistenceError));
+        OnPropertyChanged(nameof(CanClearHistory));
 
         var running = _liveEntries.Values.Select(e => e.PackageId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var item in Items)
@@ -205,23 +213,51 @@ public sealed partial class SoftwareUpdaterViewModel
         }
         if (SelectedHistoryItem is not { CanRetry: true } row || IsBusy || IsUpdating) return;
         var entry = row.Entry;
-        var target = Items.FirstOrDefault(i => string.Equals(i.Id, entry.PackageId, StringComparison.OrdinalIgnoreCase))
-            ?? new UpgradeItemViewModel(new UpgradablePackage
-            {
-                Name = entry.Name, Id = entry.PackageId, InstalledVersion = entry.FromVersion, AvailableVersion = entry.ToVersion,
-                Source = entry.Source is null or "winget" ? null : entry.Source,
-            });
+        // Recheck the source and installed version, and honour exclusions changed since this attempt.
+        await CheckAsync();
+        if (Error != null || IsBusy || IsUpdating) return;
+        var source = entry.Source is null or "winget" ? "winget" : entry.Source;
+        var target = Items.FirstOrDefault(i => string.Equals(i.Id, entry.PackageId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(string.IsNullOrEmpty(i.Source) ? "winget" : i.Source, source, StringComparison.OrdinalIgnoreCase));
         SelectedHistoryItem = null;
-        await RunUpdatesAsync(new List<UpgradeItemViewModel> { target }, "You · Try again");
+        SelectedTab = "Updates";
+        if (target is null)
+        {
+            StatusText = "No eligible update was found for this package and source. It may already be current, unavailable or excluded.";
+            return;
+        }
+        foreach (var item in Items) item.IsSelected = ReferenceEquals(item, target);
+        StatusText = $"Latest update found for {target.Name}. Review it and choose Update selected.";
     }
 
     [RelayCommand]
-    private void ClearHistory()
+    private async Task RefreshHistoryAsync()
     {
-        if (HistoryCount == 0) return;
-        if (!Dialogs.Confirm($"Clear the update history?\n\nThis removes all {HistoryCount} entries from the last {SoftwareUpdateHistory.KeepDays} days. Your programs stay exactly as they are — only the record goes. It can't be undone.", destructive: true)) return;
+        await Task.Run(() => _services.UpdateHistory.PruneNow());
+        RebuildHistory();
+    }
+
+    [RelayCommand]
+    private async Task RetryHistoryPersistenceAsync()
+    {
+        await Task.Run(() => _services.UpdateHistory.RetryPersistence());
+        RebuildHistory();
+    }
+
+    [RelayCommand]
+    private void HistorySettings() => new Evict.App.Views.SoftwareUpdateHistorySettingsWindow
+    {
+        Owner = System.Windows.Application.Current.MainWindow, DataContext = this,
+    }.ShowDialog();
+
+    [RelayCommand]
+    private async Task ClearHistoryAsync()
+    {
+        if (!CanClearHistory) return;
+        if (!Dialogs.Confirm($"Clear the update history?\n\nThis removes completed entries from the last {SoftwareUpdateHistory.KeepDays} days. Your programs stay exactly as they are — only the record goes. It can't be undone.", destructive: true)) return;
         SelectedHistoryItem = null;
-        _services.UpdateHistory.Clear();
+        await Task.Run(() => _services.UpdateHistory.Clear());
+        RebuildHistory();
     }
 
     [RelayCommand]
