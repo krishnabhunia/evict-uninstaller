@@ -4,10 +4,12 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -63,6 +65,11 @@ class RepositoryFixture:
         self.git.run("init", "-b", "main")
         self.git.run("config", "user.name", "Release test fixture")
         self.git.run("config", "user.email", "fixture@example.invalid")
+        # Newer git (2.5x on the runners) starts automatic maintenance in the background after commits; it keeps
+        # writing into .git/objects while the test deletes the folder ("Directory not empty"). The fixture never needs it.
+        self.git.run("config", "gc.auto", "0")
+        self.git.run("config", "gc.autoDetach", "false")
+        self.git.run("config", "maintenance.auto", "false")
         self.write("windows/Directory.Build.props", "<Project>\n<PropertyGroup>\n<Version>1.8.0</Version>\n<InvariantGlobalization>false</InvariantGlobalization>\n</PropertyGroup>\n</Project>\n")
         self.write("windows/installer/Evict.iss", '#ifndef MyAppVersion\n#define MyAppVersion "1.8.0"\n#endif\n#ifndef MyAppNumericVersion\n#define MyAppNumericVersion MyAppVersion\n#endif\n')
         self.write("windows/CHANGELOG.md", "# Changelog\n\n## 1.8.1 (not published)\n\n- Preserve all reviewed cleanup and beta notes.\n\n## 1.8.0 — previous release\n\nOld notes.\n")
@@ -93,7 +100,14 @@ class RepositoryFixture:
         return build_plan(self.git, api or FakeApi(), policy or {}, platform, mode, **arguments)
 
     def close(self):
-        self.temporary.cleanup()
+        # A git process that was already running can still hold the folder for a moment: retry, then give up quietly.
+        for attempt in range(5):
+            try:
+                self.temporary.cleanup()
+                return
+            except OSError:
+                time.sleep(0.2 * (attempt + 1))
+        shutil.rmtree(self.root, ignore_errors=True)
 
 
 class IntentTests(unittest.TestCase):
