@@ -9,6 +9,7 @@ namespace Evict.App;
 
 public partial class App : Application
 {
+    private System.Threading.Timer? _historyCleanupTimer;
     private static readonly CancellationTokenSource ShutdownCancellation = new();
     public static CancellationToken ShutdownToken => ShutdownCancellation.Token;
     public static AppServices Services { get; private set; } = null!;
@@ -47,6 +48,7 @@ public partial class App : Application
         // A self-update handed over before the last exit is resolved now: did this start reach the new version?
         try { Services.UpdateHistory.ResolveSelfUpdate(Services.Updater.CurrentVersionLabel); }
         catch (Exception ex) { Log.Warn("Could not record Evict's own update: " + ex.Message); }
+        _historyCleanupTimer = new System.Threading.Timer(_ => Services.UpdateHistory.PruneNow(), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
         ApplyTheme(Services.Settings.Current.Theme);
         UiState.Scale = UiState.Clamp(Services.Settings.Current.UiScale);
         UiState.PropertyChanged += (_, args) =>
@@ -178,6 +180,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         ShutdownCancellation.Cancel();
+        _historyCleanupTimer?.Dispose();
         try { Background?.Shutdown(); } catch { /* ignore */ }
         try { Services?.Settings.Save(); } catch { /* ignore */ }
         Log.Info("Exit.");

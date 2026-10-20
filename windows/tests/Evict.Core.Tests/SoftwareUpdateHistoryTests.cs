@@ -23,11 +23,14 @@ public sealed class SoftwareUpdateHistoryTests : IDisposable
     };
 
     [Fact]
-    public void KeepsTodayAndTheSixDaysBefore()
+    public void KeepsExactlyTheLast168HoursFromCompletion()
     {
-        Assert.Equal(new DateTime(2026, 10, 13), SoftwareUpdateHistory.OldestKeptDay(_nowLocal));
-        Assert.True(SoftwareUpdateHistory.IsKept(Entry(new DateTime(2026, 10, 13, 0, 0, 1, DateTimeKind.Local)), _nowLocal));
-        Assert.False(SoftwareUpdateHistory.IsKept(Entry(new DateTime(2026, 10, 12, 23, 59, 59, DateTimeKind.Local)), _nowLocal));
+        var now = _nowLocal.ToUniversalTime();
+        var entry = Entry(_nowLocal.AddDays(-8));
+        entry.FinishedUtc = now.AddDays(-7);
+        Assert.True(SoftwareUpdateHistory.IsKept(entry, _nowLocal));
+        entry.FinishedUtc = now.AddDays(-7).AddTicks(-1);
+        Assert.False(SoftwareUpdateHistory.IsKept(entry, _nowLocal));
     }
 
     [Fact]
@@ -42,10 +45,10 @@ public sealed class SoftwareUpdateHistoryTests : IDisposable
     }
 
     [Fact]
-    public void LoadPrunesOnANewDayAndKeepsOnlyFinishedResults()
+    public void LoadPrunesExpiredResultsAndRecoversUnfinishedAttempts()
     {
         var store = NewStore();
-        store.Add(Entry(new DateTime(2026, 10, 13, 9, 0, 0, DateTimeKind.Local), name: "Tuesday"));
+        store.Add(Entry(new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Local), name: "Monday"));
         store.Add(Entry(new DateTime(2026, 10, 19, 9, 0, 0, DateTimeKind.Local), name: "Today"));
         store.Add(Entry(new DateTime(2026, 10, 19, 9, 5, 0, DateTimeKind.Local), SoftwareUpdateOutcome.Running, "Unfinished"));
 
@@ -53,7 +56,8 @@ public sealed class SoftwareUpdateHistoryTests : IDisposable
         var reloaded = NewStore();
         reloaded.Load();
 
-        Assert.Equal(new[] { "Today" }, reloaded.Entries.Select(e => e.Name));
+        Assert.Equal(new[] { "Unfinished", "Today" }, reloaded.Entries.Select(e => e.Name));
+        Assert.Equal(SoftwareUpdateOutcome.Interrupted, reloaded.Entries[0].Outcome);
     }
 
     [Fact]
@@ -196,7 +200,7 @@ public sealed class SoftwareUpdateHistoryTests : IDisposable
 
         var failed = SoftwareUpdateHistory.Describe("Zoom Workplace", "6.5.3", false, "the application is in use – close it and retry (0x8A150101).", false);
         Assert.Equal(SoftwareUpdateOutcome.Failed, failed.Outcome);
-        Assert.Equal("The application is in use – close it and retry (0x8A150101). Nothing changed — Zoom Workplace is still on 6.5.3.", failed.Message);
+        Assert.Equal("The application is in use – close it and retry (0x8A150101). The installed version has not been verified. Check for updates before trying again.", failed.Message);
     }
 
     [Fact]
@@ -261,7 +265,7 @@ public sealed class SoftwareUpdateHistoryTests : IDisposable
     [Theory]
     [InlineData(unchecked((int)0x8A150109), "")]
     [InlineData(3010, "")]
-    [InlineData(1, "Restart your PC to finish installation.")]
+    [InlineData(0, "Restart your PC to finish installation.")]
     public async Task RestartToFinishIsASuccessThatSaysSo(int exitCode, string output)
     {
         var service = new WingetService(() => "fake-winget.exe", (_, _, _, _, _) =>
