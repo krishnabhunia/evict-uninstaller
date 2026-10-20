@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.1 — 2026-10-20
+
+<!-- Evict automatic release; base: win-v2.1.0 -->
+
+- cgpt-fix(updater): complete update history design and recovery
+
 ## 2.1.0 — 2026-10-20
 
 <!-- Evict automatic release; base: win-v2.0.0 -->
