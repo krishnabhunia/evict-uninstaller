@@ -14,79 +14,79 @@
         </ContextMenu>
     </UserControl.Resources>
 
-    <Grid Margin="24,18,24,16">
+    <!-- RD1 History: one timeline (uninstalls and program updates), filter chips, grouped by day. -->
+    <Grid Margin="28,4,28,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <StackPanel>
-                <TextBlock Text="History" Style="{StaticResource Text.Title}" />
-                <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+        <DockPanel Grid.Row="0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBox Style="{StaticResource TextBox.Search}" Width="240" Tag="Search history…" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=150}" />
-                <Button Style="{StaticResource Button.Secondary}" Content="Export CSV" Command="{Binding ExportCommand}" Margin="8,0,0,0" />
+                <Button Style="{StaticResource Button.Secondary}" Content="Export CSV" Command="{Binding ExportCommand}" Margin="8,0,0,0" ToolTip="Uninstall history as a CSV file" />
                 <Button Style="{StaticResource Button.Ghost}" Content="Clear" Command="{Binding ClearAllCommand}" Margin="8,0,0,0" />
             </StackPanel>
-        </Grid>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <RadioButton Style="{StaticResource Button.Chip}" GroupName="HistoryFilter" Content="All" Margin="0,0,6,0"
+                             IsChecked="{Binding Filter, Converter={StaticResource EqualsToBool}, ConverterParameter=All}" />
+                <RadioButton Style="{StaticResource Button.Chip}" GroupName="HistoryFilter" Content="Uninstalls" Margin="0,0,6,0"
+                             IsChecked="{Binding Filter, Converter={StaticResource EqualsToBool}, ConverterParameter=Uninstalls}" />
+                <RadioButton Style="{StaticResource Button.Chip}" GroupName="HistoryFilter" Content="Updates" Margin="0,0,12,0"
+                             IsChecked="{Binding Filter, Converter={StaticResource EqualsToBool}, ConverterParameter=Updates}" />
+                <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
+            </StackPanel>
+        </DockPanel>
 
-        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0" Margin="0,14,0,0">
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="6,4" Margin="0,14,0,0">
             <Grid>
-                <DataGrid Style="{StaticResource DataGrid.Flat}" ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem, Mode=TwoWay}" ContextMenu="{StaticResource RowMenu}">
-                    <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="When" Width="150" SortMemberPath="Entry.Timestamp">
-                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:HistoryItemViewModel}"><TextBlock Text="{Binding When}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Program" Width="*" MinWidth="200" SortMemberPath="Name">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:HistoryItemViewModel}">
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding Name}" Style="{StaticResource Cell.Primary}" />
-                                        <TextBlock Style="{StaticResource Cell.Secondary}" FontSize="11.5">
-                                            <Run Text="{Binding Publisher, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding Version, Mode=OneWay}" />
-                                        </TextBlock>
-                                    </StackPanel>
+                <ListBox ItemsSource="{Binding View}" SelectedItem="{Binding SelectedItem, Mode=TwoWay}" Style="{StaticResource ListBox.Flat}" ContextMenu="{StaticResource RowMenu}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizingWhenGrouping="True" AutomationProperties.Name="History">
+                    <ListBox.GroupStyle>
+                        <GroupStyle>
+                            <GroupStyle.HeaderTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Name}" Style="{StaticResource Text.Eyebrow}" Margin="12,14,0,6" />
                                 </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Method" Width="100" SortMemberPath="MethodText">
-                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:HistoryItemViewModel}"><TextBlock Text="{Binding MethodText}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Result" Width="110" SortMemberPath="Succeeded">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:HistoryItemViewModel}">
-                                    <Border Style="{StaticResource Pill}" Background="{Binding Succeeded, Converter={StaticResource BoolToBrush}, ConverterParameter='Brush.Success.Subtle|Brush.Warning.Subtle'}">
-                                        <TextBlock Text="{Binding ResultText}" Style="{StaticResource Pill.Text}" Foreground="{Binding Succeeded, Converter={StaticResource BoolToBrush}, ConverterParameter='Brush.Success|Brush.Warning'}" />
-                                    </Border>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Leftovers" Width="90" SortMemberPath="Entry.LeftoversFound">
-                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:HistoryItemViewModel}"><TextBlock Text="{Binding LeftoversText}" Style="{StaticResource Cell.Secondary}" ToolTip="removed / found" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Removed / permanent" Width="170" SortMemberPath="Entry.BytesRemoved">
-                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:HistoryItemViewModel}"><TextBlock Text="{Binding SpaceText}" Style="{StaticResource Cell.Primary}" HorizontalAlignment="Right" ToolTip="Measured data removed from original locations / data permanently deleted. Recycled data still occupies disk space. Earlier records do not distinguish the two." /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Notes" Width="1.2*" MinWidth="160">
-                            <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:HistoryItemViewModel}"><TextBlock Text="{Binding Notes}" Style="{StaticResource Cell.Secondary}" ToolTip="{Binding Notes}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                    </DataGrid.Columns>
-                </DataGrid>
+                            </GroupStyle.HeaderTemplate>
+                        </GroupStyle>
+                    </ListBox.GroupStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:TimelineItemViewModel}">
+                            <Grid Margin="4,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="56" />
+                                </Grid.ColumnDefinitions>
+                                <Border Width="32" Height="32" CornerRadius="9" Margin="0,0,12,0"
+                                        Background="{Binding IsUpdate, Converter={StaticResource BoolToBrush}, ConverterParameter='Brush.Accent.Subtle|Brush.Danger.Subtle'}">
+                                    <TextBlock Text="{Binding Glyph}" Style="{StaticResource Icon}" FontSize="14"
+                                               Foreground="{Binding IsUpdate, Converter={StaticResource BoolToBrush}, ConverterParameter='Brush.Accent.Text|Brush.Danger.Text'}" />
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{DynamicResource Brush.Text.Secondary}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Notes}" />
+                                </StackPanel>
+                                <Border Grid.Column="2" Style="{StaticResource Tag}" Visibility="{Binding Succeeded, Converter={StaticResource InvBoolToVis}}" Background="{DynamicResource Brush.Warning.Subtle}">
+                                    <TextBlock Text="Check" Style="{StaticResource Tag.Text}" Foreground="{DynamicResource Brush.Warning}" />
+                                </Border>
+                                <TextBlock Grid.Column="3" Text="{Binding Time}" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" IsHitTestVisible="False" Visibility="{Binding HasItems, Converter={StaticResource InvBoolToVis}}">
                     <TextBlock Text="&#xE81C;" Style="{StaticResource Icon}" FontSize="36" Foreground="{DynamicResource Brush.Text.Tertiary}" />
                     <TextBlock Text="Nothing here yet" Style="{StaticResource Text.Section}" HorizontalAlignment="Center" Margin="0,10,0,4" Foreground="{DynamicResource Brush.Text.Secondary}" />
-                    <TextBlock Text="Every uninstall, force removal and app removal is recorded here." Style="{StaticResource Text.Caption}" HorizontalAlignment="Center" />
+                    <TextBlock Text="Every uninstall and program update is recorded here." Style="{StaticResource Text.Caption}" HorizontalAlignment="Center" />
                 </StackPanel>
             </Grid>
         </Border>
 
-        <TextBlock Grid.Row="2" Style="{StaticResource Text.Caption}" Margin="0,10,0,0" Text="Tip: right-click an entry to scan for leftovers again – useful if a program was removed outside Evict or files were still in use." />
+        <TextBlock Grid.Row="2" Style="{StaticResource Text.Caption}" Margin="0,10,0,0"
+                   Text="Uninstalls are kept until you clear them; program updates for 7 days. Right-click an uninstall to scan for its leftovers again." />
     </Grid>
 </UserControl>

@@ -13,146 +13,254 @@
         <conv:ScoreBrushConverter x:Key="ScoreBrush" />
     </UserControl.Resources>
 
+    <!-- RD1 Home: score, one safe "Tidy" action, "Worth a look" cards, recent activity and the Install Monitor switch. -->
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="24,18,24,20">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel>
-                    <TextBlock Text="Software Health" Style="{StaticResource Text.Title}" />
-                    <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Outdated software, leftovers, setup files and caches, uninstall problems, notifications, permissions, background updaters and security – tick what to fix and press Fix selected, or open a category to review it." TextWrapping="Wrap" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-                    <Button Style="{StaticResource Button.Secondary}" Command="{Binding FixSelectedCommand}" IsEnabled="{Binding CanFix}" Padding="14,8" Margin="0,0,10,0"
-                            ToolTip="Apply the safe fix of every ticked category below">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE90F;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}" />
-                            <TextBlock Text="Fix selected" Margin="8,0,0,0" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource Button.Primary}" Command="{Binding ScanCommand}" IsEnabled="{Binding IsScanning, Converter={StaticResource InvBool}}" Padding="14,8">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
-                            <TextBlock Text="Scan now" Margin="8,0,0,0" />
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-            </Grid>
+        <Grid Margin="28,4,28,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="330" />
+            </Grid.ColumnDefinitions>
 
-            <!-- Score card -->
-            <Border Style="{StaticResource Card}" Margin="0,16,0,14" Padding="22">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid Width="132" Height="132">
-                        <Ellipse Stroke="{DynamicResource Brush.Progress.Track}" StrokeThickness="11" Margin="6" />
-                        <Path Stroke="{Binding Score, Converter={StaticResource ScoreBrush}}" StrokeThickness="11" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                              Data="{Binding Score, Converter={StaticResource ScoreArc}}" Margin="6" Visibility="{Binding HasScore, Converter={StaticResource BoolToVis}}" />
-                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <TextBlock FontSize="36" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Text" Value="{Binding Score}" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding HasScore}" Value="False"><Setter Property="Text" Value="–" /></DataTrigger>
-                                            <DataTrigger Binding="{Binding IsScanning}" Value="True"><Setter Property="Text" Value="…" /></DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <TextBlock Text="/ 100" Style="{StaticResource Text.Caption}" HorizontalAlignment="Center" Margin="0,-4,0,0" />
+            <StackPanel Grid.Column="0">
+                <!-- Score -->
+                <Border Style="{StaticResource Card}" Padding="24,22">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid Width="124" Height="124">
+                            <Ellipse Stroke="{DynamicResource Brush.Progress.Track}" StrokeThickness="10" Margin="6" />
+                            <Path Stroke="{Binding Score, Converter={StaticResource ScoreBrush}}" StrokeThickness="10" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  Data="{Binding Score, Converter={StaticResource ScoreArc}}" Margin="6" Visibility="{Binding HasScore, Converter={StaticResource BoolToVis}}" />
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <TextBlock FontSize="34" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="{Binding Score}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasScore}" Value="False"><Setter Property="Text" Value="–" /></DataTrigger>
+                                                <DataTrigger Binding="{Binding IsScanning}" Value="True"><Setter Property="Text" Value="…" /></DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="/ 100" Style="{StaticResource Text.Caption}" HorizontalAlignment="Center" Margin="0,-4,0,0" />
+                            </StackPanel>
+                        </Grid>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="24,0,0,0">
+                            <TextBlock Text="{Binding ScoreLabel}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Summary}" FontSize="13.5" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                            <WrapPanel Margin="0,16,0,0">
+                                <Button Style="{StaticResource Button.Primary}" Command="{Binding FixSelectedCommand}" IsEnabled="{Binding CanFix}" Margin="0,0,8,6"
+                                        ToolTip="Applies the safe fix of every ticked check under 'All checks' – files go to the Recycle Bin">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE90F;" Style="{StaticResource Icon}" FontSize="13" Foreground="{DynamicResource Brush.Text.OnAccent}" />
+                                        <TextBlock Text="{Binding TidyText}" Margin="8,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource Button.Secondary}" Command="{Binding ScanCommand}" IsEnabled="{Binding IsScanning, Converter={StaticResource InvBool}}" Margin="0,0,12,6">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE72C;" Style="{StaticResource Icon}" FontSize="13" Foreground="{DynamicResource Brush.Text.Primary}" />
+                                        <TextBlock Text="Scan again" Margin="8,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,6">
+                                    <TextBlock Text="{Binding LastScanText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
+                                    <ProgressBar IsIndeterminate="True" Width="140" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
+                            </WrapPanel>
                         </StackPanel>
                     </Grid>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="24,0,0,0">
-                        <TextBlock Text="{Binding ScoreLabel}" FontSize="26" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" />
-                        <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Body}" Margin="0,6,0,0" />
-                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                            <TextBlock Text="{Binding LastScanText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
-                            <ProgressBar IsIndeterminate="True" Width="180" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}" />
-                        </StackPanel>
-                    </StackPanel>
-                </Grid>
-            </Border>
+                </Border>
 
-            <!-- Tiles -->
-            <ItemsControl ItemsSource="{Binding Tiles}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate DataType="{x:Type vm:HealthTileViewModel}">
-                        <Border Style="{StaticResource Card}" Width="300" MinHeight="168" Margin="0,0,14,14" Padding="18,16">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
+                <!-- Worth a look -->
+                <TextBlock Text="Worth a look" Style="{StaticResource Text.Section}" Margin="2,22,0,10" Visibility="{Binding HasWorthALook, Converter={StaticResource BoolToVis}}" />
+                <ItemsControl ItemsSource="{Binding WorthALook}" Visibility="{Binding HasWorthALook, Converter={StaticResource BoolToVis}}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:HealthTileViewModel}">
+                            <Button Style="{StaticResource Button.Tile}" Margin="0,0,12,12" MinHeight="150"
+                                    Command="{Binding DataContext.ActCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
+                                    AutomationProperties.Name="{Binding Title}">
                                 <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Width="40" Height="40" CornerRadius="10" VerticalAlignment="Top">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsGood}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Success.Subtle}" /></DataTrigger>
-                                                    <DataTrigger Binding="{Binding IsAttention}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Warning.Subtle}" /></DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <TextBlock Text="{Binding Glyph}" FontSize="18">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
-                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Accent}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsGood}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}" /></DataTrigger>
-                                                        <DataTrigger Binding="{Binding IsAttention}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}" /></DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </Border>
-                                    <TextBlock Grid.Column="1" Text="{Binding Title}" Style="{StaticResource Text.Section}" FontSize="14" Margin="12,0,8,0" VerticalAlignment="Center" TextWrapping="Wrap" />
-                                    <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="26" FontWeight="Bold" VerticalAlignment="Center">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Tertiary}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsGood}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}" /></DataTrigger>
-                                                    <DataTrigger Binding="{Binding IsAttention}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}" /></DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                            <Border Width="34" Height="34" CornerRadius="9" VerticalAlignment="Top">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsGood}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Success.Subtle}" /></DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsAttention}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Warning.Subtle}" /></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding Glyph}" FontSize="15">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.Accent}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsGood}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}" /></DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsAttention}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}" /></DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Border>
+                                                    <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="24" FontWeight="Bold" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Tertiary}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsGood}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}" /></DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsAttention}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}" /></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            </Grid>
+                                    <TextBlock Grid.Row="1" Text="{Binding Title}" FontWeight="SemiBold" FontSize="13.5" Margin="0,12,0,0" TextWrapping="Wrap" />
+                                    <TextBlock Grid.Row="2" Text="{Binding Detail}" Style="{StaticResource Text.Caption}" Margin="0,4,0,10" TextWrapping="Wrap" MaxHeight="34" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Row="3" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Accent.Text}">
+                                        <Run Text="{Binding ActionText, Mode=OneWay}" /><Run Text=" →" />
                                     </TextBlock>
                                 </Grid>
-                                <CheckBox Grid.Row="1" IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,10,0,0" Visibility="{Binding ShowSelection, Converter={StaticResource BoolToVis}}"
-                                          ToolTip="Include in &quot;Fix selected&quot;">
-                                    <TextBlock Text="{Binding SelectionText}" Style="{StaticResource Text.Caption}" />
-                                </CheckBox>
-                                <TextBlock Grid.Row="2" Text="{Binding Detail}" Style="{StaticResource Text.Caption}" Margin="0,10,0,12" TextWrapping="Wrap" />
-                                <Grid Grid.Row="3">
-                                    <ProgressBar IsIndeterminate="True" HorizontalAlignment="Left" Width="120" VerticalAlignment="Center" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
-                                    <Button Style="{StaticResource Button.Secondary}" Content="{Binding ActionText}" HorizontalAlignment="Right" MinWidth="96" Padding="12,5" MinHeight="30"
-                                            Command="{Binding DataContext.ActCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
-                                            Visibility="{Binding IsBusy, Converter={StaticResource InvBoolToVis}}" />
-                                </Grid>
-                            </Grid>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
 
-            <TextBlock Style="{StaticResource Text.Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
-                       Text="The score is a simple heuristic (100 minus a small penalty per finding) meant to guide you, not a security rating. 'Possible bundleware' and 'not used recently' are guesses from install timestamps and Windows usage counters – always review before removing." />
-        </StackPanel>
+                <!-- Every check, with the ticks that decide what "Tidy" fixes -->
+                <Expander Style="{StaticResource Expander.Group}" Margin="0,10,0,0" IsExpanded="False">
+                    <Expander.Header>
+                        <TextBlock Style="{StaticResource Text.Section}" FontSize="14">
+                            <Run Text="All checks" /><Run Text=" · " Foreground="{DynamicResource Brush.Text.Tertiary}" /><Run Text="{Binding Tiles.Count, Mode=OneWay}" Foreground="{DynamicResource Brush.Text.Tertiary}" />
+                        </TextBlock>
+                    </Expander.Header>
+                    <Border Style="{StaticResource Card}" Padding="6,4" Margin="0,8,0,0">
+                        <ItemsControl ItemsSource="{Binding Tiles}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:HealthTileViewModel}">
+                                    <Grid Margin="10,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                            <Border Width="34" Height="34" CornerRadius="9" VerticalAlignment="Center" Margin="0,0,12,0">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsGood}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Success.Subtle}" /></DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsAttention}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Warning.Subtle}" /></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding Glyph}" FontSize="15">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.Accent}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsGood}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}" /></DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsAttention}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}" /></DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding Detail}" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" />
+                                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,6,0,0" Visibility="{Binding ShowSelection, Converter={StaticResource BoolToVis}}"
+                                                      ToolTip="Include in &quot;Tidy&quot;">
+                                                <TextBlock Text="{Binding SelectionText}" Style="{StaticResource Text.Caption}" />
+                                            </CheckBox>
+                                        </StackPanel>
+                                            <TextBlock Grid.Column="2" Margin="12,0" Text="{Binding CountText}" FontSize="18" FontWeight="Bold" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Tertiary}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsGood}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}" /></DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsAttention}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}" /></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                                <Grid Grid.Column="3" VerticalAlignment="Center">
+                                            <ProgressBar IsIndeterminate="True" Width="90" VerticalAlignment="Center" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
+                                            <Button Style="{StaticResource Button.Secondary}" Content="{Binding ActionText}" MinWidth="90" Padding="12,4" MinHeight="30"
+                                                    Command="{Binding DataContext.ActCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
+                                                    Visibility="{Binding IsBusy, Converter={StaticResource InvBoolToVis}}" />
+                                        </Grid>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Border>
+                </Expander>
+
+                <TextBlock Style="{StaticResource Text.Caption}" Margin="2,12,0,0" TextWrapping="Wrap"
+                           Text="The score is a simple guide (100 minus a small amount per finding), not a security rating. 'Possible bundleware' and 'not used recently' are guesses from install times and Windows usage counters – always review before removing." />
+            </StackPanel>
+
+            <!-- Right column -->
+            <StackPanel Grid.Column="1" Margin="20,0,0,0">
+                <Border Style="{StaticResource Card}" Padding="18,16">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,8">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="See all" Command="{Binding OpenHistoryCommand}" />
+                            <TextBlock Text="Recently" Style="{StaticResource Text.Section}" FontSize="14" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock Text="Nothing yet – uninstalls and updates show up here." Style="{StaticResource Text.Caption}" Margin="0,4,0,2"
+                                   Visibility="{Binding HasRecently, Converter={StaticResource InvBoolToVis}}" />
+                        <ItemsControl ItemsSource="{Binding Recently}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:TimelineItemViewModel}">
+                                    <DockPanel Margin="0,6">
+                                        <Border Width="28" Height="28" CornerRadius="8" Margin="0,0,10,0" VerticalAlignment="Top"
+                                                Background="{Binding IsUpdate, Converter={StaticResource BoolToBrush}, ConverterParameter='Brush.Accent.Subtle|Brush.Danger.Subtle'}">
+                                            <TextBlock Text="{Binding Glyph}" Style="{StaticResource Icon}" FontSize="12"
+                                                       Foreground="{Binding IsUpdate, Converter={StaticResource BoolToBrush}, ConverterParameter='Brush.Accent.Text|Brush.Danger.Text'}" />
+                                        </Border>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Detail}" FontSize="11.5" Foreground="{DynamicResource Brush.Text.Tertiary}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Padding="18,16" Margin="0,14,0,0">
+                    <StackPanel>
+                        <DockPanel>
+                            <CheckBox DockPanel.Dock="Right" Style="{StaticResource CheckBox.Switch}" IsChecked="{Binding InstallMonitorOn}" VerticalAlignment="Center"
+                                      AutomationProperties.Name="Install Monitor on or off" />
+                            <TextBlock Text="Install Monitor" Style="{StaticResource Text.Section}" FontSize="14" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock Text="{Binding InstallMonitorText}" Style="{StaticResource Text.Caption}" Margin="0,8,0,8" TextWrapping="Wrap" />
+                        <Button Style="{StaticResource Button.Link}" Content="Open Install Monitor" Command="{Binding OpenInstallMonitorCommand}" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
     </ScrollViewer>
 </UserControl>
