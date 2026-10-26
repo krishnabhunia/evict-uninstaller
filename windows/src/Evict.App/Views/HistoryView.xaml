@@ -27,7 +27,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="History" Style="{StaticResource Text.Title}" />
+                <TextBlock Text="Activity" Style="{StaticResource Text.Title}" />
                 <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">

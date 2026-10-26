@@ -46,7 +46,15 @@
                     </Border>
                 </StackPanel>
 
-                <TextBlock Grid.Column="1" Text="{Binding CurrentTitle}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="24,0,0,0" FontSize="13" Foreground="{DynamicResource Brush.Text.Tertiary}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,16,0">
+                    <TextBox x:Name="GlobalSearchBox" Style="{StaticResource TextBox.Search}" Width="240" Height="30"
+                             Tag="Search programs or open a section…" Text="{Binding GlobalSearchText, UpdateSourceTrigger=PropertyChanged}"
+                             KeyDown="OnGlobalSearchKeyDown" AutomationProperties.Name="Search programs or navigate to a section"
+                             WindowChrome.IsHitTestVisibleInChrome="True" />
+                    <Button Style="{StaticResource Button.Ghost}" Content="&#xE721;" FontFamily="{StaticResource Font.Icons}" FontSize="14"
+                            Command="{Binding SearchCommand}" ToolTip="Search programs or open a section" Margin="4,0,0,0" Padding="8,6"
+                            WindowChrome.IsHitTestVisibleInChrome="True" />
+                </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
                     <Border Background="{DynamicResource Brush.Success.Subtle}" CornerRadius="10" Padding="8,2" Margin="0,0,10,0" VerticalAlignment="Center"
@@ -71,9 +79,9 @@
         <!-- ═══ Body (scaled by the text-size setting; scrolls when the zoomed body no longer fits) ═══ -->
         <ScrollViewer Grid.Row="1" x:Name="BodyScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                       ScrollChanged="OnBodyScrollChanged" Focusable="False" PanningMode="None">
-        <Grid x:Name="Body" HorizontalAlignment="Left" VerticalAlignment="Top">
+        <Grid x:Name="Body" HorizontalAlignment="Left" VerticalAlignment="Top" Background="{DynamicResource Brush.Window.Background}">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="236" />
+            <ColumnDefinition Width="224" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
@@ -92,7 +100,7 @@
                 </StackPanel>
 
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding NavItems}" Margin="0,10,0,0">
+                    <ItemsControl ItemsSource="{Binding NavItems}" Margin="0,18,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:NavItemViewModel}">
                                 <RadioButton Style="{StaticResource Button.Nav}" GroupName="MainNav" Content="{Binding Title}"

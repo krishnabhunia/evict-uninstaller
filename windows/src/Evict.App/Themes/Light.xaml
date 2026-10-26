@@ -4,8 +4,8 @@
     <!-- ═══════════════ Light theme ═══════════════ -->
     <SolidColorBrush x:Key="Brush.Window.Background" Color="#F3F5F9" />
     <SolidColorBrush x:Key="Brush.TitleBar.Background" Color="#FFFFFF" />
-    <SolidColorBrush x:Key="Brush.Sidebar.Background" Color="#FFFFFF" />
-    <SolidColorBrush x:Key="Brush.Sidebar.Border" Color="#E4E8EF" />
+    <SolidColorBrush x:Key="Brush.Sidebar.Background" Color="#111C2F" />
+    <SolidColorBrush x:Key="Brush.Sidebar.Border" Color="#26354B" />
 
     <SolidColorBrush x:Key="Brush.Card.Background" Color="#FFFFFF" />
     <SolidColorBrush x:Key="Brush.Card.Border" Color="#E3E7EE" />
@@ -46,10 +46,11 @@
     <SolidColorBrush x:Key="Brush.Divider" Color="#E6E9EF" />
     <SolidColorBrush x:Key="Brush.Header.Background" Color="#F7F8FB" />
 
-    <SolidColorBrush x:Key="Brush.Nav.Selected" Color="#E8EEFD" />
-    <SolidColorBrush x:Key="Brush.Nav.Hover" Color="#F2F4F8" />
-    <SolidColorBrush x:Key="Brush.Nav.Text" Color="#2B3342" />
-    <SolidColorBrush x:Key="Brush.Nav.Icon" Color="#5B6472" />
+    <SolidColorBrush x:Key="Brush.Nav.Selected" Color="#263A59" />
+    <SolidColorBrush x:Key="Brush.Nav.SelectedText" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="Brush.Nav.Hover" Color="#1B2A40" />
+    <SolidColorBrush x:Key="Brush.Nav.Text" Color="#D8E0ED" />
+    <SolidColorBrush x:Key="Brush.Nav.Icon" Color="#98A9C2" />
 
     <SolidColorBrush x:Key="Brush.Badge.Background" Color="#EEF1F6" />
     <SolidColorBrush x:Key="Brush.Progress.Track" Color="#E4E8EF" />

@@ -21,8 +21,8 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="Software Health" Style="{StaticResource Text.Title}" />
-                    <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Outdated software, leftovers, setup files and caches, uninstall problems, notifications, permissions, background updaters and security – tick what to fix and press Fix selected, or open a category to review it." TextWrapping="Wrap" />
+                    <TextBlock Text="Overview" Style="{StaticResource Text.Title}" />
+                    <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="A quick view of your software health, with checks and fixes you can review before applying." TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                     <Button Style="{StaticResource Button.Secondary}" Command="{Binding FixSelectedCommand}" IsEnabled="{Binding CanFix}" Padding="14,8" Margin="0,0,10,0"
