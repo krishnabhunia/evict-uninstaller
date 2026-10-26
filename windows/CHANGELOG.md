@@ -1,10 +1,11 @@
 # Changelog
 
-## 2.1.2 — 2026-10-26
+## 3.0.0 — 2026-10-26
 
 <!-- Evict automatic release; base: win-v2.1.1 -->
 
 - ghcopilot-Evict-UI-UX-Redesign
+- feat!: implement approved orange-accented Windows UI redesign
 
 ## 2.1.1 — 2026-10-26
 
