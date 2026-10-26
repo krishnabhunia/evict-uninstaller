@@ -48,7 +48,7 @@ for k in sorted(light ^ dark):
 members = set()
 for f in cs_files:
     text = f.read_text(encoding="utf-8")
-    members |= set(re.findall(r'public\s+[\w<>?,\[\] ()]+\s+(\w+)\s*(?:\{|=>|;)', text))            # properties
+    members |= set(re.findall(r'public\s+[\w<>?,.\[\] ()]+\s+(\w+)\s*(?:\{|=>|;)', text))            # properties
     for fld in re.findall(r'\[ObservableProperty\][^;]*?\s_(\w+)\s*(?:=|;)', text, flags=re.S):
         members.add(fld[0].upper() + fld[1:])
     for m in re.findall(r'\[RelayCommand[^\]]*\]\s*(?:private|public|internal)?\s*(?:async\s+)?[\w<>?]+\s+(\w+)\s*\(', text):

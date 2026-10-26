@@ -16,74 +16,50 @@
         Icon="pack://application:,,,/Assets/app.ico">
 
     <WindowChrome.WindowChrome>
-        <!-- A 1px glass edge at the bottom keeps the DWM drop shadow while we draw our own title bar. -->
-        <WindowChrome CaptionHeight="44" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1" CornerRadius="0" UseAeroCaptionButtons="False" NonClientFrameEdges="None" />
+        <!-- A 1px glass edge at the bottom keeps the DWM drop shadow while we draw our own title bar.
+             The top 56px (logo row + page header) drag the window. -->
+        <WindowChrome CaptionHeight="56" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1" CornerRadius="0" UseAeroCaptionButtons="False" NonClientFrameEdges="None" />
     </WindowChrome.WindowChrome>
 
     <Grid Margin="{Binding WindowState, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource MaxMargin}}">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="44" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
-        <!-- ═══ Title bar ═══ -->
-        <Border Grid.Row="0" Background="{DynamicResource Brush.TitleBar.Background}" BorderBrush="{DynamicResource Brush.Sidebar.Border}" BorderThickness="0,0,0,1">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" MinWidth="236" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
-                    <Image Source="pack://application:,,,/Assets/app-256.png" Width="22" Height="22" RenderOptions.BitmapScalingMode="HighQuality" />
-                    <TextBlock Text="Evict" FontSize="16" FontWeight="Bold" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}" />
-                    <TextBlock Text="Uninstaller" FontSize="16" FontWeight="Light" Margin="5,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" />
-                    <!-- Version in the title bar: always visible (the sidebar scrolls with the text-size zoom). -->
-                    <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="6,1" Margin="8,2,0,0" VerticalAlignment="Center"
-                            ToolTip="Installed version – check Settings → Updates for newer releases">
-                        <TextBlock Text="{Binding VersionText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Accent}" />
-                    </Border>
-                </StackPanel>
-
-                <TextBlock Grid.Column="1" Text="{Binding CurrentTitle}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="24,0,0,0" FontSize="13" Foreground="{DynamicResource Brush.Text.Tertiary}" />
-
-                <StackPanel Grid.Column="2" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
-                    <Border Background="{DynamicResource Brush.Success.Subtle}" CornerRadius="10" Padding="8,2" Margin="0,0,10,0" VerticalAlignment="Center"
-                            Visibility="{Binding IsElevated, Converter={StaticResource BoolToVis}}" ToolTip="Evict is running with administrator rights">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE7EF;" Style="{StaticResource Icon}" FontSize="11" Foreground="{DynamicResource Brush.Success}" />
-                            <TextBlock Text="Administrator" FontSize="11" FontWeight="SemiBold" Margin="5,0,0,0" Foreground="{DynamicResource Brush.Success}" />
-                        </StackPanel>
-                    </Border>
-                    <Button Command="{Binding OpenUpdatesCommand}" Content="{Binding AvailableUpdateButtonText}"
-                            Visibility="{Binding HasAvailableUpdate, Converter={StaticResource BoolToVis}}"
-                            Style="{StaticResource Button.Secondary}" ToolTip="{Binding UpdateBannerText}"
-                            VerticalAlignment="Center" Height="28" Padding="10,4" Margin="0,0,8,0" FontSize="12"
-                            WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="{Binding AvailableUpdateButtonText}" />
-                    <Button Style="{StaticResource Button.Caption}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimize" />
-                    <Button x:Name="MaxRestoreButton" Style="{StaticResource Button.Caption}" Content="&#xE922;" Click="OnMaximizeRestore" ToolTip="Maximize" />
-                    <Button Style="{StaticResource Button.Caption.Close}" Content="&#xE8BB;" Click="OnClose" ToolTip="Close" />
-                </StackPanel>
-            </Grid>
-        </Border>
 
         <!-- ═══ Body (scaled by the text-size setting; scrolls when the zoomed body no longer fits) ═══ -->
-        <ScrollViewer Grid.Row="1" x:Name="BodyScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+        <ScrollViewer x:Name="BodyScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                       ScrollChanged="OnBodyScrollChanged" Focusable="False" PanningMode="None">
         <Grid x:Name="Body" HorizontalAlignment="Left" VerticalAlignment="Top">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="236" />
+            <ColumnDefinition Width="232" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <!-- ═══ Sidebar ═══ -->
+        <!-- ═══ Menu (RD1 N1): Home · Apps · Updates · Clean · History, Settings at the bottom ═══ -->
         <Border Grid.Column="0" Background="{DynamicResource Brush.Sidebar.Background}" BorderBrush="{DynamicResource Brush.Sidebar.Border}" BorderThickness="0,0,1,0">
             <DockPanel>
-                <StackPanel DockPanel.Dock="Bottom" Margin="10,8,10,14">
-                    <Border Style="{StaticResource Divider}" Margin="6,0,6,10" />
-                    <Button Style="{StaticResource Button.Secondary}" Command="{Binding RestartAsAdministratorCommand}" HorizontalAlignment="Stretch"
-                            Visibility="{Binding IsElevated, Converter={StaticResource InvBoolToVis}}" Margin="0,0,0,10">
+                <!-- Logo, name and version (the version is always visible in the main window). -->
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="22,18,12,0" Height="30">
+                    <Image Source="pack://application:,,,/Assets/app-256.png" Width="24" Height="24" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                    <TextBlock Text="Evict" FontSize="17" FontWeight="Bold" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}" />
+                    <Border Background="{DynamicResource Brush.Surface.Sunken}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1" CornerRadius="7" Padding="6,0" Margin="8,1,0,0" VerticalAlignment="Center"
+                            ToolTip="Installed version – Settings → Updates checks for newer releases">
+                        <TextBlock Text="{Binding VersionText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                    </Border>
+                </StackPanel>
+
+                <Button DockPanel.Dock="Top" Style="{StaticResource Button.RailSearch}" Command="{Binding OpenSearchCommand}" Margin="14,18,14,12"
+                        ToolTip="Search programs, tools, pages and settings (Ctrl+K)" AutomationProperties.Name="Search (Ctrl+K)" />
+
+                <!-- Bottom: Settings, then who Evict runs as. -->
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,14">
+                    <RadioButton DataContext="{Binding SettingsNav}" Style="{StaticResource Button.Nav}" GroupName="MainNav" Content="{Binding Title}"
+                                 IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                    <Border Style="{StaticResource Divider}" Margin="22,10,22,10" />
+                    <StackPanel Orientation="Horizontal" Margin="24,2,12,0" Visibility="{Binding IsElevated, Converter={StaticResource BoolToVis}}"
+                                ToolTip="Evict can remove machine-wide programs, Program Files leftovers and services, and make restore points">
+                        <Ellipse Width="8" Height="8" Fill="{DynamicResource Brush.Success}" VerticalAlignment="Center" />
+                        <TextBlock Text="Running as administrator" FontSize="12" Margin="8,0,0,0" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                    </StackPanel>
+                    <Button Style="{StaticResource Button.Secondary}" Command="{Binding RestartAsAdministratorCommand}" HorizontalAlignment="Stretch" Margin="14,0"
+                            Visibility="{Binding IsElevated, Converter={StaticResource InvBoolToVis}}">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE7EF;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Accent}" />
                             <TextBlock Text="Restart as administrator" Margin="8,0,0,0" />
@@ -92,11 +68,11 @@
                 </StackPanel>
 
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding NavItems}" Margin="0,10,0,0">
+                    <ItemsControl ItemsSource="{Binding NavItems}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:NavItemViewModel}">
                                 <RadioButton Style="{StaticResource Button.Nav}" GroupName="MainNav" Content="{Binding Title}"
-                                             IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                                             IsChecked="{Binding IsSelected, Mode=TwoWay}" AutomationProperties.Name="{Binding Title}" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -112,11 +88,53 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
+            <!-- Page header: title + subtitle; "Update to vX" top-right, only when an update exists. -->
+            <DockPanel Grid.Row="0" Margin="28,16,150,12" MinHeight="48">
+                <Button DockPanel.Dock="Right" Command="{Binding OpenUpdatesCommand}" Style="{StaticResource Button.Update}"
+                        Visibility="{Binding HasAvailableUpdate, Converter={StaticResource BoolToVis}}" ToolTip="{Binding UpdateBannerText}"
+                        VerticalAlignment="Top" WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="{Binding AvailableUpdateButtonText}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE896;" Style="{StaticResource Icon}" FontSize="12" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        <TextBlock Text="{Binding AvailableUpdateButtonText}" Margin="6,0,0,0" />
+                    </StackPanel>
+                </Button>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding CurrentTitle}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding CurrentSubtitle}" FontSize="13" Margin="0,2,0,0" Foreground="{DynamicResource Brush.Text.Secondary}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </DockPanel>
+
+            <!-- Tabs for menu entries with more than one page (Apps, Clean). -->
+            <Border Grid.Row="1" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1" Margin="28,0,28,6"
+                    Visibility="{Binding HasTabs, Converter={StaticResource BoolToVis}}">
+                <ItemsControl ItemsSource="{Binding CurrentTabs}" Margin="-12,0,0,0">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:PageTabViewModel}">
+                            <RadioButton Style="{StaticResource Button.Tab}" GroupName="PageTabs" IsChecked="{Binding IsSelected, Mode=TwoWay}" AutomationProperties.Name="{Binding Title}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Title}" />
+                                    <Border Style="{StaticResource Badge}" Visibility="{Binding Badge, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock Text="{Binding Badge}" Style="{StaticResource Badge.Text}" />
+                                    </Border>
+                                </StackPanel>
+                            </RadioButton>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+
             <!-- Generic notice (background results when no tray icon is shown) -->
-            <Border Grid.Row="0" Background="{DynamicResource Brush.Header.Background}" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1" Padding="20,8"
+            <Border Grid.Row="2" Background="{DynamicResource Brush.Header.Background}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1" CornerRadius="12" Padding="16,8" Margin="28,0,28,10"
                     Visibility="{Binding HasNotice, Converter={StaticResource BoolToVis}}">
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource Button.Ghost}" Content="&#xE8BB;" FontFamily="{StaticResource Font.Icons}" FontSize="10" Padding="8,4"
@@ -129,7 +147,7 @@
             </Border>
 
             <!-- Installer detected prompt -->
-            <Border Grid.Row="1" Background="{DynamicResource Brush.Info.Subtle}" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1" Padding="20,8"
+            <Border Grid.Row="3" Background="{DynamicResource Brush.Info.Subtle}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1" CornerRadius="12" Padding="16,8" Margin="28,0,28,10"
                     Visibility="{Binding ShowInstallerBanner, Converter={StaticResource BoolToVis}}">
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource Button.Ghost}" Content="&#xE8BB;" FontFamily="{StaticResource Font.Icons}" FontSize="10" Padding="8,4"
@@ -141,7 +159,7 @@
             </Border>
 
             <!-- Update available banner -->
-            <Border Grid.Row="2" Background="{DynamicResource Brush.Accent.Subtle}" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1" Padding="20,8"
+            <Border Grid.Row="4" Background="{DynamicResource Brush.Accent.Subtle}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1" CornerRadius="12" Padding="16,8" Margin="28,0,28,10"
                     Visibility="{Binding ShowUpdateBanner, Converter={StaticResource BoolToVis}}">
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource Button.Ghost}" Content="&#xE8BB;" FontFamily="{StaticResource Font.Icons}" FontSize="10" Padding="8,4"
@@ -154,7 +172,7 @@
             </Border>
 
             <!-- "Updated" notice (first start after a self-update) -->
-            <Border Grid.Row="3" Background="{DynamicResource Brush.Success.Subtle}" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1" Padding="20,8"
+            <Border Grid.Row="5" Background="{DynamicResource Brush.Success.Subtle}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1" CornerRadius="12" Padding="16,8" Margin="28,0,28,10"
                     Visibility="{Binding ShowUpdatedNotice, Converter={StaticResource BoolToVis}}">
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource Button.Ghost}" Content="&#xE8BB;" FontFamily="{StaticResource Font.Icons}" FontSize="10" Padding="8,4"
@@ -166,7 +184,7 @@
             </Border>
 
             <!-- Admin banner -->
-            <Border Grid.Row="4" Background="{DynamicResource Brush.Warning.Subtle}" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1" Padding="20,8"
+            <Border Grid.Row="6" Background="{DynamicResource Brush.Warning.Subtle}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1" CornerRadius="12" Padding="16,8" Margin="28,0,28,10"
                     Visibility="{Binding ShowAdminBanner, Converter={StaticResource BoolToVis}}">
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource Button.Ghost}" Content="&#xE8BB;" FontFamily="{StaticResource Font.Icons}" FontSize="10" Padding="8,4"
@@ -178,9 +196,16 @@
                 </DockPanel>
             </Border>
 
-            <ContentControl Grid.Row="5" Content="{Binding CurrentPage}" Focusable="False" />
+            <ContentControl Grid.Row="7" Content="{Binding CurrentPage}" Focusable="False" />
         </Grid>
         </Grid>
         </ScrollViewer>
+
+        <!-- Caption buttons stay outside the zoomed body so they never scale or scroll away. -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" WindowChrome.IsHitTestVisibleInChrome="True" Panel.ZIndex="1">
+            <Button Style="{StaticResource Button.Caption}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimize" />
+            <Button x:Name="MaxRestoreButton" Style="{StaticResource Button.Caption}" Content="&#xE922;" Click="OnMaximizeRestore" ToolTip="Maximize" />
+            <Button Style="{StaticResource Button.Caption.Close}" Content="&#xE8BB;" Click="OnClose" ToolTip="Close" />
+        </StackPanel>
     </Grid>
 </Window>

@@ -59,7 +59,7 @@ public partial class MainWindow : Window
 
     // The body keeps a minimum logical size (sidebar + a usable content column). At large text sizes that is
     // bigger than the window, so BodyScroll shows scrollbars instead of squeezing the pages.
-    private const double BodyMinLogicalWidth = 760;   // sidebar 236 + a usable content column
+    private const double BodyMinLogicalWidth = 760;   // menu 232 + a usable content column
     private const double BodyMinLogicalHeight = 480;
 
     private void ApplyScale(double s)
@@ -91,6 +91,8 @@ public partial class MainWindow : Window
             case Key.OemPlus or Key.Add: App.UiState.Step(+1); e.Handled = true; break;
             case Key.OemMinus or Key.Subtract: App.UiState.Step(-1); e.Handled = true; break;
             case Key.D0 or Key.NumPad0: App.UiState.Reset(); e.Handled = true; break;
+            case Key.K:
+                ((ViewModels.MainViewModel)DataContext).OpenSearchCommand.Execute(null); e.Handled = true; break;
         }
     }
 

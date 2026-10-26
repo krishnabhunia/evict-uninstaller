@@ -12,12 +12,28 @@ namespace Evict.App.ViewModels;
 
 public enum PageKey { Health, Programs, WindowsApps, BrowserExtensions, SoftwareUpdater, InstallMonitor, Tools, History, Settings }
 
+/// <summary>One entry in the menu (RD1): Home, Apps, Updates, Clean, History, Settings. An entry can hold several pages (shown as tabs).</summary>
 public sealed partial class NavItemViewModel : ObservableObject
 {
     public required PageKey Key { get; init; }
     public required string Title { get; init; }
     public required string Glyph { get; init; }
+    /// <summary>The pages this entry shows as tabs (the first one is <see cref="Key"/>).</summary>
+    public PageKey[] Pages { get; init; } = [];
+    /// <summary>Badge drawn in the accent colour (Updates) instead of grey.</summary>
+    public bool BadgeIsAccent { get; init; }
+    /// <summary>The tab that was open last, so clicking the entry again returns to it.</summary>
+    public PageKey LastPage { get; set; }
 
+    [ObservableProperty] private bool _isSelected;
+    [ObservableProperty] private string? _badge;
+}
+
+/// <summary>A tab under the page header (e.g. Apps → Programs / Store apps / Browser extensions).</summary>
+public sealed partial class PageTabViewModel : ObservableObject
+{
+    public required PageKey Key { get; init; }
+    public required string Title { get; init; }
     [ObservableProperty] private bool _isSelected;
     [ObservableProperty] private string? _badge;
 }
@@ -38,30 +54,54 @@ public sealed partial class MainViewModel : ObservableObject
         _updateChecks.CheckingChanged += value => IsCheckingForUpdates = value;
         NavItems = new ObservableCollection<NavItemViewModel>
         {
-            new() { Key = PageKey.Health, Title = "Software Health", Glyph = "" },
-            new() { Key = PageKey.Programs, Title = "Programs", Glyph = "" },
-            new() { Key = PageKey.WindowsApps, Title = "Windows Apps", Glyph = "" },
-            new() { Key = PageKey.BrowserExtensions, Title = "Browser Extensions", Glyph = "" },
-            new() { Key = PageKey.SoftwareUpdater, Title = "Software Updater", Glyph = "" },
-            new() { Key = PageKey.InstallMonitor, Title = "Install Monitor", Glyph = "" },
-            new() { Key = PageKey.Tools, Title = "Tools", Glyph = "" },
-            new() { Key = PageKey.History, Title = "History", Glyph = "" },
-            new() { Key = PageKey.Settings, Title = "Settings", Glyph = "" },
+            new() { Key = PageKey.Health, Title = "Home", Glyph = "\uE80F", Pages = [PageKey.Health] },
+            new() { Key = PageKey.Programs, Title = "Apps", Glyph = "\uE71D", Pages = [PageKey.Programs, PageKey.WindowsApps, PageKey.BrowserExtensions] },
+            new() { Key = PageKey.SoftwareUpdater, Title = "Updates", Glyph = "\uE895", Pages = [PageKey.SoftwareUpdater], BadgeIsAccent = true },
+            new() { Key = PageKey.Tools, Title = "Clean", Glyph = "\uE74D", Pages = [PageKey.Tools, PageKey.InstallMonitor] },
+            new() { Key = PageKey.History, Title = "History", Glyph = "\uE81C", Pages = [PageKey.History] },
         };
-        foreach (var item in NavItems)
+        SettingsNav = new NavItemViewModel { Key = PageKey.Settings, Title = "Settings", Glyph = "\uE713", Pages = [PageKey.Settings] };
+        foreach (var item in AllNav)
         {
+            item.LastPage = item.Key;
             item.PropertyChanged += (s, e) =>
             {
-                if (e.PropertyName == nameof(NavItemViewModel.IsSelected) && s is NavItemViewModel { IsSelected: true } n) Navigate(n.Key);
+                if (_navigating || e.PropertyName != nameof(NavItemViewModel.IsSelected)) return;
+                if (s is NavItemViewModel { IsSelected: true } n) Navigate(n.LastPage);
             };
         }
         Navigate(PageKey.Health);
     }
 
+    /// <summary>Menu entries above the line; Settings sits on its own at the bottom of the menu.</summary>
     public ObservableCollection<NavItemViewModel> NavItems { get; }
+    public NavItemViewModel SettingsNav { get; }
+    private IEnumerable<NavItemViewModel> AllNav => NavItems.Append(SettingsNav);
+    private bool _navigating;
 
     [ObservableProperty] private ObservableObject? _currentPage;
-    [ObservableProperty] private string _currentTitle = "Software Health";
+    [ObservableProperty] private PageKey _currentKey = PageKey.Health;
+    [ObservableProperty] private string _currentTitle = "Home";
+    [ObservableProperty] private string _currentSubtitle = "";
+    /// <summary>Tabs under the header for the open menu entry; empty when it has a single page.</summary>
+    [ObservableProperty] private IReadOnlyList<PageTabViewModel> _currentTabs = [];
+    public bool HasTabs => CurrentTabs.Count > 1;
+    partial void OnCurrentTabsChanged(IReadOnlyList<PageTabViewModel> value) => OnPropertyChanged(nameof(HasTabs));
+
+    /// <summary>Header titles and subtitles (plain words, RD1).</summary>
+    public static (string Group, string Tab, string Subtitle) PageInfo(PageKey key) => key switch
+    {
+        PageKey.Health => ("Home", "Home", "A quick check of everything Evict looks after"),
+        PageKey.Programs => ("Apps", "Programs", "Everything installed on this PC – tick several to remove them together"),
+        PageKey.WindowsApps => ("Apps", "Store apps", "Apps from the Microsoft Store and the ones Windows comes with"),
+        PageKey.BrowserExtensions => ("Apps", "Browser extensions", "Add-ons in Chrome, Edge, Brave, Vivaldi, Opera and Firefox"),
+        PageKey.SoftwareUpdater => ("Updates", "Updates", "Keep your programs up to date"),
+        PageKey.Tools => ("Clean", "Tools", "Free up space and tidy Windows – everything goes to the Recycle Bin first"),
+        PageKey.InstallMonitor => ("Clean", "Install Monitor", "Record what an installer adds, so it can be removed completely later"),
+        PageKey.History => ("History", "History", "Everything Evict has done on this PC"),
+        PageKey.Settings => ("Settings", "Settings", "How Evict behaves"),
+        _ => (key.ToString(), key.ToString(), ""),
+    };
     [ObservableProperty] private bool _isWidgetVisible;
 
     public bool IsElevated => ElevationHelper.IsElevated;
@@ -105,7 +145,14 @@ public sealed partial class MainViewModel : ObservableObject
         if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel vm) vm.RefreshUpdateChannel();
     }
 
-    [RelayCommand] private void OpenUpdateSettings() => Navigate(PageKey.Settings);
+    [RelayCommand] private void OpenUpdateSettings() => OpenSettings("Updates");
+
+    /// <summary>Opens Settings at one of <see cref="SettingsSections.All"/>.</summary>
+    public void OpenSettings(string section)
+    {
+        Navigate(PageKey.Settings);
+        GetPage<SettingsViewModel>(PageKey.Settings).SelectedSection = section;
+    }
 
     private bool CanOpenUpdates() => !IsCheckingForUpdates;
 
@@ -118,16 +165,49 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        Navigate(PageKey.Settings);
+        OpenSettings("Updates");
         await GetPage<SettingsViewModel>(PageKey.Settings).CheckForUpdatesNowCommand.ExecuteAsync(null);
     }
 
     public void Navigate(PageKey key)
     {
-        foreach (var n in NavItems) if (n.Key == key && !n.IsSelected) n.IsSelected = true;
-        CurrentTitle = NavItems.First(n => n.Key == key).Title;
+        var group = AllNav.First(n => n.Pages.Contains(key));
+        _navigating = true;
+        try
+        {
+            foreach (var n in AllNav) if (n.IsSelected != (n == group)) n.IsSelected = n == group;
+            group.LastPage = key;
+            if (CurrentTabs.Count == 0 || !CurrentTabs.Any(t => t.Key == key))
+            {
+                var tabs = group.Pages.Select(p => new PageTabViewModel { Key = p, Title = PageInfo(p).Tab }).ToList();
+                foreach (var t in tabs)
+                    t.PropertyChanged += (s, e) =>
+                    {
+                        if (!_navigating && e.PropertyName == nameof(PageTabViewModel.IsSelected) && s is PageTabViewModel { IsSelected: true } tab) Navigate(tab.Key);
+                    };
+                CurrentTabs = tabs;
+            }
+            foreach (var t in CurrentTabs) t.IsSelected = t.Key == key;
+        }
+        finally { _navigating = false; }
+
+        var info = PageInfo(key);
+        CurrentKey = key;
+        CurrentTitle = info.Group;
+        CurrentSubtitle = info.Subtitle;
         CurrentPage = GetOrCreate(key);
         if (CurrentPage is IActivatable a) a.OnActivated();
+    }
+
+    [RelayCommand] private void NavigateTo(PageKey key) => Navigate(key);
+
+    /// <summary>Ctrl+K / the search box in the menu.</summary>
+    [RelayCommand]
+    private void OpenSearch()
+    {
+        var owner = Application.Current.MainWindow;
+        if (owner is { IsVisible: true } && owner.OwnedWindows.OfType<SearchWindow>().Any()) return;
+        new SearchWindow { DataContext = new SearchViewModel(this), Owner = owner is { IsVisible: true } ? owner : null }.Show();
     }
 
     private ObservableObject GetOrCreate(PageKey key)
@@ -173,9 +253,16 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void SetBadge(PageKey key, int count)
     {
-        var item = NavItems.FirstOrDefault(n => n.Key == key);
-        if (item != null) item.Badge = count > 0 ? count.ToString() : null;
+        var text = count > 0 ? count.ToString() : null;
+        var item = AllNav.FirstOrDefault(n => n.Pages.Contains(key));
+        if (item is null) return;
+        if (item.Pages.Length == 1) { item.Badge = text; return; }
+        _tabBadges[key] = text;
+        foreach (var t in CurrentTabs) if (_tabBadges.TryGetValue(t.Key, out var b)) t.Badge = b;
+        // The menu entry shows the first tab's count (Apps → number of programs).
+        item.Badge = _tabBadges.GetValueOrDefault(item.Key);
     }
+    private readonly Dictionary<PageKey, string?> _tabBadges = new();
 
     // ───────────────────────────── command line / IPC ─────────────────────────────
 
