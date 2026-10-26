@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0 — 2026-10-26
+
+<!-- Evict automatic release; base: win-v2.1.1 -->
+
+- ghcopilot-Evict-UI-UX-Redesign
+- claude-ui-ux-redesign: new Evict look and navigation (RD1)
+
 ## 2.1.1 — 2026-10-26
 
 <!-- Evict automatic release; base: win-v2.1.0 -->
