@@ -22,7 +22,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock Text="Install Monitor" Style="{StaticResource Text.Title}" />
-                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Records every file, folder and registry key an installer creates so the program can be removed completely later – even if its own uninstaller is poor. Drop an installer here or pick one." />
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Record installer activity, inspect captured changes and reuse the log during removal. Recording requires consent; drop an installer here or choose one." />
             </StackPanel>
             <Button Grid.Column="1" Style="{StaticResource Button.Primary}" Command="{Binding MonitorNewInstallCommand}" IsEnabled="{Binding IsMonitoring, Converter={StaticResource InvBool}}" Padding="14,8" VerticalAlignment="Top">
                 <StackPanel Orientation="Horizontal">

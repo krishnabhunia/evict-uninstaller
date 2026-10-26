@@ -34,13 +34,14 @@
         </Grid.RowDefinitions>
 
         <!-- ═══ Header ═══ -->
-        <Grid Grid.Row="0">
+        <StackPanel Grid.Row="0">
+        <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="Programs" Style="{StaticResource Text.Title}" />
+                <TextBlock Text="Installed Programs" Style="{StaticResource Text.Title}" />
                 <TextBlock Text="{Binding TabDescription}" Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
@@ -65,6 +66,25 @@
                 </ToggleButton>
             </StackPanel>
         </Grid>
+            <UniformGrid Columns="4" Margin="0,17,0,0">
+                <Border Style="{StaticResource Card}" Margin="0,0,10,0" Padding="15,12">
+                    <StackPanel><TextBlock Text="INSTALLED PROGRAMS" Style="{StaticResource Text.Label}" />
+                        <TextBlock Text="{Binding CountAll}" FontSize="23" FontWeight="Bold" Margin="0,4,0,0" /></StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Margin="0,0,10,0" Padding="15,12">
+                    <StackPanel><TextBlock Text="RECENTLY INSTALLED" Style="{StaticResource Text.Label}" />
+                        <TextBlock Text="{Binding CountRecent}" FontSize="23" FontWeight="Bold" Margin="0,4,0,0" /></StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Margin="0,0,10,0" Padding="15,12">
+                    <StackPanel><TextBlock Text="LARGE PROGRAMS" Style="{StaticResource Text.Label}" />
+                        <TextBlock Text="{Binding CountLarge}" FontSize="23" FontWeight="Bold" Margin="0,4,0,0" /></StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Padding="15,12">
+                    <StackPanel><TextBlock Text="UNINSTALL ISSUES" Style="{StaticResource Text.Label}" />
+                        <TextBlock Text="{Binding CountBroken}" FontSize="23" FontWeight="Bold" Margin="0,4,0,0" /></StackPanel>
+                </Border>
+            </UniformGrid>
+        </StackPanel>
 
         <!-- ═══ Tabs ═══ -->
         <Border Grid.Row="1" Margin="0,14,0,0" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">

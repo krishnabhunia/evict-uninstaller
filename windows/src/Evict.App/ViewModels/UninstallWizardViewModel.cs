@@ -92,6 +92,20 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
     public ObservableCollection<string> LogLines { get; } = new();
 
     [ObservableProperty] private WizardStep _step = WizardStep.Confirm;
+    // Presentation-only label for the approved progress header; does not affect the safety workflow.
+    public string StepLabel => Step switch
+    {
+        WizardStep.Confirm => "1 · Review options",
+        WizardStep.Running => "2 · Uninstalling",
+        WizardStep.Review => "3 · Review leftover files",
+        WizardStep.RegistryReview => "4 · Review registry entries",
+        WizardStep.Cleaning => "5 · Cleaning selected items",
+        WizardStep.Done => "6 · Results and recovery",
+        _ => "Uninstall",
+    };
+
+    partial void OnStepChanged(WizardStep value) => OnPropertyChanged(nameof(StepLabel));
+
     [ObservableProperty] private bool _createRestorePoint;
     [ObservableProperty] private bool _quietMode;
     [ObservableProperty] private bool _autoClean;

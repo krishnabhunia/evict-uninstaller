@@ -32,7 +32,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock Text="Windows Apps" Style="{StaticResource Text.Title}" />
-                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Microsoft Store and pre-installed (UWP / MSIX) apps, including bloatware Windows ships with. Apps marked non-removable by Windows are greyed out." />
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Review Microsoft Store and built-in applications before removal. Protected Windows components cannot be selected." />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                 <TextBox Style="{StaticResource TextBox.Search}" Width="240" Tag="Search apps…" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=150}" />

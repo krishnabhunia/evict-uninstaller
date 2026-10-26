@@ -8,7 +8,7 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:UninstallWizardViewModel}"
         Style="{StaticResource Window.Dialog}"
-        Title="{Binding Title}" Width="900" Height="640" MinWidth="760" MinHeight="520"
+        Title="{Binding Title}" Width="940" Height="690" MinWidth="760" MinHeight="520"
         Icon="pack://application:,,,/Assets/app.ico">
 
     <Grid Margin="24">
@@ -22,6 +22,14 @@
         <StackPanel Grid.Row="0" Margin="0,0,0,16">
             <TextBlock Text="{Binding Title}" Style="{StaticResource Text.Title}" />
             <TextBlock Text="{Binding Subtitle}" Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" />
+            <Grid Margin="0,16,0,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="12,7">
+                    <TextBlock Text="{Binding StepLabel}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Accent}" />
+                </Border>
+                <TextBlock Grid.Column="1" Text="Confirm  ·  Uninstall  ·  Leftovers  ·  Registry  ·  Done"
+                           Style="{StaticResource Text.Caption}" VerticalAlignment="Center" HorizontalAlignment="Right" />
+            </Grid>
         </StackPanel>
 
         <!-- ═══ Step 1: Confirm ═══ -->

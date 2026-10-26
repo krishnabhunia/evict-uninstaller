@@ -20,7 +20,7 @@
     </Style>
 
     <Style x:Key="Text.Title" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="22" />
+        <Setter Property="FontSize" Value="25" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
@@ -31,7 +31,7 @@
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style x:Key="Text.Section" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontSize" Value="14" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
     </Style>
@@ -61,15 +61,15 @@
         <Setter Property="Background" Value="{DynamicResource Brush.Card.Background}" />
         <Setter Property="BorderBrush" Value="{DynamicResource Brush.Card.Border}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="10" />
-        <Setter Property="Padding" Value="16" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="Padding" Value="18" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
     </Style>
 
     <Style x:Key="Badge" TargetType="Border">
         <Setter Property="Background" Value="{DynamicResource Brush.Badge.Background}" />
-        <Setter Property="CornerRadius" Value="9" />
-        <Setter Property="Padding" Value="7,1" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Padding" Value="8,2" />
         <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="Margin" Value="6,0,0,0" />
     </Style>
@@ -91,7 +91,7 @@
                 Background="{TemplateBinding Background}"
                 BorderBrush="{TemplateBinding BorderBrush}"
                 BorderThickness="{TemplateBinding BorderThickness}"
-                CornerRadius="6"
+                CornerRadius="8"
                 Padding="{TemplateBinding Padding}"
                 SnapsToDevicePixels="True">
             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -258,8 +258,8 @@
         <Setter Property="Foreground" Value="{DynamicResource Brush.Nav.Text}" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="FontSize" Value="13.5" />
-        <Setter Property="Height" Value="40" />
-        <Setter Property="Margin" Value="10,2" />
+        <Setter Property="Height" Value="42" />
+        <Setter Property="Margin" Value="9,2" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
@@ -290,7 +290,7 @@
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Nav.Selected}" />
                             <Setter TargetName="Indicator" Property="Visibility" Value="Visible" />
                             <Setter TargetName="Glyph" Property="Foreground" Value="{DynamicResource Brush.Accent}" />
-                            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                            <Setter Property="Foreground" Value="{DynamicResource Brush.Nav.SelectedText}" />
                             <Setter Property="FontWeight" Value="SemiBold" />
                         </Trigger>
                     </ControlTemplate.Triggers>

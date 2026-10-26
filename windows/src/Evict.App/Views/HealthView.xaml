@@ -22,7 +22,7 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="Software Health" Style="{StaticResource Text.Title}" />
-                    <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Outdated software, leftovers, setup files and caches, uninstall problems, notifications, permissions, background updaters and security – tick what to fix and press Fix selected, or open a category to review it." TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Review software health, reclaim recoverable space and inspect recommendations before making changes." TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                     <Button Style="{StaticResource Button.Secondary}" Command="{Binding FixSelectedCommand}" IsEnabled="{Binding CanFix}" Padding="14,8" Margin="0,0,10,0"
@@ -41,19 +41,31 @@
                 </StackPanel>
             </Grid>
 
-            <!-- Score card -->
-            <Border Style="{StaticResource Card}" Margin="0,16,0,14" Padding="22">
+            <!-- The real health score and scan status drive the redesigned hero; no sample data. -->
+            <Border Background="{DynamicResource Brush.Hero.Background}" CornerRadius="14" Margin="0,18,0,18" Padding="26,23">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="156" />
                     </Grid.ColumnDefinitions>
-                    <Grid Width="132" Height="132">
-                        <Ellipse Stroke="{DynamicResource Brush.Progress.Track}" StrokeThickness="11" Margin="6" />
-                        <Path Stroke="{Binding Score, Converter={StaticResource ScoreBrush}}" StrokeThickness="11" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                              Data="{Binding Score, Converter={StaticResource ScoreArc}}" Margin="6" Visibility="{Binding HasScore, Converter={StaticResource BoolToVis}}" />
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
+                        <TextBlock Text="SOFTWARE HEALTH" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Brush.Sidebar.Status}" />
+                        <TextBlock Text="{Binding ScoreLabel}" FontSize="27" FontWeight="SemiBold" Foreground="White" TextWrapping="Wrap" Margin="0,10,0,0" />
+                        <TextBlock Text="{Binding Summary}" FontSize="13" Foreground="{DynamicResource Brush.Hero.Subtitle}" TextWrapping="Wrap" Margin="0,7,0,0" />
+                        <StackPanel Orientation="Horizontal" Margin="0,15,0,0">
+                            <TextBlock Text="{Binding LastScanText}" FontSize="12" Foreground="{DynamicResource Brush.Hero.Subtitle}" VerticalAlignment="Center" />
+                            <ProgressBar IsIndeterminate="True" Width="150" Margin="12,0,0,0" VerticalAlignment="Center"
+                                         Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+                    </StackPanel>
+                    <Grid Grid.Column="1" Width="142" Height="142" HorizontalAlignment="Right">
+                        <Ellipse Stroke="#49687B" StrokeThickness="11" Margin="6" />
+                        <Path Stroke="{Binding Score, Converter={StaticResource ScoreBrush}}" StrokeThickness="11"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                              Data="{Binding Score, Converter={StaticResource ScoreArc}}" Margin="6"
+                              Visibility="{Binding HasScore, Converter={StaticResource BoolToVis}}" />
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <TextBlock FontSize="36" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}">
+                            <TextBlock FontSize="39" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Text" Value="{Binding Score}" />
@@ -64,19 +76,17 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <TextBlock Text="/ 100" Style="{StaticResource Text.Caption}" HorizontalAlignment="Center" Margin="0,-4,0,0" />
+                            <TextBlock Text="Health / 100" FontSize="11" Foreground="{DynamicResource Brush.Hero.Subtitle}" HorizontalAlignment="Center" />
                         </StackPanel>
                     </Grid>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="24,0,0,0">
-                        <TextBlock Text="{Binding ScoreLabel}" FontSize="26" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" />
-                        <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Body}" Margin="0,6,0,0" />
-                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                            <TextBlock Text="{Binding LastScanText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
-                            <ProgressBar IsIndeterminate="True" Width="180" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}" />
-                        </StackPanel>
-                    </StackPanel>
                 </Grid>
             </Border>
+
+            <Grid Margin="0,0,0,14">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBlock Text="Health checks" Style="{StaticResource Text.Section}" FontSize="17" />
+                <TextBlock Grid.Column="1" Text="Review recommendations before applying fixes" Style="{StaticResource Text.Caption}" />
+            </Grid>
 
             <!-- Tiles -->
             <ItemsControl ItemsSource="{Binding Tiles}">
@@ -85,7 +95,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:HealthTileViewModel}">
-                        <Border Style="{StaticResource Card}" Width="300" MinHeight="168" Margin="0,0,14,14" Padding="18,16">
+                        <Border Style="{StaticResource Card}" Width="300" MinHeight="168" Margin="0,0,14,14" Padding="18,17">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -99,7 +109,7 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <Border Width="40" Height="40" CornerRadius="10" VerticalAlignment="Top">
+                                    <Border Width="42" Height="42" CornerRadius="11" VerticalAlignment="Top">
                                         <Border.Style>
                                             <Style TargetType="Border">
                                                 <Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}" />

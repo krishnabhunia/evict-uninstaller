@@ -22,9 +22,9 @@
     </UserControl.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="24,18,24,24" MaxWidth="820" HorizontalAlignment="Left">
+        <StackPanel Margin="24,18,24,24" MaxWidth="960" HorizontalAlignment="Left">
             <TextBlock Text="Settings" Style="{StaticResource Text.Title}" />
-            <TextBlock Text="Changes are saved immediately." Style="{StaticResource Text.Subtitle}" Margin="0,4,0,16" />
+            <TextBlock Text="Personalize appearance, uninstall safeguards, update channels and background behavior. Changes are saved immediately." Style="{StaticResource Text.Subtitle}" Margin="0,4,0,16" />
 
             <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>

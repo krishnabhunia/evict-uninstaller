@@ -7,7 +7,7 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         Title="{Binding WindowTitle}"
-        Width="1240" Height="800" MinWidth="960" MinHeight="600"
+        Width="1320" Height="820" MinWidth="960" MinHeight="600"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource Brush.Window.Background}"
         FontFamily="{StaticResource Font.Body}" FontSize="13"
@@ -17,12 +17,12 @@
 
     <WindowChrome.WindowChrome>
         <!-- A 1px glass edge at the bottom keeps the DWM drop shadow while we draw our own title bar. -->
-        <WindowChrome CaptionHeight="44" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1" CornerRadius="0" UseAeroCaptionButtons="False" NonClientFrameEdges="None" />
+        <WindowChrome CaptionHeight="56" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1" CornerRadius="0" UseAeroCaptionButtons="False" NonClientFrameEdges="None" />
     </WindowChrome.WindowChrome>
 
     <Grid Margin="{Binding WindowState, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource MaxMargin}}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="44" />
+            <RowDefinition Height="56" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -30,15 +30,15 @@
         <Border Grid.Row="0" Background="{DynamicResource Brush.TitleBar.Background}" BorderBrush="{DynamicResource Brush.Sidebar.Border}" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" MinWidth="236" />
+                    <ColumnDefinition Width="Auto" MinWidth="220" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
                     <Image Source="pack://application:,,,/Assets/app-256.png" Width="22" Height="22" RenderOptions.BitmapScalingMode="HighQuality" />
-                    <TextBlock Text="Evict" FontSize="16" FontWeight="Bold" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}" />
-                    <TextBlock Text="Uninstaller" FontSize="16" FontWeight="Light" Margin="5,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                    <TextBlock Text="Evict" FontSize="17" FontWeight="Bold" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}" />
+                    <TextBlock Text="Uninstaller" FontSize="15" FontWeight="Light" Margin="5,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" />
                     <!-- Version in the title bar: always visible (the sidebar scrolls with the text-size zoom). -->
                     <Border Background="{DynamicResource Brush.Accent.Subtle}" CornerRadius="8" Padding="6,1" Margin="8,2,0,0" VerticalAlignment="Center"
                             ToolTip="Installed version – check Settings → Updates for newer releases">
@@ -73,7 +73,7 @@
                       ScrollChanged="OnBodyScrollChanged" Focusable="False" PanningMode="None">
         <Grid x:Name="Body" HorizontalAlignment="Left" VerticalAlignment="Top">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="236" />
+            <ColumnDefinition Width="220" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
@@ -89,10 +89,26 @@
                             <TextBlock Text="Restart as administrator" Margin="8,0,0,0" />
                         </StackPanel>
                     </Button>
+                    <Border Background="{DynamicResource Brush.Nav.Hover}" CornerRadius="9" Padding="13,11" Margin="0,7,0,0">
+                        <StackPanel>
+                            <TextBlock Text="●  Windows desktop" Foreground="{DynamicResource Brush.Sidebar.Status}" FontSize="11" FontWeight="SemiBold" />
+                            <TextBlock Text="Uninstall · Update · Clean" Foreground="{DynamicResource Brush.Nav.Text}" FontSize="10" Margin="0,5,0,0" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding NavItems}" Margin="0,10,0,0">
+                    <ItemsControl ItemsSource="{Binding NavItems}" Margin="0,12,0,0">
+                        <ItemsControl.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Brush.Nav.GroupHeading}"
+                                                   FontSize="10" FontWeight="Bold" Margin="21,17,10,7" />
+                                    </DataTemplate>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </ItemsControl.GroupStyle>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:NavItemViewModel}">
                                 <RadioButton Style="{StaticResource Button.Nav}" GroupName="MainNav" Content="{Binding Title}"

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Evict.App.Services;
@@ -15,6 +16,7 @@ public enum PageKey { Health, Programs, WindowsApps, BrowserExtensions, Software
 public sealed partial class NavItemViewModel : ObservableObject
 {
     public required PageKey Key { get; init; }
+    public required string Group { get; init; }
     public required string Title { get; init; }
     public required string Glyph { get; init; }
 
@@ -38,15 +40,15 @@ public sealed partial class MainViewModel : ObservableObject
         _updateChecks.CheckingChanged += value => IsCheckingForUpdates = value;
         NavItems = new ObservableCollection<NavItemViewModel>
         {
-            new() { Key = PageKey.Health, Title = "Software Health", Glyph = "" },
-            new() { Key = PageKey.Programs, Title = "Programs", Glyph = "" },
-            new() { Key = PageKey.WindowsApps, Title = "Windows Apps", Glyph = "" },
-            new() { Key = PageKey.BrowserExtensions, Title = "Browser Extensions", Glyph = "" },
-            new() { Key = PageKey.SoftwareUpdater, Title = "Software Updater", Glyph = "" },
-            new() { Key = PageKey.InstallMonitor, Title = "Install Monitor", Glyph = "" },
-            new() { Key = PageKey.Tools, Title = "Tools", Glyph = "" },
-            new() { Key = PageKey.History, Title = "History", Glyph = "" },
-            new() { Key = PageKey.Settings, Title = "Settings", Glyph = "" },
+            new() { Key = PageKey.Health, Group = "WORKSPACE", Title = "Software Health", Glyph = "" },
+            new() { Key = PageKey.Programs, Group = "WORKSPACE", Title = "Programs", Glyph = "" },
+            new() { Key = PageKey.WindowsApps, Group = "WORKSPACE", Title = "Windows Apps", Glyph = "" },
+            new() { Key = PageKey.BrowserExtensions, Group = "WORKSPACE", Title = "Browser Extensions", Glyph = "" },
+            new() { Key = PageKey.SoftwareUpdater, Group = "MAINTENANCE", Title = "Software Updater", Glyph = "" },
+            new() { Key = PageKey.InstallMonitor, Group = "MAINTENANCE", Title = "Install Monitor", Glyph = "" },
+            new() { Key = PageKey.Tools, Group = "MAINTENANCE", Title = "Tools", Glyph = "" },
+            new() { Key = PageKey.History, Group = "MAINTENANCE", Title = "History", Glyph = "" },
+            new() { Key = PageKey.Settings, Group = "PREFERENCES", Title = "Settings", Glyph = "" },
         };
         foreach (var item in NavItems)
         {
@@ -55,6 +57,9 @@ public sealed partial class MainViewModel : ObservableObject
                 if (e.PropertyName == nameof(NavItemViewModel.IsSelected) && s is NavItemViewModel { IsSelected: true } n) Navigate(n.Key);
             };
         }
+        // A grouped view keeps the navigation model and routing logic unchanged.
+        CollectionViewSource.GetDefaultView(NavItems).GroupDescriptions.Add(
+            new PropertyGroupDescription(nameof(NavItemViewModel.Group)));
         Navigate(PageKey.Health);
     }
 

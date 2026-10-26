@@ -30,7 +30,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock Text="Browser Extensions" Style="{StaticResource Text.Title}" />
-                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Extensions and add-ons in Chrome, Edge, Brave, Vivaldi, Opera and Firefox – across every profile. Removal requires the browser to be closed." />
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Review extensions, browsers, profiles and broad permissions. Close the affected browser before any removal." />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                 <TextBox Style="{StaticResource TextBox.Search}" Width="240" Tag="Search extensions…" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=150}" />

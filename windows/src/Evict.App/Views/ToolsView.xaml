@@ -9,8 +9,8 @@
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24,18,24,16">
-            <TextBlock Text="Tools" Style="{StaticResource Text.Title}" />
-            <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,14" Text="Utilities for the stubborn cases and for keeping Windows tidy." />
+            <TextBlock Text="Utilities &amp; Tools" Style="{StaticResource Text.Title}" />
+            <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,14" Text="Guided maintenance actions with clear scope, safety checks and recovery options." />
             <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Caption}" Visibility="{Binding StatusText, Converter={StaticResource BoolToVis}}" Margin="0,0,0,8" />
 
             <ItemsControl ItemsSource="{Binding Tools}">
@@ -22,7 +22,7 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:ToolCardViewModel}">
                         <Button Command="{Binding DataContext.RunToolCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
-                                Width="300" Height="140" Margin="0,0,14,14" Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
+                                Width="300" Height="150" Margin="0,0,14,14" Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
                                     <Border x:Name="Bd" Style="{StaticResource Card}" Padding="18">
@@ -44,7 +44,7 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Border Width="44" Height="44" CornerRadius="10" Background="{DynamicResource Brush.Accent.Subtle}" VerticalAlignment="Top">
+                                <Border Width="44" Height="44" CornerRadius="11" Background="{DynamicResource Brush.Accent.Subtle}" VerticalAlignment="Top">
                                     <TextBlock Text="{Binding Glyph}" Style="{StaticResource Icon}" FontSize="20" Foreground="{DynamicResource Brush.Accent}" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="14,0,0,0">
