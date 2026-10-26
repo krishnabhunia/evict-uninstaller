@@ -38,14 +38,14 @@ public sealed partial class MainViewModel : ObservableObject
         _updateChecks.CheckingChanged += value => IsCheckingForUpdates = value;
         NavItems = new ObservableCollection<NavItemViewModel>
         {
-            new() { Key = PageKey.Health, Title = "Software Health", Glyph = "" },
+            new() { Key = PageKey.Health, Title = "Overview", Glyph = "" },
             new() { Key = PageKey.Programs, Title = "Programs", Glyph = "" },
             new() { Key = PageKey.WindowsApps, Title = "Windows Apps", Glyph = "" },
             new() { Key = PageKey.BrowserExtensions, Title = "Browser Extensions", Glyph = "" },
             new() { Key = PageKey.SoftwareUpdater, Title = "Software Updater", Glyph = "" },
             new() { Key = PageKey.InstallMonitor, Title = "Install Monitor", Glyph = "" },
             new() { Key = PageKey.Tools, Title = "Tools", Glyph = "" },
-            new() { Key = PageKey.History, Title = "History", Glyph = "" },
+            new() { Key = PageKey.History, Title = "Activity", Glyph = "" },
             new() { Key = PageKey.Settings, Title = "Settings", Glyph = "" },
         };
         foreach (var item in NavItems)
@@ -61,7 +61,7 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<NavItemViewModel> NavItems { get; }
 
     [ObservableProperty] private ObservableObject? _currentPage;
-    [ObservableProperty] private string _currentTitle = "Software Health";
+    [ObservableProperty] private string _globalSearchText = "";
     [ObservableProperty] private bool _isWidgetVisible;
 
     public bool IsElevated => ElevationHelper.IsElevated;
@@ -125,9 +125,29 @@ public sealed partial class MainViewModel : ObservableObject
     public void Navigate(PageKey key)
     {
         foreach (var n in NavItems) if (n.Key == key && !n.IsSelected) n.IsSelected = true;
-        CurrentTitle = NavItems.First(n => n.Key == key).Title;
         CurrentPage = GetOrCreate(key);
         if (CurrentPage is IActivatable a) a.OnActivated();
+    }
+
+    [RelayCommand]
+    private void Search()
+    {
+        var query = GlobalSearchText.Trim();
+        if (query.Length == 0) return;
+
+        var matchingPage = NavItems.FirstOrDefault(item =>
+            item.Title.Contains(query, StringComparison.OrdinalIgnoreCase));
+        if (matchingPage is not null)
+        {
+            Navigate(matchingPage.Key);
+            GlobalSearchText = "";
+            return;
+        }
+
+        var programs = GetPage<ProgramsViewModel>(PageKey.Programs);
+        programs.SearchText = query;
+        Navigate(PageKey.Programs);
+        GlobalSearchText = "";
     }
 
     private ObservableObject GetOrCreate(PageKey key)

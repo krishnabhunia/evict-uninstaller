@@ -290,7 +290,7 @@
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Nav.Selected}" />
                             <Setter TargetName="Indicator" Property="Visibility" Value="Visible" />
                             <Setter TargetName="Glyph" Property="Foreground" Value="{DynamicResource Brush.Accent}" />
-                            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                            <Setter Property="Foreground" Value="{DynamicResource Brush.Nav.SelectedText}" />
                             <Setter Property="FontWeight" Value="SemiBold" />
                         </Trigger>
                     </ControlTemplate.Triggers>
