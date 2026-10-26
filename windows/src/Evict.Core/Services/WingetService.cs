@@ -9,6 +9,8 @@ namespace Evict.Core.Services;
 /// Software Updater backed by the Windows Package Manager (winget). Lists upgradable packages by
 /// parsing the fixed-width table "winget upgrade" prints, and upgrades them one at a time.
 /// </summary>
+public sealed record WingetUpgradeResult(bool Ok, string Message, bool OutcomeKnown = true);
+
 public sealed class WingetService
 {
     private readonly Func<string?> _findWinget;
@@ -165,8 +167,14 @@ public sealed class WingetService
 
     public async Task<(bool Ok, string Message)> UpgradeAsync(UpgradablePackage pkg, CancellationToken ct, Action<string>? onLine = null, bool includeUnknown = false)
     {
+        var result = await UpgradeWithResultAsync(pkg, ct, onLine, includeUnknown).ConfigureAwait(false);
+        return (result.Ok, result.Message);
+    }
+
+    public async Task<WingetUpgradeResult> UpgradeWithResultAsync(UpgradablePackage pkg, CancellationToken ct, Action<string>? onLine = null, bool includeUnknown = false)
+    {
         var winget = _findWinget();
-        if (winget is null) return (false, "winget not found.");
+        if (winget is null) return new(false, "winget not found.");
         var args = BuildUpgradeArguments(pkg, includeUnknown);
 
         // Several upgrades run at the same time; Windows Installer allows only one MSI at once (error 1618 /
@@ -175,17 +183,18 @@ public sealed class WingetService
         {
             var res = await _runCaptured(winget, args, ct, TimeSpan.FromMinutes(30), onLine).ConfigureAwait(false);
             var text = (res.StdOut + "\n" + res.StdErr);
+            if (res.TimedOut) return new(false, "The update timed out. The installer result is unknown; check for updates again.", false);
             // Installed but Windows must restart to finish: a success, not a failure (design SH1 "restart needed").
-            if (IsRestartToFinish(res.ExitCode, text)) return (true, RestartToFinishMessage);
-            bool ok = res.ExitCode == 0 || text.Contains("Successfully installed", StringComparison.OrdinalIgnoreCase);
-            if (ok) return (true, "Updated.");
+            if (IsRestartToFinish(res.ExitCode, text)) return new(true, RestartToFinishMessage);
+            bool ok = res.ExitCode == 0;
+            if (ok) return new(true, "Updated.");
             if (IsInstallerBusy(res.ExitCode, text) && attempt < 6)
             {
                 onLine?.Invoke($"Another installation is in progress – retrying in 20 s (attempt {attempt}/5)…");
                 await Task.Delay(TimeSpan.FromSeconds(20), ct).ConfigureAwait(false);
                 continue;
             }
-            return (false, DescribeFailure(res.ExitCode, text));
+            return new(false, DescribeFailure(res.ExitCode, text));
         }
     }
 
@@ -279,8 +288,8 @@ public sealed class WingetService
     /// </summary>
     public static bool IsRestartToFinish(int exitCode, string output)
         => unchecked((uint)exitCode) == 0x8A150109 || exitCode is 3010 or 1641
-           || output.Contains("0x8A150109", StringComparison.OrdinalIgnoreCase)
-           || output.Contains("restart your pc to finish", StringComparison.OrdinalIgnoreCase);
+           || (exitCode == 0 && (output.Contains("0x8A150109", StringComparison.OrdinalIgnoreCase)
+               || output.Contains("restart your pc to finish", StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>True for the message <see cref="UpgradeAsync"/> returns when a restart is needed to finish.</summary>
     public static bool IsRestartToFinish(string? message) => string.Equals(message, RestartToFinishMessage, StringComparison.Ordinal);

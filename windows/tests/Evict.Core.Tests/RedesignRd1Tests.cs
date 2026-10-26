@@ -109,6 +109,9 @@ public sealed class RedesignRd1Tests
         Assert.Equal("1.2 → 1.3 · Updated · 42 s", up.Detail);
         Assert.Equal("Update failed: Git", ActivityTimeline.FromUpdate(Update("Git", Now, SoftwareUpdateOutcome.Failed)).Title);
         Assert.Equal("Update stopped: Git", ActivityTimeline.FromUpdate(Update("Git", Now, SoftwareUpdateOutcome.Cancelled)).Title);
+        var interrupted = ActivityTimeline.FromUpdate(Update("Git", Now, SoftwareUpdateOutcome.Interrupted));
+        Assert.Equal("Update interrupted: Git", interrupted.Title);
+        Assert.False(interrupted.Succeeded);
     }
 
     [Fact]

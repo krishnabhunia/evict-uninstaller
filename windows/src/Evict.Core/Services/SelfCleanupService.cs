@@ -156,7 +156,7 @@ public static class SelfCleanupService
 
     private static readonly HashSet<string> HistoryEntries = new(StringComparer.OrdinalIgnoreCase)
     {
-        "history.json", "history.json.bak", "install-logs", "registry-backups",
+        "history.json", "history.json.bak", "update-history.json", "install-logs", "registry-backups",
     };
 
     /// <summary>Which part a file or folder directly inside %LocalAppData%\Evict belongs to.</summary>
@@ -224,7 +224,7 @@ public static class SelfCleanupService
         }
         list.Add(new SelfCleanupEntry(SelfCleanupParts.Settings, "Settings, diagnostic log and downloaded updates",
             DataRoot, settingsBytes, settingsCount, NeedsAdmin: false, Recommended: true));
-        list.Add(new SelfCleanupEntry(SelfCleanupParts.History, "Uninstall history, Install Monitor logs and registry backups",
+        list.Add(new SelfCleanupEntry(SelfCleanupParts.History, "Uninstall and update history, Install Monitor logs and registry backups",
             "Keep these if you may want to undo a registry cleanup or reuse an install log later. " + DataRoot, historyBytes, historyCount, NeedsAdmin: false, Recommended: false));
 
         long cacheBytes = Directory.Exists(InstallerCacheBackupRoot) ? SizeOf(InstallerCacheBackupRoot) : 0;

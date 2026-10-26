@@ -44,6 +44,7 @@ public static class ActivityTimeline
         {
             SoftwareUpdateOutcome.Updated or SoftwareUpdateOutcome.UpdatedRestartNeeded => "Updated " + e.Name,
             SoftwareUpdateOutcome.Cancelled => "Update stopped: " + e.Name,
+            SoftwareUpdateOutcome.Interrupted => "Update interrupted: " + e.Name,
             _ => "Update failed: " + e.Name,
         },
         UpdateDetail(e), e.IsSuccess);
