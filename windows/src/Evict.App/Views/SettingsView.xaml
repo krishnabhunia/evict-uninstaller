@@ -142,7 +142,7 @@
                 </StackPanel>
             </Border>
 
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14" Padding="20,18" Visibility="{Binding SelectedSection, Converter={StaticResource EqualsToVis}, ConverterParameter=Background &amp; tray}">
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14" Padding="20,18" Visibility="{Binding SelectedSection, Converter={StaticResource EqualsToVis}, ConverterParameter='Background &amp; tray'}">
                 <StackPanel>
                     <TextBlock Text="Notification area &amp; background" Style="{StaticResource Text.Section}" Margin="0,0,0,12" />
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding ShowTrayIcon}" Content="Show the Evict icon in the notification area (system tray)" />
@@ -159,7 +159,7 @@
                 </StackPanel>
             </Border>
 
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14" Padding="20,18" Visibility="{Binding SelectedSection, Converter={StaticResource EqualsToVis}, ConverterParameter=Background &amp; tray}">
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14" Padding="20,18" Visibility="{Binding SelectedSection, Converter={StaticResource EqualsToVis}, ConverterParameter='Background &amp; tray'}">
                 <StackPanel>
                     <TextBlock Text="Scheduled Software Health scan" Style="{StaticResource Text.Section}" Margin="0,0,0,12" />
                     <StackPanel Orientation="Horizontal">
