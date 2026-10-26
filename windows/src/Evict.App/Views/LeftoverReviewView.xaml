@@ -37,7 +37,7 @@
         </WrapPanel>
 
         <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
-            <ListView Style="{StaticResource ListView.Flat}" ItemsSource="{Binding View}" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+            <ListView Style="{StaticResource ListView.Rows}" ItemsSource="{Binding View}" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
                 <ListView.GroupStyle>
                     <GroupStyle>
                         <GroupStyle.ContainerStyle>

@@ -4,6 +4,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:Evict.App.ViewModels"
+             xmlns:ctl="clr-namespace:Evict.App.Controls"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:ToolsViewModel}">
 
@@ -15,7 +16,7 @@
             <ItemsControl ItemsSource="{Binding TileTools}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <UniformGrid Columns="3" />
+                        <ctl:AdaptiveUniformGrid MinColumnWidth="230" MaxColumns="3" />
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>

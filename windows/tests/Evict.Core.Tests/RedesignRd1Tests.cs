@@ -98,7 +98,8 @@ public sealed class RedesignRd1Tests
     public void DetailsArePlainWords()
     {
         var u = ActivityTimeline.FromUninstall(Uninstall("Toolbar", Now));
-        Assert.Equal("Silent · " + SizeFormatter.Format(1_288_490_189) + " freed · 22 of 24 leftovers removed", u.Detail);
+        // Everything went to the Recycle Bin: removed from its place, but no disk space freed yet.
+        Assert.Equal("Silent · " + SizeFormatter.Format(1_288_490_189) + " removed · 22 of 24 leftovers removed", u.Detail);
 
         var failed = ActivityTimeline.FromUninstall(new UninstallHistoryEntry { ProgramName = "X", Timestamp = Now, Succeeded = false, ExitCode = 1603 });
         Assert.Equal("Uninstall needs a look: X", failed.Title);
@@ -108,6 +109,20 @@ public sealed class RedesignRd1Tests
         Assert.Equal("1.2 → 1.3 · Updated · 42 s", up.Detail);
         Assert.Equal("Update failed: Git", ActivityTimeline.FromUpdate(Update("Git", Now, SoftwareUpdateOutcome.Failed)).Title);
         Assert.Equal("Update stopped: Git", ActivityTimeline.FromUpdate(Update("Git", Now, SoftwareUpdateOutcome.Cancelled)).Title);
+    }
+
+    [Fact]
+    public void FreedSpaceIsOnlyWhatWasPermanentlyDeleted()
+    {
+        var partly = ActivityTimeline.UninstallDetail(new UninstallHistoryEntry { ProgramName = "X", Succeeded = true, BytesRemoved = 10_000_000, BytesReclaimed = 4_000_000 });
+        Assert.Equal($"Standard · {SizeFormatter.Format(10_000_000)} removed ({SizeFormatter.Format(4_000_000)} freed)", partly);
+
+        var all = ActivityTimeline.UninstallDetail(new UninstallHistoryEntry { ProgramName = "X", Succeeded = true, BytesRemoved = 4_000_000, BytesReclaimed = 4_000_000 });
+        Assert.Equal($"Standard · {SizeFormatter.Format(4_000_000)} removed", all);
+
+        // Older records only know the reclaimed figure.
+        var legacy = ActivityTimeline.UninstallDetail(new UninstallHistoryEntry { ProgramName = "X", Succeeded = true, BytesReclaimed = 4_000_000 });
+        Assert.Equal($"Standard · {SizeFormatter.Format(4_000_000)} freed", legacy);
     }
 
     [Fact]

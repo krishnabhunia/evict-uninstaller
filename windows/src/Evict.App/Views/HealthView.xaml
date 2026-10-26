@@ -4,6 +4,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:Evict.App.ViewModels"
+             xmlns:ctl="clr-namespace:Evict.App.Controls"
              xmlns:conv="clr-namespace:Evict.App.Converters"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:HealthViewModel}">
@@ -15,11 +16,16 @@
 
     <!-- RD1 Home: score, one safe "Tidy" action, "Worth a look" cards, recent activity and the Install Monitor switch. -->
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <Grid Margin="28,4,28,20">
+        <!-- Two columns when there is room; the right column moves under the score in a narrow window (code-behind). -->
+        <Grid x:Name="HomeGrid" Margin="28,4,28,20" SizeChanged="OnHomeSizeChanged">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="330" />
+                <ColumnDefinition x:Name="SideColumnDef" Width="330" />
             </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
             <StackPanel Grid.Column="0">
                 <!-- Score -->
@@ -78,7 +84,7 @@
                 <TextBlock Text="Worth a look" Style="{StaticResource Text.Section}" Margin="2,22,0,10" Visibility="{Binding HasWorthALook, Converter={StaticResource BoolToVis}}" />
                 <ItemsControl ItemsSource="{Binding WorthALook}" Visibility="{Binding HasWorthALook, Converter={StaticResource BoolToVis}}">
                     <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate>
+                        <ItemsPanelTemplate><ctl:AdaptiveUniformGrid MinColumnWidth="200" MaxColumns="3" /></ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type vm:HealthTileViewModel}">
@@ -220,7 +226,7 @@
             </StackPanel>
 
             <!-- Right column -->
-            <StackPanel Grid.Column="1" Margin="20,0,0,0">
+            <StackPanel x:Name="SideColumn" Grid.Column="1" Margin="20,0,0,0">
                 <Border Style="{StaticResource Card}" Padding="18,16">
                     <StackPanel>
                         <DockPanel Margin="0,0,0,8">

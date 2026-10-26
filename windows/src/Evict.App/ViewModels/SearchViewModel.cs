@@ -46,7 +46,7 @@ public sealed partial class SearchViewModel : ObservableObject
         _apps = (programs?.Items ?? []).Select(i => new SearchResultViewModel
         {
             Group = "Apps", Title = i.Name, Detail = i.Publisher == "—" ? i.SizeText : $"{i.Publisher} · {i.SizeText}", Glyph = "",
-            Run = () => { main.Navigate(PageKey.Programs); programs!.SearchText = i.Name; programs.SelectedItem = i; },
+            Run = () => { main.Navigate(PageKey.Programs); programs!.SelectedTab = ProgramTab.All; programs.SearchText = i.Name; programs.SelectedItem = i; },
         }).ToList();
 
         _actions = [];

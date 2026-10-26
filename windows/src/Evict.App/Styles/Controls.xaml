@@ -1011,6 +1011,38 @@
         </Setter>
     </Style>
 
+    <!-- ListView whose rows come from an ItemTemplate (no GridView columns) – e.g. the RD1 leftover list. -->
+    <Style x:Key="ListView.Rows" TargetType="ListView" BasedOn="{StaticResource ListView.Flat}">
+        <Setter Property="ItemContainerStyle">
+            <Setter.Value>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                    <Setter Property="Padding" Value="4,4" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ListViewItem">
+                                <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True"
+                                        BorderThickness="0,0,0,1" BorderBrush="{DynamicResource Brush.Divider}">
+                                    <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Row.Hover}" />
+                                    </Trigger>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Row.Selected}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ═══════════════ Simple ListBox rows (settings, tools) ═══════════════ -->
     <Style x:Key="ListBox.Flat" TargetType="ListBox">
         <Setter Property="Background" Value="Transparent" />

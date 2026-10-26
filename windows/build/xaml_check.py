@@ -101,5 +101,15 @@ for f in xaml_files:
                 print(f"[dup] {f.name}: <{tag}> sets '{ctag[len(tag)+1:]}' twice")
                 problems += 1
 
+# ListView.Flat rows are drawn by a GridViewRowPresenter: a ListView using it without a GridView shows blank rows.
+for f in xaml_files:
+    tree = ET.parse(f)
+    for el in tree.iter():
+        if el.tag.split('}')[-1] != "ListView" or "ListView.Flat" not in el.attrib.get("Style", ""):
+            continue
+        if not any(c.tag.split('}')[-1] == "GridView" for c in el.iter()):
+            print(f"[listview] {f.name}: ListView.Flat without a GridView renders empty rows - use ListView.Rows for an ItemTemplate")
+            problems += 1
+
 print(f"\n{len(xaml_files)} XAML files, {len(defined)} resource keys, {len(members)} VM members checked. Problems: {problems}")
 sys.exit(1 if problems else 0)

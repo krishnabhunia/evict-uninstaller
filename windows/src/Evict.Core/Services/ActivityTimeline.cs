@@ -48,7 +48,7 @@ public static class ActivityTimeline
         },
         UpdateDetail(e), e.IsSuccess);
 
-    /// <summary>"Silent · 1.2 GB freed · 22 of 24 leftovers removed".</summary>
+    /// <summary>"Silent · 1.2 GB removed (300 MB freed) · 22 of 24 leftovers removed".</summary>
     public static string UninstallDetail(UninstallHistoryEntry e)
     {
         var parts = new List<string>
@@ -62,8 +62,14 @@ public static class ActivityTimeline
                 _ => "Standard",
             },
         };
-        var bytes = e.BytesRemoved > 0 ? e.BytesRemoved : e.BytesReclaimed;
-        if (bytes > 0) parts.Add(SizeFormatter.Format(bytes) + " freed");
+        // BytesRemoved includes data moved to the Recycle Bin (still on disk); only BytesReclaimed is space actually freed.
+        if (e.BytesRemoved > 0)
+        {
+            var text = SizeFormatter.Format(e.BytesRemoved) + " removed";
+            if (e.BytesReclaimed > 0 && e.BytesReclaimed < e.BytesRemoved) text += $" ({SizeFormatter.Format(e.BytesReclaimed)} freed)";
+            parts.Add(text);
+        }
+        else if (e.BytesReclaimed > 0) parts.Add(SizeFormatter.Format(e.BytesReclaimed) + " freed");
         if (e.LeftoversFound > 0)
             parts.Add(e.LeftoversRemoved == e.LeftoversFound ? $"{e.LeftoversFound} leftovers removed" : $"{e.LeftoversRemoved} of {e.LeftoversFound} leftovers removed");
         if (!e.Succeeded && e.ExitCode is { } code) parts.Add("exit code " + code.ToString(En));
