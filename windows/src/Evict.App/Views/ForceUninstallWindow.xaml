@@ -149,7 +149,7 @@
                     <Button Style="{StaticResource Button.Secondary}" Content="Cancel" Command="{Binding CancelCommand}" MinWidth="100" Margin="0,0,10,0" IsCancel="True" />
                     <Button Style="{StaticResource Button.Primary}" Command="{Binding ScanCommand}" IsEnabled="{Binding CanScan}" MinWidth="140">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
+                            <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                             <TextBlock Text="Scan" Margin="8,0,0,0" />
                         </StackPanel>
                     </Button>
@@ -159,7 +159,7 @@
                     <Button Style="{StaticResource Button.Secondary}" Content="Back" Command="{Binding BackCommand}" MinWidth="100" Margin="0,0,10,0" />
                     <Button Style="{StaticResource Button.Danger}" Command="{Binding RemoveCommand}" MinWidth="180" IsEnabled="{Binding Review.SelectedCount, Converter={StaticResource ToBool}}">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
+                            <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                             <TextBlock Text="Force remove selected" Margin="8,0,0,0" />
                         </StackPanel>
                     </Button>

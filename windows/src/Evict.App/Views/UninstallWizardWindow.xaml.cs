@@ -16,7 +16,32 @@ public partial class UninstallWizardWindow : Window
             if (e.NewValue is UninstallWizardViewModel vm) vm.RequestClose += Close;
         };
         Closing += OnClosing;
+        SourceInitialized += (_, _) => DockToOwner();
     }
+
+    /// <summary>RD1 U1: full height, against the right edge of the main window (or of the screen when it is maximized).</summary>
+    private void DockToOwner()
+    {
+        try
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            var owner = Owner;
+            Rect area = owner is { IsVisible: true, WindowState: WindowState.Normal }
+                ? new Rect(owner.Left, owner.Top, owner.ActualWidth, owner.ActualHeight)
+                : SystemParameters.WorkArea;
+            var width = Math.Min(Math.Max(MinWidth, Width), Math.Max(MinWidth, area.Width * 0.6));
+            Width = width;
+            Height = Math.Max(MinHeight, area.Height);
+            Left = area.Right - width;
+            Top = area.Top;
+        }
+        catch (Exception ex)
+        {
+            Core.Services.Log.Warn("Could not dock the uninstall panel: " + ex.Message);
+        }
+    }
+
+    private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {

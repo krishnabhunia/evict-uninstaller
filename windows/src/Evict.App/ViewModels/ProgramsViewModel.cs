@@ -92,6 +92,19 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
         ? "1 program selected" + (HiddenSelectedCount > 0 ? " (hidden by this filter)" : "")
         : $"{SelectedCount} programs selected" + (HiddenSelectedCount > 0 ? $" ({HiddenSelectedCount} hidden by this filter)" : "");
 
+    /// <summary>RD1 selection tray: "3 programs · 2.4 GB".</summary>
+    public string TrayText
+    {
+        get
+        {
+            var sel = Items.Where(i => i.IsSelected).ToList();
+            var bytes = sel.Sum(i => Math.Max(0, i.Program.SizeBytes ?? 0));
+            var text = (sel.Count == 1 ? "1 program" : $"{sel.Count} programs") + (bytes > 0 ? " · " + SizeFormatter.Format(bytes) : "");
+            return HiddenSelectedCount > 0 ? text + $" ({HiddenSelectedCount} hidden by this filter)" : text;
+        }
+    }
+    public string TrayButtonText => SelectedCount == 1 ? "Uninstall 1 program" : $"Uninstall {SelectedCount} programs";
+
     public string TabDescription => SelectedTab switch
     {
         ProgramTab.Recent => $"Programs installed in the last {Settings.RecentlyInstalledDays} days.",
@@ -248,6 +261,10 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
 
     private void RaiseCounts()
     {
+        // Size bars are relative to the largest program; the menu shows how many programs there are.
+        long max = Items.Count == 0 ? 0 : Items.Max(i => i.Program.SizeBytes ?? 0);
+        foreach (var i in Items) i.SizeShare = max > 0 && i.Program.SizeBytes is > 0 ? Math.Max(0.02, (double)i.Program.SizeBytes.Value / max) : 0;
+        _main.SetBadge(PageKey.Programs, Items.Count);
         OnPropertyChanged(nameof(CountAll));
         OnPropertyChanged(nameof(CountRecent));
         OnPropertyChanged(nameof(CountLarge));
@@ -278,6 +295,8 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
             SelectedCount = Items.Count(i => i.IsSelected);
             OnPropertyChanged(nameof(HiddenSelectedCount));
             OnPropertyChanged(nameof(SelectionSummary));
+            OnPropertyChanged(nameof(TrayText));
+            OnPropertyChanged(nameof(TrayButtonText));
             var visible = ProgramsView.Cast<ProgramItemViewModel>().ToList();
             int sel = visible.Count(v => v.IsSelected);
             AllSelected = visible.Count == 0 ? false : sel == 0 ? false : sel == visible.Count ? true : null;

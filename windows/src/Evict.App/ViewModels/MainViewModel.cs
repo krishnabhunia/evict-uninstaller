@@ -219,7 +219,7 @@ public sealed partial class MainViewModel : ObservableObject
             PageKey.Programs => new ProgramsViewModel(_services, this),
             PageKey.WindowsApps => new WindowsAppsViewModel(_services),
             PageKey.BrowserExtensions => new BrowserExtensionsViewModel(_services),
-            PageKey.SoftwareUpdater => new SoftwareUpdaterViewModel(_services),
+            PageKey.SoftwareUpdater => WithUpdateBadge(new SoftwareUpdaterViewModel(_services)),
             PageKey.InstallMonitor => new InstallMonitorViewModel(_services, this),
             PageKey.Tools => new ToolsViewModel(_services, this),
             PageKey.History => new HistoryViewModel(_services, this),
@@ -227,6 +227,13 @@ public sealed partial class MainViewModel : ObservableObject
             _ => throw new ArgumentOutOfRangeException(nameof(key)),
         };
         _pages[key] = vm;
+        return vm;
+    }
+
+    /// <summary>The Updates menu entry shows how many programs have an update (accent badge).</summary>
+    private SoftwareUpdaterViewModel WithUpdateBadge(SoftwareUpdaterViewModel vm)
+    {
+        vm.Items.CollectionChanged += (_, _) => SetBadge(PageKey.SoftwareUpdater, vm.Items.Count);
         return vm;
     }
 
