@@ -47,6 +47,7 @@
     <SolidColorBrush x:Key="Brush.Header.Background" Color="#F0F3F8" />
 
     <SolidColorBrush x:Key="Brush.Nav.Selected" Color="#263C57" />
+    <SolidColorBrush x:Key="Brush.Nav.SelectedText" Color="#FFFFFF" />
     <SolidColorBrush x:Key="Brush.Nav.Hover" Color="#20344D" />
     <SolidColorBrush x:Key="Brush.Nav.Text" Color="#B9C8DC" />
     <SolidColorBrush x:Key="Brush.Nav.Icon" Color="#A5B6CE" />
@@ -60,11 +61,15 @@
     <SolidColorBrush x:Key="Brush.Code.Background" Color="#F5F6F8" />
 
     <SolidColorBrush x:Key="Brush.Nav.GroupHeading" Color="#7890AA" />
-    <SolidColorBrush x:Key="Brush.Nav.SelectedText" Color="#FFFFFF" />
+
     <SolidColorBrush x:Key="Brush.Sidebar.Status" Color="#80E2BB" />
+
     <SolidColorBrush x:Key="Brush.Hero.Background" Color="#213B52" />
+
     <SolidColorBrush x:Key="Brush.Hero.Subtitle" Color="#C1D1DC" />
+
     <SolidColorBrush x:Key="Brush.SelectionBar.Background" Color="#233951" />
+
     <SolidColorBrush x:Key="Brush.SelectionBar.Text" Color="#FFFFFF" />
 
 </ResourceDictionary>

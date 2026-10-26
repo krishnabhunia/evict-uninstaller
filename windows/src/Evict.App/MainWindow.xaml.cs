@@ -94,6 +94,13 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnGlobalSearchKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || DataContext is not ViewModels.MainViewModel viewModel) return;
+        viewModel.SearchCommand.Execute(null);
+        e.Handled = true;
+    }
+
     private void OnMinimize(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     private void OnMaximizeRestore(object sender, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
     private void OnClose(object sender, RoutedEventArgs e) => Close();

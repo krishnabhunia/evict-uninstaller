@@ -21,8 +21,8 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="Software Health" Style="{StaticResource Text.Title}" />
-                    <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Review software health, reclaim recoverable space and inspect recommendations before making changes." TextWrapping="Wrap" />
+                    <TextBlock Text="Overview" Style="{StaticResource Text.Title}" />
+                    <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="A quick view of your software health, with checks and fixes you can review before applying." TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                     <Button Style="{StaticResource Button.Secondary}" Command="{Binding FixSelectedCommand}" IsEnabled="{Binding CanFix}" Padding="14,8" Margin="0,0,10,0"

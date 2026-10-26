@@ -40,14 +40,14 @@ public sealed partial class MainViewModel : ObservableObject
         _updateChecks.CheckingChanged += value => IsCheckingForUpdates = value;
         NavItems = new ObservableCollection<NavItemViewModel>
         {
-            new() { Key = PageKey.Health, Group = "WORKSPACE", Title = "Software Health", Glyph = "" },
+            new() { Key = PageKey.Health, Group = "WORKSPACE", Title = "Overview", Glyph = "" },
             new() { Key = PageKey.Programs, Group = "WORKSPACE", Title = "Programs", Glyph = "" },
             new() { Key = PageKey.WindowsApps, Group = "WORKSPACE", Title = "Windows Apps", Glyph = "" },
             new() { Key = PageKey.BrowserExtensions, Group = "WORKSPACE", Title = "Browser Extensions", Glyph = "" },
             new() { Key = PageKey.SoftwareUpdater, Group = "MAINTENANCE", Title = "Software Updater", Glyph = "" },
             new() { Key = PageKey.InstallMonitor, Group = "MAINTENANCE", Title = "Install Monitor", Glyph = "" },
             new() { Key = PageKey.Tools, Group = "MAINTENANCE", Title = "Tools", Glyph = "" },
-            new() { Key = PageKey.History, Group = "MAINTENANCE", Title = "History", Glyph = "" },
+            new() { Key = PageKey.History, Group = "MAINTENANCE", Title = "Activity", Glyph = "" },
             new() { Key = PageKey.Settings, Group = "PREFERENCES", Title = "Settings", Glyph = "" },
         };
         foreach (var item in NavItems)
@@ -57,7 +57,7 @@ public sealed partial class MainViewModel : ObservableObject
                 if (e.PropertyName == nameof(NavItemViewModel.IsSelected) && s is NavItemViewModel { IsSelected: true } n) Navigate(n.Key);
             };
         }
-        // A grouped view keeps the navigation model and routing logic unchanged.
+        // Group the shared navigation view without changing routing or global search.
         CollectionViewSource.GetDefaultView(NavItems).GroupDescriptions.Add(
             new PropertyGroupDescription(nameof(NavItemViewModel.Group)));
         Navigate(PageKey.Health);
@@ -66,7 +66,7 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<NavItemViewModel> NavItems { get; }
 
     [ObservableProperty] private ObservableObject? _currentPage;
-    [ObservableProperty] private string _currentTitle = "Software Health";
+    [ObservableProperty] private string _globalSearchText = "";
     [ObservableProperty] private bool _isWidgetVisible;
 
     public bool IsElevated => ElevationHelper.IsElevated;
@@ -130,9 +130,29 @@ public sealed partial class MainViewModel : ObservableObject
     public void Navigate(PageKey key)
     {
         foreach (var n in NavItems) if (n.Key == key && !n.IsSelected) n.IsSelected = true;
-        CurrentTitle = NavItems.First(n => n.Key == key).Title;
         CurrentPage = GetOrCreate(key);
         if (CurrentPage is IActivatable a) a.OnActivated();
+    }
+
+    [RelayCommand]
+    private void Search()
+    {
+        var query = GlobalSearchText.Trim();
+        if (query.Length == 0) return;
+
+        var matchingPage = NavItems.FirstOrDefault(item =>
+            item.Title.Contains(query, StringComparison.OrdinalIgnoreCase));
+        if (matchingPage is not null)
+        {
+            Navigate(matchingPage.Key);
+            GlobalSearchText = "";
+            return;
+        }
+
+        var programs = GetPage<ProgramsViewModel>(PageKey.Programs);
+        programs.SearchText = query;
+        Navigate(PageKey.Programs);
+        GlobalSearchText = "";
     }
 
     private ObservableObject GetOrCreate(PageKey key)

@@ -7,7 +7,7 @@ namespace Evict.Core.Services;
 
 /// <summary>How one update ended. <see cref="Running"/> and <see cref="Waiting"/> only exist while a run is on screen.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
-public enum SoftwareUpdateOutcome { Updated, UpdatedRestartNeeded, Failed, Cancelled, Running, Waiting }
+public enum SoftwareUpdateOutcome { Updated, UpdatedRestartNeeded, Failed, Cancelled, Running, Waiting, Interrupted }
 
 /// <summary>One program (or Evict itself) updated, or tried to be, from the Software Updater (design SH1).</summary>
 public sealed class SoftwareUpdateHistoryEntry
@@ -48,7 +48,7 @@ public sealed class PendingSelfUpdate
 /// <summary>Texts and rules shared by the store and the Software Updater page.</summary>
 public static class SoftwareUpdateHistory
 {
-    /// <summary>Today plus the 6 days before it (design SH1 choice D1).</summary>
+    /// <summary>A rolling seven-day window, measured from completion in UTC.</summary>
     public const int KeepDays = 7;
     public const int MaxOutputLines = 40;
     public const int MaxOutputLineLength = 300;
@@ -60,7 +60,7 @@ public static class SoftwareUpdateHistory
     public static DateTime OldestKeptDay(DateTime nowLocal) => nowLocal.Date.AddDays(-(KeepDays - 1));
 
     public static bool IsKept(SoftwareUpdateHistoryEntry entry, DateTime nowLocal) =>
-        entry.StartedUtc.ToLocalTime().Date >= OldestKeptDay(nowLocal);
+        !entry.IsFinished || (entry.FinishedUtc ?? entry.StartedUtc).ToUniversalTime() >= nowLocal.ToUniversalTime().AddDays(-KeepDays);
 
     /// <summary>"Today · Mon 19 Oct", "Yesterday · Sun 18 Oct", "Fri 16 Oct".</summary>
     public static string DayLabel(DateTime localDay, DateTime nowLocal)
@@ -91,6 +91,7 @@ public static class SoftwareUpdateHistory
     {
         SoftwareUpdateOutcome.Failed => $"Failed {WhenText(last.StartedUtc, nowLocal)} — why?",
         SoftwareUpdateOutcome.Cancelled => $"Cancelled {WhenText(last.StartedUtc, nowLocal)}",
+        SoftwareUpdateOutcome.Interrupted => $"Interrupted {WhenText(last.StartedUtc, nowLocal)} — check again",
         _ => "",
     };
 
@@ -111,6 +112,7 @@ public static class SoftwareUpdateHistory
         SoftwareUpdateOutcome.Failed => "Failed",
         SoftwareUpdateOutcome.Cancelled => "Cancelled",
         SoftwareUpdateOutcome.Running => "Updating…",
+        SoftwareUpdateOutcome.Interrupted => "Interrupted",
         _ => "Waiting",
     };
 
@@ -118,12 +120,12 @@ public static class SoftwareUpdateHistory
     public static (SoftwareUpdateOutcome Outcome, string Message) Describe(string name, string? fromVersion, bool ok, string message, bool cancelled)
     {
         if (cancelled)
-            return (SoftwareUpdateOutcome.Cancelled, $"You pressed Cancel updates before it finished. {name} is still on {fromVersion ?? "its old version"}.");
+            return (SoftwareUpdateOutcome.Cancelled, $"You cancelled this update. Check the installed version before trying again.");
         if (ok && WingetService.IsRestartToFinish(message))
             return (SoftwareUpdateOutcome.UpdatedRestartNeeded, "Installed. Windows needs a restart to finish — until then the old version may still run.");
         if (ok) return (SoftwareUpdateOutcome.Updated, $"{name} is on the new version.");
         var reason = string.IsNullOrWhiteSpace(message) ? "winget reported an error" : message.Trim().TrimEnd('.');
-        return (SoftwareUpdateOutcome.Failed, $"{Capitalise(reason)}. Nothing changed — {name} is still on {fromVersion ?? "its old version"}.");
+        return (SoftwareUpdateOutcome.Failed, $"{Capitalise(reason)}. The installed version has not been verified. Check for updates before trying again.");
     }
 
     /// <summary>Keeps the last <see cref="MaxOutputLines"/> non-empty lines, each shortened to <see cref="MaxOutputLineLength"/>.</summary>
@@ -144,6 +146,8 @@ public static class SoftwareUpdateHistory
         int cancelled = finished.Count(e => e.Outcome == SoftwareUpdateOutcome.Cancelled);
         if (failed > 0) parts.Add($"{failed} failed");
         if (cancelled > 0) parts.Add($"{cancelled} cancelled");
+        int interrupted = finished.Count(e => e.Outcome == SoftwareUpdateOutcome.Interrupted);
+        if (interrupted > 0) parts.Add($"{interrupted} interrupted");
         return string.Join(" · ", parts);
     }
 
@@ -203,6 +207,7 @@ public sealed class SoftwareUpdateHistoryStore
 {
     private sealed class FileShape
     {
+        public int SchemaVersion { get; set; } = 1;
         public List<SoftwareUpdateHistoryEntry> Entries { get; set; } = new();
         public PendingSelfUpdate? PendingSelfUpdate { get; set; }
         /// <summary>The Evict version seen at the last start, to notice updates made outside Evict.</summary>
@@ -214,6 +219,18 @@ public sealed class SoftwareUpdateHistoryStore
     private readonly string? _file;
     private readonly Func<DateTime> _nowUtc;
     private FileShape _data = new();
+    private bool _readBlocked;
+    public string? LoadError { get; private set; }
+    public string? SaveError { get; private set; }
+    public string? PersistenceError => LoadError ?? SaveError;
+
+    private static SoftwareUpdateHistoryEntry Copy(SoftwareUpdateHistoryEntry e) => new()
+    {
+        Id = e.Id, Name = e.Name, PackageId = e.PackageId, Source = e.Source,
+        FromVersion = e.FromVersion, ToVersion = e.ToVersion, StartedUtc = e.StartedUtc,
+        FinishedUtc = e.FinishedUtc, Outcome = e.Outcome, Message = e.Message,
+        StartedBy = e.StartedBy, Output = new(e.Output ?? new()), IsEvict = e.IsEvict,
+    };
 
     public SoftwareUpdateHistoryStore() : this(null, () => DateTime.UtcNow) { }
     internal SoftwareUpdateHistoryStore(string? file, Func<DateTime> nowUtc) { _file = file; _nowUtc = nowUtc; }
@@ -226,7 +243,7 @@ public sealed class SoftwareUpdateHistoryStore
     /// <summary>Kept entries, newest first.</summary>
     public IReadOnlyList<SoftwareUpdateHistoryEntry> Entries
     {
-        get { lock (_gate) return _data.Entries.OrderByDescending(e => e.StartedUtc).ToList(); }
+        get { lock (_gate) return _data.Entries.OrderByDescending(e => e.StartedUtc).Select(Copy).ToList(); }
     }
 
     public PendingSelfUpdate? Pending { get { lock (_gate) return _data.PendingSelfUpdate; } }
@@ -237,39 +254,118 @@ public sealed class SoftwareUpdateHistoryStore
         {
             try
             {
-                _data = File.Exists(FilePath)
-                    ? JsonSerializer.Deserialize<FileShape>(File.ReadAllText(FilePath), Options) ?? new()
-                    : new();
+                _data = ReadFile();
+                _readBlocked = false;
+                LoadError = null;
+                bool recovered = RecoverUnfinished(_data);
+                if (Prune() || recovered) Persist();
             }
-            catch (Exception ex) { Log.Warn("Could not read the update history: " + ex.Message); _data = new(); }
-            _data.Entries ??= new();
-            // Only finished results are ever written; anything else in the file is not a result.
-            _data.Entries.RemoveAll(e => e is null || !e.IsFinished);
-            if (Prune()) Persist();
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+            {
+                _readBlocked = true;
+                LoadError = "History could not be read. The existing file is preserved. " + ex.Message;
+                Log.Warn(LoadError);
+            }
         }
+        Changed?.Invoke();
     }
 
-    /// <summary>Records a finished update. Unfinished outcomes are ignored.</summary>
+    private FileShape ReadFile()
+    {
+        if (Directory.Exists(FilePath)) throw new IOException("The history path is a folder.");
+        string json;
+        try { json = File.ReadAllText(FilePath); }
+        catch (FileNotFoundException) { return new(); }
+        catch (DirectoryNotFoundException) { return new(); }
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement;
+        if (value.ValueKind != JsonValueKind.Object ||
+            !value.EnumerateObject().Any(p => p.Name.Equals("Entries", StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == JsonValueKind.Array))
+            throw new InvalidDataException("Unrecognised history format.");
+        var data = JsonSerializer.Deserialize<FileShape>(json, Options) ?? throw new InvalidDataException("Empty history file.");
+        if (data.SchemaVersion != 1 || data.Entries is null) throw new InvalidDataException("Unsupported history format.");
+        foreach (var e in data.Entries)
+        {
+            if (e is null || !Enum.IsDefined(e.Outcome) || e.Id == Guid.Empty || e.StartedUtc == default)
+                throw new InvalidDataException("Invalid history entry.");
+            e.Name ??= "";
+            e.PackageId ??= "";
+            e.Message ??= "";
+            e.StartedBy ??= "";
+            e.Output = SoftwareUpdateHistory.TrimOutput(e.Output ?? new());
+        }
+        if (data.PendingSelfUpdate is { } pending) pending.Output ??= new();
+        return data;
+    }
+
+    private bool RecoverUnfinished(FileShape data)
+    {
+        bool recovered = false;
+        foreach (var entry in data.Entries.Where(e => !e.IsFinished))
+        {
+            bool waiting = entry.Outcome == SoftwareUpdateOutcome.Waiting;
+            entry.Outcome = waiting ? SoftwareUpdateOutcome.Cancelled : SoftwareUpdateOutcome.Interrupted;
+            entry.FinishedUtc = _nowUtc();
+            entry.Message = waiting ? "Evict closed before this queued update started."
+                : "Evict closed before the installer result was recorded. The installed version is unknown; check for updates again.";
+            recovered = true;
+        }
+        return recovered;
+    }
+
+    /// <summary>Records both queued/running attempts and finished results, without exposing mutable store objects.</summary>
     public void Add(SoftwareUpdateHistoryEntry entry)
     {
-        if (!entry.IsFinished) return;
-        entry.Output = SoftwareUpdateHistory.TrimOutput(entry.Output ?? new());
+        var saved = Copy(entry);
+        saved.Output = SoftwareUpdateHistory.TrimOutput(saved.Output);
         lock (_gate)
         {
-            _data.Entries.RemoveAll(e => e.Id == entry.Id);
-            _data.Entries.Add(entry);
+            _data.Entries.RemoveAll(e => e.Id == saved.Id);
+            _data.Entries.Add(saved);
             Prune();
             Persist();
         }
         Changed?.Invoke();
     }
 
+    /// <summary>Retries failed persistence, merging pending attempts with a recovered file instead of overwriting it.</summary>
+    public void RetryPersistence()
+    {
+        lock (_gate)
+        {
+            if (_readBlocked)
+            {
+                try
+                {
+                    var recovered = ReadFile();
+                    RecoverUnfinished(recovered);
+                    var pending = _data.Entries.ToDictionary(e => e.Id);
+                    foreach (var entry in recovered.Entries)
+                        if (!pending.ContainsKey(entry.Id)) _data.Entries.Add(entry);
+                    _data.LastSeenEvictVersion ??= recovered.LastSeenEvictVersion;
+                    _data.PendingSelfUpdate ??= recovered.PendingSelfUpdate;
+                    _readBlocked = false;
+                    LoadError = null;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+                {
+                    LoadError = "History could not be read. The existing file is preserved. " + ex.Message;
+                }
+            }
+            Prune();
+            Persist();
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>Only completed records are cleared. A failed write restores the records on screen.</summary>
     public void Clear()
     {
         lock (_gate)
         {
-            _data.Entries.Clear();
-            Persist();
+            var previous = _data.Entries;
+            _data.Entries = previous.Where(e => !e.IsFinished).ToList();
+            if (!Persist()) _data.Entries = previous;
         }
         Changed?.Invoke();
     }
@@ -392,14 +488,34 @@ public sealed class SoftwareUpdateHistoryStore
         return _data.Entries.RemoveAll(e => !SoftwareUpdateHistory.IsKept(e, now)) > 0;
     }
 
-    private void Persist()
+    private bool Persist()
     {
+        if (_readBlocked) return false;
+        string? tmp = null;
         try
         {
-            var tmp = FilePath + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(_data, Options));
-            File.Move(tmp, FilePath, overwrite: true);
+            string path = Path.GetFullPath(FilePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            using (var file = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                JsonSerializer.Serialize(file, _data, Options);
+                file.Flush(flushToDisk: true);
+            }
+            if (File.Exists(path)) File.Replace(tmp, path, null);
+            else File.Move(tmp, path);
+            SaveError = null;
+            return true;
         }
-        catch (Exception ex) { Log.Warn("Could not save the update history: " + ex.Message); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            SaveError = "History could not be saved. New records are kept in memory; retry before closing Evict. " + ex.Message;
+            Log.Warn(SaveError);
+            return false;
+        }
+        finally
+        {
+            if (tmp != null) try { File.Delete(tmp); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
     }
 }
