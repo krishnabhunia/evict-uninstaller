@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0 — 2026-10-26
+
+<!-- Evict automatic release; base: win-v2.1.0 -->
+
+- claude-ui-ux-redesign: new Evict look and navigation (RD1)
+
 ## 2.1.0 — 2026-10-20
 
 <!-- Evict automatic release; base: win-v2.0.0 -->
