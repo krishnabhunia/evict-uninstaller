@@ -46,10 +46,15 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly UpdateCheckCoordinator _updateChecks;
     private readonly Dictionary<PageKey, ObservableObject> _pages = new();
     private EasyUninstallWindow? _widget;
+    private readonly ScheduledScanExecutionGuard _scheduledScanGuard;
+    private bool _deferredPageActivation;
 
     public MainViewModel(AppServices services)
     {
         _services = services;
+        _scheduledScanGuard = new ScheduledScanExecutionGuard(CaptureSchedule,
+            (s, ct) => _services.Scheduler.MatchesAsync(s.Mode, s.Hour, s.Weekday, ct),
+            _ => ScanAndNotifyAsync());
         _updateChecks = new UpdateCheckCoordinator(_services.Updater.CheckAsync,
             () => _services.Settings.Current.CheckForUpdates,
             () => _services.Settings.Current.IncludeBetaUpdates);
@@ -74,7 +79,7 @@ public sealed partial class MainViewModel : ObservableObject
                 if (s is NavItemViewModel { IsSelected: true } n) Navigate(n.LastPage);
             };
         }
-        Navigate(PageKey.Health);
+        Navigate(PageKey.Health, activate: !App.StartedHeadless);
     }
 
     /// <summary>Menu entries above the line; Settings sits on its own at the bottom of the menu.</summary>
@@ -173,7 +178,7 @@ public sealed partial class MainViewModel : ObservableObject
         await GetPage<SettingsViewModel>(PageKey.Settings).CheckForUpdatesNowCommand.ExecuteAsync(null);
     }
 
-    public void Navigate(PageKey key)
+    public void Navigate(PageKey key, bool activate = true)
     {
         var group = AllNav.First(n => n.Pages.Contains(key));
         _navigating = true;
@@ -200,7 +205,8 @@ public sealed partial class MainViewModel : ObservableObject
         CurrentTitle = info.Group;
         CurrentSubtitle = info.Subtitle;
         CurrentPage = GetOrCreate(key);
-        if (CurrentPage is IActivatable a) a.OnActivated();
+        _deferredPageActivation = !activate;
+        if (activate && CurrentPage is IActivatable a) a.OnActivated();
     }
 
     [RelayCommand] private void NavigateTo(PageKey key) => Navigate(key);
@@ -257,6 +263,11 @@ public sealed partial class MainViewModel : ObservableObject
         if (w.WindowState == WindowState.Minimized) w.WindowState = WindowState.Normal;
         w.Activate();
         w.Topmost = true; w.Topmost = false;
+        if (_deferredPageActivation)
+        {
+            _deferredPageActivation = false;
+            if (CurrentPage is IActivatable page) page.OnActivated();
+        }
     }
 
     /// <summary>Quits for real (bypasses "close to tray").</summary>
@@ -309,51 +320,56 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>
-    /// Task Scheduler entry point (--scheduled-scan): scan silently, notify, and – if this process exists only for the
-    /// scan – exit again after a while unless the user opened the window.
-    /// </summary>
+    private ScheduledScanSnapshot CaptureSchedule()
+    {
+        var s = _services.Settings.Current;
+        return new(s.ScheduledScan, s.ScheduledScanHour, s.ScheduledScanWeekday, s.ScheduledScanAppliedUtc, s.LastScheduledScanUtc);
+    }
+
+    /// <summary>Verify a Task Scheduler launch before scanning, then finish a temporary hidden launch.</summary>
     public async Task RunScheduledScanAsync()
     {
-        var health = GetPage<HealthViewModel>(PageKey.Health);
         try
         {
-            await health.ScanAsync();
-            _services.Settings.Current.LastScheduledScanUtc = DateTime.UtcNow;
-            _services.Settings.Save();
-            int issues = health.IssueCount;
-            var title = health.Tiles.Any(t => t.State == TileState.Unavailable) ? "Software Health scan incomplete"
-                : issues == 0 ? $"Software Health {health.Score}/100 - all good" : $"Software Health {health.Score}/100 - {issues} item(s) need attention";
-            Log.Info("Scheduled scan: " + health.NotificationSummary());
-            Background.Notify(title, health.NotificationSummary() + ". Click to open Evict.", () => { ShowMainWindow(); Navigate(PageKey.Health); }, warning: issues > 0);
+            if (!await _scheduledScanGuard.TryRunAsync(catchUp: false, App.ShutdownToken))
+                Log.Warn("Scheduled scan skipped: schedule not verified, changed, or another scan is running.");
         }
         catch (Exception ex) { Log.Error("Scheduled scan failed", ex); }
+        await FinishScheduledLaunchAsync();
+    }
 
+    private async Task ScanAndNotifyAsync()
+    {
+        var health = GetPage<HealthViewModel>(PageKey.Health);
+        await health.ScanAsync();
+        _services.Settings.Current.LastScheduledScanUtc = DateTime.UtcNow;
+        _services.Settings.Save();
+        int issues = health.IssueCount;
+        var title = health.Tiles.Any(t => t.State == TileState.Unavailable) ? "Software Health scan incomplete"
+            : issues == 0 ? $"Software Health {health.Score}/100 - all good" : $"Software Health {health.Score}/100 - {issues} item(s) need attention";
+        Log.Info("Scheduled scan: " + health.NotificationSummary());
+        Background.Notify(title, health.NotificationSummary() + ". Click to open Evict.", () => { ShowMainWindow(); Navigate(PageKey.Health); }, warning: issues > 0);
+    }
+
+    private async Task FinishScheduledLaunchAsync()
+    {
         if (App.StartedHeadless && !_services.Settings.Current.StartWithWindows)
         {
-            // Give the notification time to be seen/clicked, then leave quietly.
             await Task.Delay(TimeSpan.FromSeconds(90));
             var w = Application.Current.MainWindow;
-            if ((w == null || !w.IsVisible) && !Background.IsRecording) App.Quit();
+            if ((w == null || !w.IsVisible) && !Background.IsRecording && !_scheduledScanGuard.IsRunning) App.Quit();
         }
     }
 
-    /// <summary>If the PC was off when Task Scheduler wanted to run the scan, run it now (a while after start-up).</summary>
+    /// <summary>Preserves the elapsed-time catch-up policy, but only for a verified unchanged schedule.</summary>
     public async Task RunMissedScheduledScanIfDueAsync()
     {
-        var s = _services.Settings.Current;
-        if (!ScheduledScanTask.IsValidMode(s.ScheduledScan) || s.ScheduledScan.Equals("Off", StringComparison.OrdinalIgnoreCase)) return;
-        if (s.LastScheduledScanUtc is null)
+        try
         {
-            s.LastScheduledScanUtc = DateTime.UtcNow; // start the clock the first time the schedule is active
-            _services.Settings.Save();
-            return;
+            if (await _scheduledScanGuard.TryRunAsync(catchUp: true, App.ShutdownToken))
+                await FinishScheduledLaunchAsync();
         }
-        var period = s.ScheduledScan.Equals("Daily", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromDays(1) : TimeSpan.FromDays(7);
-        if (DateTime.UtcNow - s.LastScheduledScanUtc.Value < period + TimeSpan.FromHours(2)) return;
-        await Task.Delay(TimeSpan.FromSeconds(30));
-        Log.Info("Running the missed scheduled scan.");
-        await RunScheduledScanAsync();
+        catch (Exception ex) { Log.Error("Missed scheduled scan skipped", ex); }
     }
 
     /// <summary>Used by the Explorer context menu, drag & drop and the Easy Uninstall widget.</summary>
