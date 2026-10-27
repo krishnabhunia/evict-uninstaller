@@ -237,7 +237,7 @@ public sealed partial class SettingsViewModel : ObservableObject
                     S.ScheduledScanAppliedUtc = previousApplied;
                     return (false, (string?)"The settings file could not be saved.");
                 });
-            var (ok, error) = await _services.Scheduler.ApplyAndSaveAsync(requestedMode, requestedHour, requestedDay, SaveVerifiedSchedule, CancellationToken.None);
+            var (ok, error) = await _services.Scheduler.ApplyAndSaveAsync(requestedMode, requestedHour, requestedDay, SaveVerifiedSchedule, App.ShutdownToken);
             OnPropertyChanged(nameof(SavedScheduleText));
             ScheduleStatusText = ok
                 ? (requestedMode == "Off" ? "Scheduled scans are off." : "Schedule applied and verified for this Windows user. Scans do not delete anything automatically.")

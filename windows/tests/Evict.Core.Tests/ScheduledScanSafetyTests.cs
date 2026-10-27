@@ -366,4 +366,31 @@ public sealed class ScheduledScanSafetyTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task ScanAuthorizationWaitsUntilFailedApplyHasRolledBack()
+    {
+        var registered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var states = new Dictionary<string, ScheduledTaskRead>();
+        var service = new ScheduledScanService(() => Sid, async (args, _) =>
+        {
+            if (args.StartsWith("/Create"))
+            {
+                states[Name] = new(true, File.ReadAllText(Definition), true);
+                registered.SetResult();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            else states.Remove(Name);
+            return new ProcessResult();
+        }, Definition, Exe, (name, _) => Task.FromResult(states.GetValueOrDefault(name) ?? ScheduledTaskRead.Missing));
+        var apply = service.ApplyAndSaveAsync("Daily", 10, 0, () => (false, "save denied"), CancellationToken.None);
+        await registered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var authorize = service.MatchesAsync("Daily", 10, 0, CancellationToken.None);
+        Assert.False(authorize.IsCompleted);
+        release.SetResult();
+        Assert.False((await apply).Ok);
+        Assert.False(await authorize);
+        Assert.Empty(states);
+    }
+
 }

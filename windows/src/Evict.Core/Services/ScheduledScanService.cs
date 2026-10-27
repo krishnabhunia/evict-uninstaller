@@ -346,14 +346,19 @@ public sealed class ScheduledScanService
     {
         try
         {
-            if (!ScheduledScanTask.IsValidMode(mode)) return false;
-            var sid = _userSid();
-            var current = await ReadCheckedAsync(ScheduledScanTask.TaskNameForUser(sid), ct).ConfigureAwait(false);
-            var legacy = await ReadCheckedAsync(ScheduledScanTask.LegacyTaskName, ct).ConfigureAwait(false);
-            if (legacy.Exists && ScheduledScanTask.LegacyTaskBelongsToUser(legacy.Xml!, sid)) return false;
-            return mode.Equals("Off", StringComparison.OrdinalIgnoreCase)
-                ? !current.Exists
-                : current.Exists && ScheduledScanTask.Matches(current.Xml!, current.Enabled, _exePath(), mode, hour, weekday, sid);
+            await _mutation.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                if (!ScheduledScanTask.IsValidMode(mode)) return false;
+                var sid = _userSid();
+                var current = await ReadCheckedAsync(ScheduledScanTask.TaskNameForUser(sid), ct).ConfigureAwait(false);
+                var legacy = await ReadCheckedAsync(ScheduledScanTask.LegacyTaskName, ct).ConfigureAwait(false);
+                if (legacy.Exists && ScheduledScanTask.LegacyTaskBelongsToUser(legacy.Xml!, sid)) return false;
+                return mode.Equals("Off", StringComparison.OrdinalIgnoreCase)
+                    ? !current.Exists
+                    : current.Exists && ScheduledScanTask.Matches(current.Xml!, current.Enabled, _exePath(), mode, hour, weekday, sid);
+            }
+            finally { _mutation.Release(); }
         }
         catch { return false; }
     }
@@ -388,7 +393,7 @@ public sealed class ScheduledScanService
             ((dynamic)service).Connect();
             folder = ((dynamic)service).GetFolder("\\");
             try { task = ((dynamic)folder).GetTask(name); }
-            catch (COMException ex) when (ex.HResult == unchecked((int)0x80070002)) { return ScheduledTaskRead.Missing; }
+            catch (Exception ex) when (ex.HResult == unchecked((int)0x80070002)) { return ScheduledTaskRead.Missing; }
             return new ScheduledTaskRead(true, (string)((dynamic)task).Xml, (bool)((dynamic)task).Enabled);
         }
         catch (Exception ex) { return new ScheduledTaskRead(false, Error: ex.Message); }

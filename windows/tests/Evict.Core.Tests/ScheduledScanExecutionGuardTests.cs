@@ -123,4 +123,21 @@ public sealed class ScheduledScanExecutionGuardTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => guard.TryRunAsync(true, cancellation.Token));
         Assert.Equal(0, scans);
     }
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(24, 0)]
+    [InlineData(10, -1)]
+    [InlineData(10, 7)]
+    public async Task InvalidTimeOrDayNeverQueriesOrScans(int hour, int day)
+    {
+        var queried = false;
+        var scanned = false;
+        var guard = new ScheduledScanExecutionGuard(() => Active with { Hour = hour, Weekday = day },
+            (_, _) => { queried = true; return Task.FromResult(true); },
+            _ => { scanned = true; return Task.CompletedTask; });
+        Assert.False(await guard.TryRunAsync(false));
+        Assert.False(queried);
+        Assert.False(scanned);
+    }
+
 }

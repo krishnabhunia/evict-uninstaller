@@ -298,7 +298,7 @@ public sealed partial class MainViewModel : ObservableObject
                 "updater" or "updates" => PageKey.SoftwareUpdater, "monitor" => PageKey.InstallMonitor, "tools" => PageKey.Tools,
                 "history" => PageKey.History, "settings" => PageKey.Settings, _ => PageKey.Health,
             };
-            Navigate(key);
+            Navigate(key, activate: !o.Headless);
         }
         if (o.Widget) ShowWidget();
         if (o.Updated) ShowUpdatedNotice = true;

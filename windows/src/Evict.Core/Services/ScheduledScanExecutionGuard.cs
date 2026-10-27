@@ -3,7 +3,8 @@ namespace Evict.Core.Services;
 /// <summary>An immutable view of the preferences used to authorize a background scan.</summary>
 public sealed record ScheduledScanSnapshot(string Mode, int Hour, int Weekday, DateTime? AppliedUtc, DateTime? LastRunUtc)
 {
-    public bool IsEnabled => ScheduledScanTask.IsValidMode(Mode) && !Mode.Equals("Off", StringComparison.OrdinalIgnoreCase);
+    public bool IsEnabled => ScheduledScanTask.IsValidMode(Mode) && !Mode.Equals("Off", StringComparison.OrdinalIgnoreCase)
+        && Hour is >= 0 and <= 23 && Weekday is >= 0 and <= 6;
 
     public bool IsCatchUpDue(DateTime nowUtc)
     {
