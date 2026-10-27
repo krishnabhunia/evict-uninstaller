@@ -1,7 +1,7 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- ═══════════════ Dark theme ═══════════════ -->
+    <!-- Dark theme: coral/navy UI with RD1 functional resource keys retained. -->
     <SolidColorBrush x:Key="Brush.Window.Background" Color="#111C2D" />
     <SolidColorBrush x:Key="Brush.TitleBar.Background" Color="#1C283C" />
     <SolidColorBrush x:Key="Brush.Sidebar.Background" Color="#0C1728" />
@@ -10,11 +10,12 @@
     <SolidColorBrush x:Key="Brush.Card.Background" Color="#1C283C" />
     <SolidColorBrush x:Key="Brush.Card.Border" Color="#344259" />
     <SolidColorBrush x:Key="Brush.Card.Hover" Color="#243349" />
+    <SolidColorBrush x:Key="Brush.Surface.Sunken" Color="#22272F" />
 
     <SolidColorBrush x:Key="Brush.Text.Primary" Color="#EDF2F9" />
     <SolidColorBrush x:Key="Brush.Text.Secondary" Color="#A3B2C7" />
     <SolidColorBrush x:Key="Brush.Text.Tertiary" Color="#8292A9" />
-    <SolidColorBrush x:Key="Brush.Text.OnAccent" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="Brush.Text.OnAccent" Color="#0C1018" />
     <SolidColorBrush x:Key="Brush.Text.Disabled" Color="#5C6573" />
 
     <SolidColorBrush x:Key="Brush.Accent" Color="#FF916C" />
@@ -22,11 +23,13 @@
     <SolidColorBrush x:Key="Brush.Accent.Pressed" Color="#E67B59" />
     <SolidColorBrush x:Key="Brush.Accent.Subtle" Color="#403127" />
     <SolidColorBrush x:Key="Brush.Accent.Border" Color="#795241" />
+    <SolidColorBrush x:Key="Brush.Accent.Text" Color="#FFAD8B" />
 
     <SolidColorBrush x:Key="Brush.Danger" Color="#F0544A" />
     <SolidColorBrush x:Key="Brush.Danger.Hover" Color="#F4736A" />
     <SolidColorBrush x:Key="Brush.Danger.Pressed" Color="#D9433A" />
     <SolidColorBrush x:Key="Brush.Danger.Subtle" Color="#3B2222" />
+    <SolidColorBrush x:Key="Brush.Danger.Text" Color="#FF9682" />
 
     <SolidColorBrush x:Key="Brush.Success" Color="#5BD1A6" />
     <SolidColorBrush x:Key="Brush.Success.Subtle" Color="#1F3E35" />
@@ -47,11 +50,12 @@
     <SolidColorBrush x:Key="Brush.Header.Background" Color="#26354B" />
 
     <SolidColorBrush x:Key="Brush.Nav.Selected" Color="#273E5A" />
-    <SolidColorBrush x:Key="Brush.Nav.SelectedText" Color="#FFFFFF" />
     <SolidColorBrush x:Key="Brush.Nav.Hover" Color="#1D3048" />
     <SolidColorBrush x:Key="Brush.Nav.Text" Color="#B7C5DA" />
     <SolidColorBrush x:Key="Brush.Nav.Icon" Color="#91A6C2" />
 
+    <SolidColorBrush x:Key="Brush.Tray.Background" Color="#ECEEF1" />
+    <SolidColorBrush x:Key="Brush.Tray.Text" Color="#111317" />
     <SolidColorBrush x:Key="Brush.Badge.Background" Color="#2F4058" />
     <SolidColorBrush x:Key="Brush.Progress.Track" Color="#344259" />
     <SolidColorBrush x:Key="Brush.Overlay" Color="#8015181E" />
@@ -60,7 +64,9 @@
     <SolidColorBrush x:Key="Brush.Scroll.Thumb" Color="#3F4753" />
     <SolidColorBrush x:Key="Brush.Code.Background" Color="#12151B" />
 
-    <SolidColorBrush x:Key="Brush.Nav.GroupHeading" Color="#778CA7" />
+    <SolidColorBrush x:Key="Brush.Nav.SelectedText" Color="#FFFFFF" />
+
+    <SolidColorBrush x:Key="Brush.Nav.GroupHeading" Color="#91A6C2" />
 
     <SolidColorBrush x:Key="Brush.Sidebar.Status" Color="#76DDB8" />
 

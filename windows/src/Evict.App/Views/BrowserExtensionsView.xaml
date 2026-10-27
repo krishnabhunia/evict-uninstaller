@@ -15,7 +15,7 @@
         </ContextMenu>
     </UserControl.Resources>
 
-    <Grid Margin="24,18,24,16">
+    <Grid Margin="28,4,28,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -29,8 +29,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="Browser Extensions" Style="{StaticResource Text.Title}" />
-                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Review extensions, browsers, profiles and broad permissions. Close the affected browser before any removal." />
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,2,0,0" Text="Extensions and add-ons in Chrome, Edge, Brave, Vivaldi, Opera and Firefox – across every profile. Removal requires the browser to be closed." />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                 <TextBox Style="{StaticResource TextBox.Search}" Width="240" Tag="Search extensions…" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=150}" />
@@ -137,7 +136,7 @@
             <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
             <Button Grid.Column="1" Style="{StaticResource Button.Danger}" Command="{Binding RemoveSelectedCommand}" MinWidth="200" Padding="18,9">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="15" Foreground="White" />
+                    <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="15" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                     <TextBlock Margin="9,0,0,0" Text="{Binding SelectedCount, Converter={StaticResource CountLabel}, ConverterParameter='Remove selected|Remove {0} extension|Remove {0} extensions'}" />
                 </StackPanel>
             </Button>

@@ -106,11 +106,72 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         foreach (var t in Tiles)
         {
             t.IsSelected = t.CanAutoFix && t.SelectedByDefault;
-            t.PropertyChanged += (_, e) => { if (e.PropertyName is nameof(HealthTileViewModel.IsSelected) or nameof(HealthTileViewModel.FixCount)) OnPropertyChanged(nameof(CanFix)); };
+            t.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName is nameof(HealthTileViewModel.IsSelected) or nameof(HealthTileViewModel.FixCount))
+                {
+                    OnPropertyChanged(nameof(CanFix));
+                    OnPropertyChanged(nameof(SafeFixCount));
+                    OnPropertyChanged(nameof(TidyText));
+                }
+            };
         }
     }
 
     public ObservableCollection<HealthTileViewModel> Tiles { get; }
+
+    // ───────────── RD1 Home ─────────────
+
+    /// <summary>"Worth a look": up to six areas with findings, the ones that cost the most score first.</summary>
+    public ObservableCollection<HealthTileViewModel> WorthALook { get; } = new();
+    public bool HasWorthALook => WorthALook.Count > 0;
+    /// <summary>Findings "Tidy" (Fix selected) would handle without asking.</summary>
+    public int SafeFixCount => Tiles.Where(t => t.CanAutoFix && t.IsSelected && t.HasResult).Sum(t => t.FixCount);
+    public string TidyText => SafeFixCount > 0 ? $"Tidy {SafeFixCount:N0} safe items" : "Tidy safe items";
+    /// <summary>Newest uninstalls and updates (Home → Recently).</summary>
+    public ObservableCollection<TimelineItemViewModel> Recently { get; } = new();
+    public bool HasRecently => Recently.Count > 0;
+
+    private void RefreshHighlights()
+    {
+        WorthALook.Clear();
+        foreach (var t in Tiles.Where(t => t.State == TileState.Attention).OrderByDescending(t => t.Penalty).ThenByDescending(t => t.Count).Take(6))
+            WorthALook.Add(t);
+        OnPropertyChanged(nameof(HasWorthALook));
+        OnPropertyChanged(nameof(SafeFixCount));
+        OnPropertyChanged(nameof(TidyText));
+    }
+
+    private bool _recentHooked;
+    private void RefreshRecently()
+    {
+        var history = _main.GetPage<HistoryViewModel>(PageKey.History);
+        if (!_recentHooked) { history.RecentChanged += RefreshRecently; _recentHooked = true; }
+        Recently.Clear();
+        foreach (var r in history.Recent(5)) Recently.Add(r);
+        OnPropertyChanged(nameof(HasRecently));
+    }
+
+    /// <summary>The Install Monitor switch on Home: on = record and notify, off = never watch.</summary>
+    public bool InstallMonitorOn
+    {
+        get => !string.Equals(_services.Settings.Current.InstallerDetection, "Off", StringComparison.OrdinalIgnoreCase);
+        set
+        {
+            if (value == InstallMonitorOn) return;
+            _services.Settings.Current.InstallerDetection = value ? "Ask" : "Off";
+            _services.Settings.Save();
+            App.Background.ApplySettings();
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(InstallMonitorText));
+        }
+    }
+    public string InstallMonitorText => InstallMonitorOn
+        ? "On – new installs are recorded so they can be removed completely later."
+        : "Off – turn it on to record what new installers add.";
+
+    [RelayCommand] private void OpenInstallMonitor() => _main.Navigate(PageKey.InstallMonitor);
+    [RelayCommand] private void OpenHistory() => _main.Navigate(PageKey.History);
 
     [ObservableProperty] private bool _isScanning;
     [ObservableProperty] private int _score = -1;
@@ -126,6 +187,9 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
 
     public void OnActivated()
     {
+        RefreshRecently();
+        OnPropertyChanged(nameof(InstallMonitorOn));
+        OnPropertyChanged(nameof(InstallMonitorText));
         if (!_scannedOnce && _services.Settings.Current.HealthAutoScan) _ = ScanAsync();
     }
 
@@ -300,9 +364,12 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
 
         int penalty = Tiles.Where(t => t.State == TileState.Attention).Sum(t => t.Penalty);
         Score = Math.Clamp(100 - penalty, 0, 100);
-        ScoreLabel = Score >= 90 ? "Excellent" : Score >= 75 ? "Good" : Score >= 55 ? "Fair" : "Needs attention";
+        ScoreLabel = Score >= 90 ? "Your PC is in great shape" : Score >= 75 ? "Your PC is in good shape" : Score >= 55 ? "A few things need a look" : "Your PC needs attention";
         int issues = IssueCount;
-        Summary = issues == 0 ? "Nothing needs your attention right now." : $"{issues} item(s) across {Tiles.Count(t => t.State == TileState.Attention)} area(s) could be cleaned up.";
+        int safe = SafeFixCount;
+        Summary = issues == 0 ? "Nothing needs your attention right now."
+            : safe > 0 ? $"{safe:N0} things are safe to tidy. {Math.Max(0, issues - safe):N0} more are worth a look before you remove them."
+            : $"{issues:N0} things across {Tiles.Count(t => t.State == TileState.Attention)} areas are worth a look.";
         int unavailable = Tiles.Count(t => t.State == TileState.Unavailable);
         if (unavailable > 0)
         {
@@ -313,6 +380,7 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
         OnPropertyChanged(nameof(LastScanText));
         OnPropertyChanged(nameof(IssueCount));
         _main.SetBadge(PageKey.Health, Tiles.Count(t => t.Weight > 0 && t.State == TileState.Attention));
+        RefreshHighlights();
         IsScanning = false;
     }
 

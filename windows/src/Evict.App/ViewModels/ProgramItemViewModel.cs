@@ -32,6 +32,11 @@ public sealed partial class ProgramItemViewModel : ObservableObject
     public DateTime InstallDateSort => Program.EffectiveInstallDate ?? DateTime.MinValue;
     public string InstallDateText => Program.EffectiveInstallDate is { } d ? d.ToString("dd MMM yyyy") : "—";
     public DateTime LastUsedSort => Program.LastUsed ?? DateTime.MinValue;
+    /// <summary>Width of the size bar (0–1, relative to the largest program in the list).</summary>
+    [ObservableProperty] private double _sizeShare;
+    /// <summary>Not started for three months or more (or never seen) – shown in the warning colour.</summary>
+    public bool LastUsedIsOld => Program.LastUsed is { } d ? (DateTime.Now - d).TotalDays >= 90 : Program.RunCount == 0;
+    public string PublisherLine => string.Join(" · ", new[] { Program.Publisher, Program.DisplayVersion }.Where(x => !string.IsNullOrWhiteSpace(x)));
     public string LastUsedText => Program.LastUsed is { } d ? Relative(d) : (Program.RunCount > 0 ? "Unknown" : "Never seen");
     public string ArchitectureText => Program.IsPerUser ? "Per-user" : Program.Is32Bit ? "32-bit" : "64-bit";
     public string InstallerText => Program.IsMsi ? "Windows Installer (MSI)" : Program.Installer switch
@@ -82,6 +87,7 @@ public sealed partial class ProgramItemViewModel : ObservableObject
         OnPropertyChanged(nameof(IsBundleSuspect));
         OnPropertyChanged(nameof(IsKnownBundleware));
         OnPropertyChanged(nameof(StatusGlyph));
+        OnPropertyChanged(nameof(LastUsedIsOld));
         OnPropertyChanged(nameof(StatusTooltip));
     }
 

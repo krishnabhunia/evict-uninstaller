@@ -15,7 +15,7 @@
         </ContextMenu>
     </UserControl.Resources>
 
-    <Grid Margin="24,18,24,16">
+    <Grid Margin="28,4,28,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -31,8 +31,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="Windows Apps" Style="{StaticResource Text.Title}" />
-                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Review Microsoft Store and built-in applications before removal. Protected Windows components cannot be selected." />
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,2,0,0" Text="Microsoft Store and pre-installed (UWP / MSIX) apps, including bloatware Windows ships with. Apps marked non-removable by Windows are greyed out." />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                 <TextBox Style="{StaticResource TextBox.Search}" Width="240" Tag="Search apps…" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=150}" />
@@ -148,7 +147,7 @@
             <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
             <Button Grid.Column="1" Style="{StaticResource Button.Danger}" Command="{Binding RemoveSelectedCommand}" MinWidth="200" Padding="18,9">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="15" Foreground="White" />
+                    <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="15" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                     <TextBlock Margin="9,0,0,0" Text="{Binding SelectedCount, Converter={StaticResource CountLabel}, ConverterParameter='Remove selected|Remove {0} app|Remove {0} apps'}" />
                 </StackPanel>
             </Button>

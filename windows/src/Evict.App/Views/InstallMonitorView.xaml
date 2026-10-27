@@ -8,7 +8,7 @@
              d:DataContext="{d:DesignInstance Type=vm:InstallMonitorViewModel}"
              AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver">
 
-    <Grid Margin="24,18,24,16">
+    <Grid Margin="28,4,28,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -21,12 +21,11 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="Install Monitor" Style="{StaticResource Text.Title}" />
-                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Record installer activity, inspect captured changes and reuse the log during removal. Recording requires consent; drop an installer here or choose one." />
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,2,0,0" Text="Records every file, folder and registry key an installer creates so the program can be removed completely later – even if its own uninstaller is poor. Drop an installer here or pick one." />
             </StackPanel>
             <Button Grid.Column="1" Style="{StaticResource Button.Primary}" Command="{Binding MonitorNewInstallCommand}" IsEnabled="{Binding IsMonitoring, Converter={StaticResource InvBool}}" Padding="14,8" VerticalAlignment="Top">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE7B3;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
+                    <TextBlock Text="&#xE7B3;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                     <TextBlock Text="Monitor an installation…" Margin="8,0,0,0" />
                 </StackPanel>
             </Button>
@@ -111,7 +110,7 @@
                         <Button Style="{StaticResource Button.Danger}" Command="{Binding DataContext.UninstallWithLogCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}"
                                 IsEnabled="{Binding Uninstalled, Converter={StaticResource InvBool}}">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
+                                <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                                 <TextBlock Text="Uninstall using this log" Margin="8,0,0,0" />
                             </StackPanel>
                         </Button>
