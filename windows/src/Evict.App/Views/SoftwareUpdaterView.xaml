@@ -36,6 +36,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -58,8 +59,28 @@
             </StackPanel>
         </Grid>
 
+        <!-- Compact real-data metrics, matching the approved design. -->
+        <UniformGrid Grid.Row="1" Columns="4" Margin="0,16,0,0">
+            <Border Style="{StaticResource Card}" Margin="0,0,10,0" Padding="15,12">
+                <StackPanel><TextBlock Text="AVAILABLE UPDATES" Style="{StaticResource Text.Label}" />
+                    <TextBlock Text="{Binding Items.Count}" FontSize="24" FontWeight="Bold" Margin="0,4,0,0" /></StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Margin="0,0,10,0" Padding="15,12">
+                <StackPanel><TextBlock Text="SELECTED" Style="{StaticResource Text.Label}" />
+                    <TextBlock Text="{Binding SelectedCount}" FontSize="24" FontWeight="Bold" Margin="0,4,0,0" /></StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Margin="0,0,10,0" Padding="15,12">
+                <StackPanel><TextBlock Text="HISTORY · 7 DAYS" Style="{StaticResource Text.Label}" />
+                    <TextBlock Text="{Binding HistoryCount}" FontSize="24" FontWeight="Bold" Margin="0,4,0,0" /></StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Padding="15,12">
+                <StackPanel><TextBlock Text="EXCLUSIONS" Style="{StaticResource Text.Label}" />
+                    <TextBlock Text="{Binding ExclusionsLabel}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,9,0,0" /></StackPanel>
+            </Border>
+        </UniformGrid>
+
         <!-- ═══ Tabs (design SH1 choice H1) ═══ -->
-        <Border Grid.Row="1" Margin="0,14,0,0" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
+        <Border Grid.Row="2" Margin="0,14,0,0" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
             <StackPanel Orientation="Horizontal">
                 <RadioButton Style="{StaticResource Button.Tab}" GroupName="UpdaterTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Updates, Mode=TwoWay}">
                     <StackPanel Orientation="Horizontal"><TextBlock Text="Available" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding Items.Count}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
@@ -71,7 +92,7 @@
         </Border>
 
         <!-- ═══ Updates tab ═══ -->
-        <Grid Grid.Row="2" Visibility="{Binding SelectedTab, Converter={StaticResource EqualsToVis}, ConverterParameter=Updates}">
+        <Grid Grid.Row="3" Visibility="{Binding SelectedTab, Converter={StaticResource EqualsToVis}, ConverterParameter=Updates}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -197,7 +218,7 @@
         </Grid>
 
         <!-- ═══ History tab (SH1·1, SH1·3–SH1·5, SH1·7) ═══ -->
-        <Grid Grid.Row="2" Visibility="{Binding SelectedTab, Converter={StaticResource EqualsToVis}, ConverterParameter=History}">
+        <Grid Grid.Row="3" Visibility="{Binding SelectedTab, Converter={StaticResource EqualsToVis}, ConverterParameter=History}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />

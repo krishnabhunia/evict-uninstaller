@@ -7,7 +7,7 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         Title="{Binding WindowTitle}"
-        Width="1240" Height="800" MinWidth="960" MinHeight="600"
+        Width="1320" Height="820" MinWidth="960" MinHeight="600"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource Brush.Window.Background}"
         FontFamily="{StaticResource Font.Body}" FontSize="13"
@@ -26,7 +26,7 @@
         <!-- ═══ Body (scaled by the text-size setting; scrolls when the zoomed body no longer fits) ═══ -->
         <ScrollViewer x:Name="BodyScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                       ScrollChanged="OnBodyScrollChanged" Focusable="False" PanningMode="None">
-        <Grid x:Name="Body" HorizontalAlignment="Left" VerticalAlignment="Top">
+        <Grid x:Name="Body" HorizontalAlignment="Left" VerticalAlignment="Top" Background="{DynamicResource Brush.Window.Background}">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="232" />
             <ColumnDefinition Width="*" />
@@ -50,6 +50,7 @@
 
                 <!-- Bottom: Settings, then who Evict runs as. -->
                 <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,14">
+                    <TextBlock Text="PREFERENCES" Foreground="{DynamicResource Brush.Nav.GroupHeading}" FontSize="10" FontWeight="Bold" Margin="24,9,12,7" />
                     <RadioButton DataContext="{Binding SettingsNav}" Style="{StaticResource Button.Nav}" GroupName="MainNav" Content="{Binding Title}"
                                  IsChecked="{Binding IsSelected, Mode=TwoWay}" />
                     <Border Style="{StaticResource Divider}" Margin="22,10,22,10" />
@@ -69,6 +70,16 @@
 
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <ItemsControl ItemsSource="{Binding NavItems}">
+                        <ItemsControl.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Brush.Nav.GroupHeading}"
+                                                   FontSize="10" FontWeight="Bold" Margin="24,16,12,7" />
+                                    </DataTemplate>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </ItemsControl.GroupStyle>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:NavItemViewModel}">
                                 <RadioButton Style="{StaticResource Button.Nav}" GroupName="MainNav" Content="{Binding Title}"

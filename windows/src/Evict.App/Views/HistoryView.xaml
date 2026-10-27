@@ -87,6 +87,6 @@
         </Border>
 
         <TextBlock Grid.Row="2" Style="{StaticResource Text.Caption}" Margin="0,10,0,0"
-                   Text="Uninstalls are kept until you clear them; program updates for 7 days. Right-click an uninstall to scan for its leftovers again." />
+                   Text="Uninstalls are kept until cleared; program updates for 7 days. Recycled leftovers still occupy space until the Recycle Bin is emptied. Right-click an uninstall to rescan." />
     </Grid>
 </UserControl>

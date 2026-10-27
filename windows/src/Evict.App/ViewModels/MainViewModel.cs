@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Evict.App.Services;
@@ -16,6 +17,7 @@ public enum PageKey { Health, Programs, WindowsApps, BrowserExtensions, Software
 public sealed partial class NavItemViewModel : ObservableObject
 {
     public required PageKey Key { get; init; }
+    public string Group { get; init; } = "";
     public required string Title { get; init; }
     public required string Glyph { get; init; }
     /// <summary>The pages this entry shows as tabs (the first one is <see cref="Key"/>).</summary>
@@ -54,13 +56,15 @@ public sealed partial class MainViewModel : ObservableObject
         _updateChecks.CheckingChanged += value => IsCheckingForUpdates = value;
         NavItems = new ObservableCollection<NavItemViewModel>
         {
-            new() { Key = PageKey.Health, Title = "Home", Glyph = "\uE80F", Pages = [PageKey.Health] },
-            new() { Key = PageKey.Programs, Title = "Apps", Glyph = "\uE71D", Pages = [PageKey.Programs, PageKey.WindowsApps, PageKey.BrowserExtensions] },
-            new() { Key = PageKey.SoftwareUpdater, Title = "Updates", Glyph = "\uE895", Pages = [PageKey.SoftwareUpdater], BadgeIsAccent = true },
-            new() { Key = PageKey.Tools, Title = "Clean", Glyph = "\uE74D", Pages = [PageKey.Tools, PageKey.InstallMonitor] },
-            new() { Key = PageKey.History, Title = "History", Glyph = "\uE81C", Pages = [PageKey.History] },
+            new() { Key = PageKey.Health, Group = "WORKSPACE", Title = "Home", Glyph = "\uE80F", Pages = [PageKey.Health] },
+            new() { Key = PageKey.Programs, Group = "WORKSPACE", Title = "Apps", Glyph = "\uE71D", Pages = [PageKey.Programs, PageKey.WindowsApps, PageKey.BrowserExtensions] },
+            new() { Key = PageKey.SoftwareUpdater, Group = "MAINTENANCE", Title = "Updates", Glyph = "\uE895", Pages = [PageKey.SoftwareUpdater], BadgeIsAccent = true },
+            new() { Key = PageKey.Tools, Group = "MAINTENANCE", Title = "Clean", Glyph = "\uE74D", Pages = [PageKey.Tools, PageKey.InstallMonitor] },
+            new() { Key = PageKey.History, Group = "MAINTENANCE", Title = "History", Glyph = "\uE81C", Pages = [PageKey.History] },
         };
-        SettingsNav = new NavItemViewModel { Key = PageKey.Settings, Title = "Settings", Glyph = "\uE713", Pages = [PageKey.Settings] };
+        // Preserve RD1 page tabs and Ctrl+K search; grouping changes rail presentation only.
+        CollectionViewSource.GetDefaultView(NavItems).GroupDescriptions.Add(new PropertyGroupDescription(nameof(NavItemViewModel.Group)));
+        SettingsNav = new NavItemViewModel { Key = PageKey.Settings, Group = "PREFERENCES", Title = "Settings", Glyph = "\uE713", Pages = [PageKey.Settings] };
         foreach (var item in AllNav)
         {
             item.LastPage = item.Key;

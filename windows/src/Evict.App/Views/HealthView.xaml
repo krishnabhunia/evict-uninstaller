@@ -29,7 +29,7 @@
 
             <StackPanel Grid.Column="0">
                 <!-- Score -->
-                <Border Style="{StaticResource Card}" Padding="24,22">
+                <Border Style="{StaticResource Card}" Padding="24,22" Background="{DynamicResource Brush.Hero.Background}" BorderBrush="{DynamicResource Brush.Accent.Border}" BorderThickness="1">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />

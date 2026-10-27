@@ -29,6 +29,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -58,8 +59,28 @@
                      Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=150}" AutomationProperties.Name="Search programs" />
         </DockPanel>
 
+        <!-- Live counts retained from the approved coral redesign. -->
+        <UniformGrid Grid.Row="1" Columns="4" Margin="0,14,0,0">
+            <Border Style="{StaticResource Card}" Margin="0,0,10,0" Padding="14,10">
+                <StackPanel><TextBlock Text="INSTALLED PROGRAMS" Style="{StaticResource Text.Label}" />
+                    <TextBlock Text="{Binding CountAll}" FontSize="23" FontWeight="Bold" Margin="0,3,0,0" /></StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Margin="0,0,10,0" Padding="14,10">
+                <StackPanel><TextBlock Text="RECENTLY INSTALLED" Style="{StaticResource Text.Label}" />
+                    <TextBlock Text="{Binding CountRecent}" FontSize="23" FontWeight="Bold" Margin="0,3,0,0" /></StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Margin="0,0,10,0" Padding="14,10">
+                <StackPanel><TextBlock Text="LARGE PROGRAMS" Style="{StaticResource Text.Label}" />
+                    <TextBlock Text="{Binding CountLarge}" FontSize="23" FontWeight="Bold" Margin="0,3,0,0" /></StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Padding="14,10">
+                <StackPanel><TextBlock Text="UNINSTALL ISSUES" Style="{StaticResource Text.Label}" />
+                    <TextBlock Text="{Binding CountBroken}" FontSize="23" FontWeight="Bold" Margin="0,3,0,0" /></StackPanel>
+            </Border>
+        </UniformGrid>
+
         <!-- ═══ Filter chips (were tabs) ═══ -->
-        <StackPanel Grid.Row="1" Margin="0,12,0,0">
+        <StackPanel Grid.Row="2" Margin="0,12,0,0">
             <WrapPanel>
                 <RadioButton Style="{StaticResource Button.Chip}" GroupName="ProgTabs" Margin="0,0,6,6" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=All, Mode=TwoWay}">
                     <StackPanel Orientation="Horizontal"><TextBlock Text="All" /><TextBlock Text="{Binding CountAll}" Margin="6,0,0,0" Opacity="0.7" /></StackPanel>
@@ -84,7 +105,7 @@
         </StackPanel>
 
         <!-- ═══ Busy strip ═══ -->
-        <Grid Grid.Row="2" Margin="0,8,0,0" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+        <Grid Grid.Row="3" Margin="0,8,0,0" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="220" />
@@ -94,7 +115,7 @@
         </Grid>
 
         <!-- ═══ List + details ═══ -->
-        <Grid Grid.Row="3" Margin="0,10,0,0">
+        <Grid Grid.Row="4" Margin="0,10,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -328,7 +349,7 @@
         </Grid>
 
         <!-- ═══ Footer: count, or the RD1 selection tray when programs are ticked ═══ -->
-        <Grid Grid.Row="4" Margin="0,12,0,0">
+        <Grid Grid.Row="5" Margin="0,12,0,0">
             <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="2,6"
                        Visibility="{Binding SelectedCount, Converter={StaticResource InvBoolToVis}}" />
             <Border Background="{DynamicResource Brush.Tray.Background}" CornerRadius="14" Padding="18,10" Visibility="{Binding SelectedCount, Converter={StaticResource BoolToVis}}">
