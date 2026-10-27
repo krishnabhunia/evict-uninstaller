@@ -11,6 +11,29 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly MainViewModel _main;
     private AppSettings S => _services.Settings.Current;
 
+    // ───────────── RD1 section list ─────────────
+
+    /// <summary>The section shown on the right (one of <see cref="SettingsSections.All"/>).</summary>
+    [ObservableProperty] private string _selectedSection = SettingsSections.All[0].Name;
+    [ObservableProperty] private string _sectionQuery = "";
+    public IReadOnlyList<SettingsSections.Section> VisibleSections =>
+        Evict.Core.Util.QuickSearch.Top(SettingsSections.All, SectionQuery, s => s.Name, s => s.Keywords, SettingsSections.All.Count);
+    public bool HasNoSectionMatch => VisibleSections.Count == 0;
+
+    partial void OnSectionQueryChanged(string value)
+    {
+        OnPropertyChanged(nameof(VisibleSections));
+        OnPropertyChanged(nameof(HasNoSectionMatch));
+        var first = VisibleSections.FirstOrDefault();
+        if (first != null && !VisibleSections.Any(v => v.Name == SelectedSection)) SelectedSection = first.Name;
+    }
+
+    // ListBox pushes null when the selected section is filtered out; fall back to the first one shown.
+    partial void OnSelectedSectionChanged(string value)
+    {
+        if (string.IsNullOrEmpty(value)) SelectedSection = VisibleSections.FirstOrDefault()?.Name ?? SettingsSections.All[0].Name;
+    }
+
     public SettingsViewModel(AppServices services, MainViewModel main)
     {
         _services = services;

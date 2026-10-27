@@ -71,7 +71,7 @@
             <Button Style="{StaticResource Button.Secondary}" Content="Close" Command="{Binding CancelCommand}" MinWidth="100" Margin="0,0,10,0" IsCancel="True" />
             <Button Style="{StaticResource Button.Danger}" Command="{Binding ShredCommand}" MinWidth="160">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xEA99;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
+                    <TextBlock Text="&#xEA99;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                     <TextBlock Text="Shred permanently" Margin="8,0,0,0" />
                 </StackPanel>
             </Button>

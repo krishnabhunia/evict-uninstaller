@@ -5,9 +5,23 @@
 A complete Windows uninstaller — written in C# / .NET 8 / WPF,
 delivered as a single portable `Evict.exe` **or** an `Evict-Setup-x.y.z.exe` installer (Inno Setup).
 
+## Layout (3.0, design RD1)
+
+| Menu | What is on it |
+|---|---|
+| **Home** | Health score, one **Tidy N safe items** button, up to six *Worth a look* cards, *All checks* (every category with its tick), *Recently* (last uninstalls and updates), Install Monitor switch |
+| **Apps** | Tabs *Programs · Store apps · Browser extensions*. Programs: filter chips, rows with tags / size bar / last used / Uninstall, details drawer, selection tray *Uninstall N programs* |
+| **Updates** | Tabs *Available · History · 7 days* (winget) |
+| **Clean** | Tabs *Tools · Install Monitor*: nine tool tiles (Leftover Cleaner, System Cleanup, Startup Apps, Install Monitor, Registry Cleaner, Force Uninstall, File Shredder, Windows Updates, Restore Point) plus shortcuts |
+| **History** | One timeline of uninstalls and program updates, by day; chips *All · Uninstalls · Updates* |
+| **Settings** | Sections *General · Uninstalling · Updates · Background & tray · Appearance · Advanced · About*, with a search box |
+| **Ctrl+K** | Search box for programs, pages, tools and settings (also the box at the top of the menu) |
+
+Uninstalling opens a full-height panel at the right edge of the window: *Confirm → Uninstall → Leftovers → Done*. Details: [docs/redesign-rd1.md](../docs/redesign-rd1.md).
+
 | Module | What it does | Status |
 |---|---|---|
-| **Programs** | All installed programs (64-bit, 32-bit, per-user) with icons, size, install date, last-used; tabs for *All / Recently Installed / Large / Infrequently Used / Bundleware / Broken Entries*; search, sort, multi-select | ✅ |
+| **Programs** | All installed programs (64-bit, 32-bit, per-user) with icons, size, install date, last-used; filter chips *All / Recently installed / Large / Rarely used / Bundleware / Problems*; search, sort, multi-select | ✅ |
 | **Uninstall wizard** | Optional System Restore point (asks before continuing without one) → **closes the program if it is running** (asks, or automatically – Settings) → runs the program's own uninstaller (interactive or silent) → **on failure: try again, another way (interactive / msiexec / silent), force uninstall, or skip** → **Powerful Scan** for leftovers → review files & folders → **separate Registry step** → delete (Recycle Bin optional; registry backed up to .reg first) → failed items: **retry or undo** → summary with **Undo leftover removal** and **Open System Restore** | ✅ / 1.8 |
 | **Powerful Scan** | Finds leftover folders/files (Program Files, ProgramData, AppData of every user), Start-menu / desktop shortcuts, registry keys & values (vendor keys, App Paths, Run entries, AppCompat, MuiCache…), services and scheduled tasks | ✅ |
 | **Batch uninstall** | Queue several programs; one review step for all leftovers | ✅ |
@@ -16,12 +30,12 @@ delivered as a single portable `Evict.exe` **or** an `Evict-Setup-x.y.z.exe` ins
 | **Browser Extensions** | Chrome, Edge, Brave, Vivaldi, Opera (all profiles) + Firefox; flags broad permissions; removes with browser closed | ✅ |
 | **Software Updater** | Outdated programs via `winget upgrade`; one-click update with live output; **updates run in parallel** (1–6 at a time, MSI conflicts retried); **History tab** keeps every update of the last 7 days — Evict's own included — with result, version change, time taken and winget output, plus retry, CSV export and clear | ✅ / Build 4 |
 | **Install Monitor** | Records files, folders and registry keys created by an installer (FileSystemWatcher + registry snapshot diff); later "Uninstall using this log", or **"Clean registry…"** – only the keys that installation created that still exist (after a failed install, or when the program was removed another way) | ✅ / 1.4 |
-| **Tools** | File Shredder (1 / 3 / 7 passes), Windows Updates uninstall (wusa), Create Restore Point, shortcuts to Windows tools | ✅ |
+| **Clean** (was Tools) | File Shredder (1 / 3 / 7 passes), Windows Updates uninstall (wusa), Create Restore Point, shortcuts to Windows tools | ✅ |
 | **Registry Cleaner** | Separate module (Tools). Ticked when found: broken uninstall entries, App Paths / startup / "Open with" entries of missing programs, SharedDLLs and MuiCache records of missing files, empty software keys. For review (unticked): settings keys of removed programs, file-type commands. Advanced (unticked): COM / ActiveX, type libraries, Windows Installer folder records. Privacy (unticked): recent documents, Run / typed-path / search history, Open/Save dialog history, UserAssist. An entry is listed only when its file is provably gone from a fixed drive (USB and network drives never count; System32 ↔ SysWOW64 both checked). | ✅ 1.4 |
 | **Registry backups** | Every registry deletion anywhere in Evict (wizard, Force Uninstall, Residual Cleaner, Install Monitor, Registry Cleaner) is first exported to a regedit-compatible `.reg` file in `%LocalAppData%\Evict\registry-backups`; entries that cannot be backed up are not deleted. Restore / delete backups in the Registry Cleaner (`reg import`). | ✅ 1.4 |
-| **History** | Every operation with leftovers found/removed and bytes reclaimed; CSV export; rescan leftovers | ✅ |
+| **History** | One timeline: every uninstall (leftovers found/removed, space freed) and every program update of the last 7 days; CSV export of uninstalls; rescan leftovers | ✅ |
 | **Settings** | Light/Dark theme, defaults for the wizard, thresholds for the tabs | ✅ |
-| **Software Health** (home page) | Score + 14 categories, each with a one-click action; tick categories and press **Fix selected** for the safe fixes (setup files to the Recycle Bin, caches, leftovers and broken entries with registry backup, promotional notifications off; permissions and hibernation opt-in) | ✅ Build 2 / 1.5 |
+| **Home** (Software Health) | Score + 14 categories, each with a one-click action; tick categories under *All checks* and press **Tidy N safe items** for the safe fixes (setup files to the Recycle Bin, caches, leftovers and broken entries with registry backup, promotional notifications off; permissions and hibernation opt-in) | ✅ Build 2 / 1.5 |
 | **Health: Installation files** | Setup packages (.msi/.msix/setup .exe/setup archives) in Downloads and on the Desktop – ticked when the program is installed or the file is > 30 days old; to the Recycle Bin | ✅ 1.5 |
 | **Health: Software redundant files** | Cache, log, crash-report and temp folders of installed programs (AppData, LocalLow, ProgramData as admin); log folders holding anything but log files are review-only | ✅ 1.5 |
 | **Health: Programs with uninstall issues** | Broken entry, uninstaller missing (files present), no uninstall command, or an earlier uninstall that failed – Programs tab *Uninstall issues* | ✅ 1.5 |
@@ -59,7 +73,7 @@ machine-wide operations (Program Files leftovers, services, restore points, all-
 | SrNo. | Situation | What happens |
 |---|---|---|
 | 1 | *Settings → Administrator rights → Start Evict as administrator* on (default), administrator account | UAC prompt at every start; Evict relaunches itself elevated with the same arguments |
-| 2 | UAC prompt declined | Evict runs with your own rights; *Restart as administrator* (sidebar or yellow banner) asks again |
+| 2 | UAC prompt declined | Evict runs with your own rights; *Restart as administrator* (bottom of the menu or yellow banner) asks again |
 | 3 | Setting off | No prompt; *Restart as administrator* when needed |
 | 4 | Standard (non-administrator) account | No prompt – elevating would run Evict under the administrator's account and profile |
 | 5 | Hidden starts (`--tray` at sign-in, `--scheduled-scan`) | No prompt; the prompt comes when you open the window from the notification area (not while an installation is being recorded) |
@@ -135,7 +149,7 @@ The helper verifies all three payloads, Windows PE headers and the Mac disk imag
 ```
 Evict.exe --uninstall-file "C:\Program Files\Foo\foo.exe"   # or a .lnk – opens the wizard for the owning program
 Evict.exe --uninstall "Notepad++"                            # by (partial) name
-Evict.exe --scan                                             # open Software Health and scan
+Evict.exe --scan                                             # open Home and scan
 Evict.exe --widget                                           # show the Easy Uninstall widget
 Evict.exe --page tools                                       # health|programs|apps|extensions|updater|monitor|tools|history|settings
 Evict.exe --updated                                          # (internal) first start after a self-update

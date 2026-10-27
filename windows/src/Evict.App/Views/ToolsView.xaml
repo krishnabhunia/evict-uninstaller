@@ -4,58 +4,71 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:Evict.App.ViewModels"
+             xmlns:ctl="clr-namespace:Evict.App.Controls"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:ToolsViewModel}">
 
+    <!-- RD1 Clean: nine tool tiles (what it does + one action), then shortcuts. -->
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="24,18,24,16">
-            <TextBlock Text="Tools" Style="{StaticResource Text.Title}" />
-            <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,14" Text="Utilities for the stubborn cases and for keeping Windows tidy." />
-            <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Caption}" Visibility="{Binding StatusText, Converter={StaticResource BoolToVis}}" Margin="0,0,0,8" />
+        <StackPanel Margin="28,4,28,20">
+            <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Caption}" Visibility="{Binding StatusText, Converter={StaticResource BoolToVis}}" Margin="2,0,0,10" />
 
-            <ItemsControl ItemsSource="{Binding Tools}">
+            <ItemsControl ItemsSource="{Binding TileTools}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <WrapPanel Orientation="Horizontal" />
+                        <ctl:AdaptiveUniformGrid MinColumnWidth="230" MaxColumns="3" />
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:ToolCardViewModel}">
-                        <Button Command="{Binding DataContext.RunToolCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
-                                Width="300" Height="140" Margin="0,0,14,14" Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
-                            <Button.Template>
-                                <ControlTemplate TargetType="Button">
-                                    <Border x:Name="Bd" Style="{StaticResource Card}" Padding="18">
-                                        <ContentPresenter />
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Card.Hover}" />
-                                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent.Border}" />
-                                        </Trigger>
-                                        <Trigger Property="IsPressed" Value="True">
-                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Accent.Subtle}" />
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </Button.Template>
+                        <Button Style="{StaticResource Button.Tile}" Margin="0,0,14,14" MinHeight="168"
+                                Command="{Binding DataContext.RunToolCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
+                                AutomationProperties.Name="{Binding Title}">
                             <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Border Width="44" Height="44" CornerRadius="10" Background="{DynamicResource Brush.Accent.Subtle}" VerticalAlignment="Top">
-                                    <TextBlock Text="{Binding Glyph}" Style="{StaticResource Icon}" FontSize="20" Foreground="{DynamicResource Brush.Accent}" />
-                                </Border>
-                                <StackPanel Grid.Column="1" Margin="14,0,0,0">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding Title}" Style="{StaticResource Text.Section}" />
-                                        <TextBlock Text="&#xE7EF;" Style="{StaticResource Icon}" FontSize="12" Margin="8,0,0,0" ToolTip="Requires administrator rights" Foreground="{DynamicResource Brush.Text.Tertiary}"
-                                                   Visibility="{Binding RequiresAdmin, Converter={StaticResource BoolToVis}}" />
-                                    </StackPanel>
-                                    <TextBlock Text="{Binding Description}" Style="{StaticResource Text.Caption}" Margin="0,6,0,0" TextWrapping="Wrap" />
-                                </StackPanel>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <DockPanel>
+                                    <Border DockPanel.Dock="Right" Style="{StaticResource Tag}" VerticalAlignment="Top" ToolTip="Needs administrator rights"
+                                            Visibility="{Binding RequiresAdmin, Converter={StaticResource BoolToVis}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE7EF;" Style="{StaticResource Icon}" FontSize="10" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                                            <TextBlock Text="Admin" Style="{StaticResource Tag.Text}" Margin="4,0,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Width="38" Height="38" CornerRadius="10" Background="{DynamicResource Brush.Accent.Subtle}" HorizontalAlignment="Left">
+                                        <TextBlock Text="{Binding Glyph}" Style="{StaticResource Icon}" FontSize="17" Foreground="{DynamicResource Brush.Accent.Text}" />
+                                    </Border>
+                                </DockPanel>
+                                <TextBlock Grid.Row="1" Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" Margin="0,12,0,0" />
+                                <TextBlock Grid.Row="2" Text="{Binding Description}" Style="{StaticResource Text.Caption}" Margin="0,4,0,12" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="3" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Accent.Text}">
+                                    <Run Text="{Binding ActionText, Mode=OneWay}" /><Run Text=" →" />
+                                </TextBlock>
                             </Grid>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Text="Also" Style="{StaticResource Text.Eyebrow}" Margin="2,6,0,6" />
+            <ItemsControl ItemsSource="{Binding MoreTools}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:ToolCardViewModel}">
+                        <Button Style="{StaticResource Button.Secondary}" Margin="0,0,8,8" ToolTip="{Binding Description}"
+                                Command="{Binding DataContext.RunToolCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Glyph}" Style="{StaticResource Icon}" FontSize="13" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                                <TextBlock Text="{Binding Title}" Margin="8,0,0,0" />
+                            </StackPanel>
                         </Button>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>

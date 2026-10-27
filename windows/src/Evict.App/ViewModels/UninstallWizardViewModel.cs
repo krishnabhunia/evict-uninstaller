@@ -11,6 +11,17 @@ namespace Evict.App.ViewModels;
 /// <summary>Review = leftover files, folders, services…; RegistryReview = leftover registry entries (own step, backed up before removal).</summary>
 public enum WizardStep { Confirm, Running, Review, RegistryReview, Cleaning, Done }
 
+/// <summary>One chip of the uninstall panel's step bar.</summary>
+public sealed class WizardStepChip(int number, string title, bool isCurrent, bool isDone)
+{
+    public int Number { get; } = number;
+    public string Title { get; } = title;
+    public bool IsCurrent { get; } = isCurrent;
+    public bool IsDone { get; } = isDone;
+    public bool IsLast => Number == 4;
+    public string Label => IsDone ? "\u2713" : Number.ToString();
+}
+
 public sealed partial class UninstallJobViewModel : ObservableObject
 {
     public UninstallJobViewModel(UninstallJob job) => Job = job;
@@ -91,7 +102,26 @@ public sealed partial class UninstallWizardViewModel : ObservableObject
     public LeftoverReviewViewModel RegistryReview { get; }
     public ObservableCollection<string> LogLines { get; } = new();
 
-    [ObservableProperty] private WizardStep _step = WizardStep.Confirm;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StepBar))]
+    private WizardStep _step = WizardStep.Confirm;
+
+    /// <summary>RD1 step bar: Confirm · Uninstall · Leftovers · Done.</summary>
+    public IReadOnlyList<WizardStepChip> StepBar
+    {
+        get
+        {
+            int current = Step switch
+            {
+                WizardStep.Confirm => 0,
+                WizardStep.Running => 1,
+                WizardStep.Review or WizardStep.RegistryReview or WizardStep.Cleaning => 2,
+                _ => 3,
+            };
+            string[] names = ["Confirm", "Uninstall", "Leftovers", "Done"];
+            return names.Select((n, i) => new WizardStepChip(i + 1, n, i == current, i < current)).ToList();
+        }
+    }
     [ObservableProperty] private bool _createRestorePoint;
     [ObservableProperty] private bool _quietMode;
     [ObservableProperty] private bool _autoClean;

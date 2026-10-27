@@ -24,7 +24,7 @@
         </ContextMenu>
     </UserControl.Resources>
 
-    <Grid Margin="24,18,24,16">
+    <Grid Margin="28,4,28,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -33,20 +33,10 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- ═══ Header ═══ -->
-        <Grid Grid.Row="0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <StackPanel>
-                <TextBlock Text="Programs" Style="{StaticResource Text.Title}" />
-                <TextBlock Text="{Binding TabDescription}" Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-                <TextBox Style="{StaticResource TextBox.Search}" Width="260" Tag="Search name, publisher, version…"
-                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=150}" />
-                <Button Style="{StaticResource Button.Secondary}" Command="{Binding RefreshCommand}" Margin="8,0,0,0" ToolTip="Reload the program list" Padding="10,7">
+        <!-- ═══ Toolbar: search, refresh, details, Easy Uninstall (RD1) ═══ -->
+        <DockPanel Grid.Row="0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Style="{StaticResource Button.Secondary}" Command="{Binding RefreshCommand}" ToolTip="Reload the program list" Padding="10,7">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE72C;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}" />
                         <TextBlock Text="Refresh" Margin="7,0,0,0" />
@@ -64,31 +54,34 @@
                     </StackPanel>
                 </ToggleButton>
             </StackPanel>
-        </Grid>
+            <TextBox Style="{StaticResource TextBox.Search}" Width="300" HorizontalAlignment="Left" Tag="Search name, publisher, version…"
+                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=150}" AutomationProperties.Name="Search programs" />
+        </DockPanel>
 
-        <!-- ═══ Tabs ═══ -->
-        <Border Grid.Row="1" Margin="0,14,0,0" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
-            <StackPanel Orientation="Horizontal">
-                <RadioButton Style="{StaticResource Button.Tab}" GroupName="ProgTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=All, Mode=TwoWay}">
-                    <StackPanel Orientation="Horizontal"><TextBlock Text="All Programs" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding CountAll}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+        <!-- ═══ Filter chips (were tabs) ═══ -->
+        <StackPanel Grid.Row="1" Margin="0,12,0,0">
+            <WrapPanel>
+                <RadioButton Style="{StaticResource Button.Chip}" GroupName="ProgTabs" Margin="0,0,6,6" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=All, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="All" /><TextBlock Text="{Binding CountAll}" Margin="6,0,0,0" Opacity="0.7" /></StackPanel>
                 </RadioButton>
-                <RadioButton Style="{StaticResource Button.Tab}" GroupName="ProgTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Recent, Mode=TwoWay}">
-                    <StackPanel Orientation="Horizontal"><TextBlock Text="Recently Installed" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding CountRecent}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                <RadioButton Style="{StaticResource Button.Chip}" GroupName="ProgTabs" Margin="0,0,6,6" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Recent, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Recently installed" /><TextBlock Text="{Binding CountRecent}" Margin="6,0,0,0" Opacity="0.7" /></StackPanel>
                 </RadioButton>
-                <RadioButton Style="{StaticResource Button.Tab}" GroupName="ProgTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Large, Mode=TwoWay}">
-                    <StackPanel Orientation="Horizontal"><TextBlock Text="Large Programs" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding CountLarge}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                <RadioButton Style="{StaticResource Button.Chip}" GroupName="ProgTabs" Margin="0,0,6,6" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Large, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Large" /><TextBlock Text="{Binding CountLarge}" Margin="6,0,0,0" Opacity="0.7" /></StackPanel>
                 </RadioButton>
-                <RadioButton Style="{StaticResource Button.Tab}" GroupName="ProgTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Infrequent, Mode=TwoWay}">
-                    <StackPanel Orientation="Horizontal"><TextBlock Text="Infrequently Used" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding CountInfrequent}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                <RadioButton Style="{StaticResource Button.Chip}" GroupName="ProgTabs" Margin="0,0,6,6" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Infrequent, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Rarely used" /><TextBlock Text="{Binding CountInfrequent}" Margin="6,0,0,0" Opacity="0.7" /></StackPanel>
                 </RadioButton>
-                <RadioButton Style="{StaticResource Button.Tab}" GroupName="ProgTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Bundleware, Mode=TwoWay}">
-                    <StackPanel Orientation="Horizontal"><TextBlock Text="Bundleware" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding CountBundleware}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                <RadioButton Style="{StaticResource Button.Chip}" GroupName="ProgTabs" Margin="0,0,6,6" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Bundleware, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Bundleware" /><TextBlock Text="{Binding CountBundleware}" Margin="6,0,0,0" Opacity="0.7" /></StackPanel>
                 </RadioButton>
-                <RadioButton Style="{StaticResource Button.Tab}" GroupName="ProgTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Broken, Mode=TwoWay}">
-                    <StackPanel Orientation="Horizontal"><TextBlock Text="Uninstall issues" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding CountBroken}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                <RadioButton Style="{StaticResource Button.Chip}" GroupName="ProgTabs" Margin="0,0,6,6" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Broken, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Problems" /><TextBlock Text="{Binding CountBroken}" Margin="6,0,0,0" Opacity="0.7" /></StackPanel>
                 </RadioButton>
-            </StackPanel>
-        </Border>
+            </WrapPanel>
+            <TextBlock Text="{Binding TabDescription}" Style="{StaticResource Text.Caption}" Margin="2,2,0,0" />
+        </StackPanel>
 
         <!-- ═══ Busy strip ═══ -->
         <Grid Grid.Row="2" Margin="0,8,0,0" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
@@ -132,7 +125,7 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <Grid Width="26" Height="26" Margin="0,0,10,0" Loaded="OnIconLoaded">
+                                            <Grid Width="30" Height="30" Margin="0,0,12,0" Loaded="OnIconLoaded">
                                                 <Border CornerRadius="6" Background="{DynamicResource Brush.Accent.Subtle}">
                                                     <TextBlock Text="{Binding Initial}" FontWeight="Bold" FontSize="12" Foreground="{DynamicResource Brush.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                                 </Border>
@@ -148,7 +141,19 @@
                                                     </Image.Style>
                                                 </Image>
                                             </Grid>
-                                            <TextBlock Grid.Column="1" Text="{Binding Name}" Style="{StaticResource Cell.Primary}" ToolTip="{Binding Name}" />
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Name}" Style="{StaticResource Cell.Primary}" ToolTip="{Binding Name}" MaxWidth="320" />
+                                                    <Border Style="{StaticResource Tag}" Background="{DynamicResource Brush.Warning.Subtle}" Visibility="{Binding IsBundleSuspect, Converter={StaticResource BoolToVis}}">
+                                                        <TextBlock Text="Bundleware" Style="{StaticResource Tag.Text}" Foreground="{DynamicResource Brush.Warning}" />
+                                                    </Border>
+                                                    <Border Style="{StaticResource Tag}" Background="{DynamicResource Brush.Danger.Subtle}" Visibility="{Binding HasUninstallIssue, Converter={StaticResource BoolToVis}}"
+                                                            ToolTip="{Binding UninstallIssueText}">
+                                                        <TextBlock Text="Problem" Style="{StaticResource Tag.Text}" Foreground="{DynamicResource Brush.Danger.Text}" />
+                                                    </Border>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding PublisherLine}" Style="{StaticResource Cell.Secondary}" FontSize="11.5" ToolTip="{Binding PublisherLine}" />
+                                            </StackPanel>
                                             <TextBlock Grid.Column="2" Text="{Binding StatusGlyph}" Style="{StaticResource Icon}" FontSize="13" Margin="8,0,4,0" ToolTip="{Binding StatusTooltip}"
                                                        Visibility="{Binding StatusGlyph, Converter={StaticResource BoolToVis}}">
                                                 <TextBlock.Foreground>
@@ -160,26 +165,17 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
 
-                            <DataGridTemplateColumn Header="Publisher" Width="1.2*" MinWidth="120" SortMemberPath="Publisher">
+                            <DataGridTemplateColumn Header="Size" Width="120" SortMemberPath="SizeSort">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate DataType="{x:Type vm:ProgramItemViewModel}">
-                                        <TextBlock Text="{Binding Publisher}" Style="{StaticResource Cell.Secondary}" ToolTip="{Binding Publisher}" />
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-
-                            <DataGridTemplateColumn Header="Version" Width="110" SortMemberPath="Version">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate DataType="{x:Type vm:ProgramItemViewModel}">
-                                        <TextBlock Text="{Binding Version}" Style="{StaticResource Cell.Secondary}" ToolTip="{Binding Version}" />
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-
-                            <DataGridTemplateColumn Header="Size" Width="90" SortMemberPath="SizeSort">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate DataType="{x:Type vm:ProgramItemViewModel}">
-                                        <TextBlock Text="{Binding SizeText}" Style="{StaticResource Cell.Primary}" HorizontalAlignment="Right" />
+                                        <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                            <TextBlock Text="{Binding SizeText}" Style="{StaticResource Cell.Primary}" />
+                                            <Grid Height="4" Margin="0,4,0,0" Width="80" HorizontalAlignment="Left">
+                                                <Border CornerRadius="2" Background="{DynamicResource Brush.Progress.Track}" />
+                                                <Border CornerRadius="2" Background="{DynamicResource Brush.Accent}" HorizontalAlignment="Left"
+                                                        Width="{Binding SizeShare, Converter={StaticResource Multiply}, ConverterParameter=80}" />
+                                            </Grid>
+                                        </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -195,7 +191,17 @@
                             <DataGridTemplateColumn Header="Last used" Width="110" SortMemberPath="LastUsedSort">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate DataType="{x:Type vm:ProgramItemViewModel}">
-                                        <TextBlock Text="{Binding LastUsedText}" Style="{StaticResource Cell.Secondary}" />
+                                        <TextBlock Text="{Binding LastUsedText}" Style="{StaticResource Cell.Secondary}"
+                                                   Foreground="{Binding LastUsedIsOld, Converter={StaticResource BoolToBrush}, ConverterParameter='Brush.Warning|Brush.Text.Secondary'}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Width="104" CanUserResize="False" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate DataType="{x:Type vm:ProgramItemViewModel}">
+                                        <Button Style="{StaticResource Button.DangerText}" Content="Uninstall" HorizontalAlignment="Right" Margin="0,0,8,0"
+                                                Command="{Binding DataContext.UninstallOneCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}"
+                                                AutomationProperties.Name="{Binding Name, StringFormat=Uninstall {0}}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -213,7 +219,7 @@
             </Border>
 
             <!-- ═══ Details pane ═══ -->
-            <Border Grid.Column="1" Style="{StaticResource Card}" Width="320" Margin="14,0,0,0" Padding="0"
+            <Border Grid.Column="1" Style="{StaticResource Card}" Width="370" Margin="14,0,0,0" Padding="0"
                     Visibility="{Binding ShowDetails, Converter={StaticResource BoolToVis}}">
                 <Grid>
                     <TextBlock Text="Select a program to see its details" Style="{StaticResource Text.Caption}" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" Margin="24"
@@ -237,7 +243,7 @@
                                         </Image.Style>
                                     </Image>
                                 </Grid>
-                                <StackPanel VerticalAlignment="Center" Width="220">
+                                <StackPanel VerticalAlignment="Center" Width="270">
                                     <TextBlock Text="{Binding Name}" Style="{StaticResource Text.Section}" TextWrapping="Wrap" />
                                     <TextBlock Text="{Binding Publisher}" Style="{StaticResource Text.Caption}" Margin="0,2,0,0" />
                                 </StackPanel>
@@ -296,10 +302,17 @@
                                 <Button Style="{StaticResource Button.Link}" Content="Website" Command="{Binding DataContext.OpenWebsiteCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" />
                             </StackPanel>
 
-                            <Border Style="{StaticResource Divider}" Margin="0,18,0,14" />
+                            <Border Background="{DynamicResource Brush.Surface.Sunken}" CornerRadius="10" Padding="12,10" Margin="0,18,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="What Evict does" FontWeight="SemiBold" FontSize="12.5" />
+                                    <TextBlock Style="{StaticResource Text.Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                               Text="Runs the program's own uninstaller, then looks for leftover files, folders and registry keys. You choose what to remove; files go to the Recycle Bin and a restore point can be made first (Settings → Uninstalling)." />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Divider}" Margin="0,16,0,14" />
                             <Button Style="{StaticResource Button.Danger}" HorizontalAlignment="Stretch" Command="{Binding DataContext.UninstallOneCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
+                                    <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                                     <TextBlock Text="Uninstall" Margin="8,0,0,0" />
                                 </StackPanel>
                             </Button>
@@ -314,38 +327,24 @@
             </Border>
         </Grid>
 
-        <!-- ═══ Action bar ═══ -->
+        <!-- ═══ Footer: count, or the RD1 selection tray when programs are ticked ═══ -->
         <Grid Grid.Row="4" Margin="0,12,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" />
-                <TextBlock Text="·" Margin="8,0" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center" Visibility="{Binding SelectedCount, Converter={StaticResource BoolToVis}}" />
-                <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Primary}" FontWeight="SemiBold" Visibility="{Binding SelectedCount, Converter={StaticResource BoolToVis}}"
-                           Text="{Binding SelectionSummary}" />
-                <Button Style="{StaticResource Button.Link}" Content="Clear" Command="{Binding ClearSelectionCommand}" Margin="10,0,0,0" VerticalAlignment="Center"
-                        Visibility="{Binding SelectedCount, Converter={StaticResource BoolToVis}}" />
-            </StackPanel>
-            <Button Grid.Column="1" Style="{StaticResource Button.Danger}" Command="{Binding UninstallSelectedCommand}" MinWidth="200" Padding="18,9"
-                    ToolTip="{Binding SelectionSummary}">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="15" Foreground="White" />
-                    <TextBlock Margin="9,0,0,0">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Text" Value="Uninstall selected" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding SelectedCount}" Value="1">
-                                        <Setter Property="Text" Value="Uninstall 1 program" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Button>
+            <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="2,6"
+                       Visibility="{Binding SelectedCount, Converter={StaticResource InvBoolToVis}}" />
+            <Border Background="{DynamicResource Brush.Tray.Background}" CornerRadius="14" Padding="18,10" Visibility="{Binding SelectedCount, Converter={StaticResource BoolToVis}}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Danger}" Command="{Binding UninstallSelectedCommand}" MinWidth="180" Padding="16,8"
+                            ToolTip="Uninstalls them one after another; leftovers are reviewed together at the end">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.OnAccent}" />
+                            <TextBlock Text="{Binding TrayButtonText}" Margin="8,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                    <Button DockPanel.Dock="Right" Content="Clear" Command="{Binding ClearSelectionCommand}" Margin="0,0,14,0" VerticalAlignment="Center"
+                            Style="{StaticResource Button.Link}" Foreground="{DynamicResource Brush.Tray.Text}" />
+                    <TextBlock Text="{Binding TrayText}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Tray.Text}" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+            </Border>
         </Grid>
     </Grid>
 </UserControl>

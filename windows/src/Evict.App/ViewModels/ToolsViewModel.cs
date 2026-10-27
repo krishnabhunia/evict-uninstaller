@@ -17,6 +17,10 @@ public sealed class ToolCardViewModel
     public required string Glyph { get; init; }
     public required string Key { get; init; }
     public bool RequiresAdmin { get; init; }
+    /// <summary>Button text on the RD1 Clean tile ("Find leftovers", "Create now", …).</summary>
+    public string ActionText { get; init; } = "Open";
+    /// <summary>Shown as a tile; the others are the small "Also" links under the tiles.</summary>
+    public bool IsTile { get; init; } = true;
 }
 
 public sealed partial class ToolsViewModel : ObservableObject
@@ -28,24 +32,30 @@ public sealed partial class ToolsViewModel : ObservableObject
     {
         _services = services;
         _main = main;
+        // RD1 Clean: nine tiles, then the shortcuts to Windows and Evict's own folder.
         Tools = new ObservableCollection<ToolCardViewModel>
         {
-            new() { Key = "force", Glyph = "", Title = "Force Uninstall", Description = "Remove a program whose uninstaller is broken or missing – pick it from the list or point at its folder." },
-            new() { Key = "widget", Glyph = "", Title = "Easy Uninstall widget", Description = "A small floating target: drag it onto any program window (or drop a shortcut on it) to uninstall that program." },
-            new() { Key = "residual", Glyph = "", Title = "Residual Cleaner", Description = "Find files, folders and registry keys left behind by programs that were uninstalled earlier – by any uninstaller." },
-            new() { Key = "registry", Glyph = "\uE90F", Title = "Registry Cleaner", Description = "Remove registry entries that point to programs and files which no longer exist – every change is backed up and can be restored." },
-            new() { Key = "cleanup", Glyph = "", Title = "System Cleanup", Description = "Orphaned installer packages, removed Store apps' data, update caches, temp files and crash dumps.", RequiresAdmin = true },
-            new() { Key = "startup", Glyph = "", Title = "Startup Apps", Description = "See everything that launches at sign-in; switch entries off or remove them." },
-            new() { Key = "shred", Glyph = "", Title = "File Shredder", Description = "Permanently destroy files and folders by overwriting them so they cannot be recovered." },
-            new() { Key = "updates", Glyph = "", Title = "Windows Updates", Description = "List installed Windows updates (KB…) and uninstall a problematic one.", RequiresAdmin = true },
-            new() { Key = "restore", Glyph = "", Title = "Create Restore Point", Description = "Create a System Restore point right now, before you make risky changes.", RequiresAdmin = true },
-            new() { Key = "appwiz", Glyph = "", Title = "Programs and Features", Description = "Open the classic Windows Control Panel uninstall list." },
-            new() { Key = "storage", Glyph = "", Title = "Storage Settings", Description = "Open Windows Storage settings to see what is filling the disk." },
-            new() { Key = "logs", Glyph = "", Title = "Evict Data Folder", Description = "Open the folder with settings, history, install logs and the diagnostic log." },
+            new() { Key = "residual", Glyph = "\uE74D", Title = "Leftover Cleaner", ActionText = "Find leftovers", Description = "Files, folders and registry keys left behind by programs removed earlier – by any uninstaller." },
+            new() { Key = "cleanup", Glyph = "\uE7B8", Title = "System Cleanup", ActionText = "Clean up", Description = "Orphaned installer packages, removed Store apps' data, update caches, temp files and crash dumps.", RequiresAdmin = true },
+            new() { Key = "startup", Glyph = "\uE7E8", Title = "Startup Apps", ActionText = "Manage", Description = "Everything that starts at sign-in; switch entries off or remove them." },
+            new() { Key = "monitor", Glyph = "\uE7B3", Title = "Install Monitor", ActionText = "Open", Description = "Record what an installer adds, so the program can be removed completely later." },
+            new() { Key = "registry", Glyph = "\uE90F", Title = "Registry Cleaner", ActionText = "Scan", Description = "Entries that point to programs and files which no longer exist – every change is backed up." },
+            new() { Key = "force", Glyph = "\uE711", Title = "Force Uninstall", ActionText = "Choose program", Description = "For programs whose uninstaller is broken or missing – pick it from the list or point at its folder." },
+            new() { Key = "shred", Glyph = "\uE8C8", Title = "File Shredder", ActionText = "Choose files", Description = "Overwrite files and folders before deleting them so they cannot be recovered." },
+            new() { Key = "updates", Glyph = "\uE777", Title = "Windows Updates", ActionText = "Show updates", Description = "Installed Windows updates (KB…); uninstall one that causes problems.", RequiresAdmin = true },
+            new() { Key = "restore", Glyph = "\uE81C", Title = "Restore Point", ActionText = "Create now", Description = "Make a System Restore point right now, before risky changes.", RequiresAdmin = true },
+            new() { Key = "widget", Glyph = "\uE81D", Title = "Easy Uninstall widget", IsTile = false, Description = "A small floating target: drag it onto any program window to uninstall that program." },
+            new() { Key = "appwiz", Glyph = "\uE8A7", Title = "Programs and Features", IsTile = false, Description = "Open the classic Windows Control Panel uninstall list." },
+            new() { Key = "storage", Glyph = "\uEDA2", Title = "Storage Settings", IsTile = false, Description = "Open Windows Storage settings to see what is filling the disk." },
+            new() { Key = "logs", Glyph = "\uE8B7", Title = "Evict Data Folder", IsTile = false, Description = "Open the folder with settings, history, install logs and the diagnostic log." },
         };
+        TileTools = Tools.Where(t => t.IsTile).ToList();
+        MoreTools = Tools.Where(t => !t.IsTile).ToList();
     }
 
     public ObservableCollection<ToolCardViewModel> Tools { get; }
+    public IReadOnlyList<ToolCardViewModel> TileTools { get; }
+    public IReadOnlyList<ToolCardViewModel> MoreTools { get; }
     [ObservableProperty] private string _statusText = "";
 
     [RelayCommand]
@@ -64,6 +74,9 @@ public sealed partial class ToolsViewModel : ObservableObject
                 if (vm.AnythingChanged) _main.GetPage<HistoryViewModel>(PageKey.History).Reload();
                 break;
             }
+            case "monitor":
+                _main.Navigate(PageKey.InstallMonitor);
+                break;
             case "widget":
                 _main.ShowWidgetCommand.Execute(null);
                 break;

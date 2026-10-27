@@ -14,12 +14,8 @@
         </Grid.RowDefinitions>
 
         <!-- Toolbar -->
-        <Grid Grid.Row="0" Margin="0,0,0,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal">
+        <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" Margin="0,0,16,4">
                 <Border Style="{StaticResource Pill}" Background="{DynamicResource Brush.Accent.Subtle}">
                     <TextBlock Style="{StaticResource Pill.Text}" Foreground="{DynamicResource Brush.Accent}" Text="{Binding FileCount, Converter={StaticResource CountLabel}, ConverterParameter='file item|file items'}" />
                 </Border>
@@ -31,17 +27,17 @@
                 </Border>
                 <TextBlock Text="{Binding TotalBytes, Converter={StaticResource Bytes}}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="12,0,0,0" />
             </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal">
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Style="{StaticResource Button.Link}" Content="Select all" Command="{Binding SelectAllCommand}" />
                 <TextBlock Text="·" Margin="8,0" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center" />
                 <Button Style="{StaticResource Button.Link}" Content="Safe only" Command="{Binding SelectSafeOnlyCommand}" ToolTip="Select everything except items marked 'Review'" />
                 <TextBlock Text="·" Margin="8,0" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center" />
                 <Button Style="{StaticResource Button.Link}" Content="None" Command="{Binding SelectNoneCommand}" />
             </StackPanel>
-        </Grid>
+        </WrapPanel>
 
         <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
-            <ListView Style="{StaticResource ListView.Flat}" ItemsSource="{Binding View}" SelectionMode="Single">
+            <ListView Style="{StaticResource ListView.Rows}" ItemsSource="{Binding View}" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
                 <ListView.GroupStyle>
                     <GroupStyle>
                         <GroupStyle.ContainerStyle>
@@ -67,81 +63,52 @@
                         </GroupStyle.ContainerStyle>
                     </GroupStyle>
                 </ListView.GroupStyle>
-                <ListView.View>
-                    <GridView ColumnHeaderContainerStyle="{StaticResource GridViewHeader}">
-                        <GridViewColumn Width="40">
-                            <GridViewColumn.Header>
-                                <CheckBox IsChecked="{Binding DataContext.AllSelected, RelativeSource={RelativeSource AncestorType=ListView}, Mode=TwoWay}" IsThreeState="False" />
-                            </GridViewColumn.Header>
-                            <GridViewColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:LeftoverItemViewModel}">
-                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                </DataTemplate>
-                            </GridViewColumn.CellTemplate>
-                        </GridViewColumn>
-                        <GridViewColumn Header="Type" Width="130">
-                            <GridViewColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:LeftoverItemViewModel}">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding KindGlyph}" Style="{StaticResource Icon}" FontSize="13" Margin="0,0,7,0" />
-                                        <TextBlock Text="{Binding KindText}" Style="{StaticResource Cell.Secondary}" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </GridViewColumn.CellTemplate>
-                        </GridViewColumn>
-                        <GridViewColumn Header="Location" Width="520">
-                            <GridViewColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:LeftoverItemViewModel}">
-                                    <StackPanel ToolTip="{Binding Tooltip}">
-                                        <TextBlock Text="{Binding Path}" Style="{StaticResource Cell.Primary}" />
-                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource Cell.Secondary}" FontSize="11.5" Visibility="{Binding Detail, Converter={StaticResource BoolToVis}}" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </GridViewColumn.CellTemplate>
-                        </GridViewColumn>
-                        <GridViewColumn Header="Size" Width="90">
-                            <GridViewColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:LeftoverItemViewModel}">
-                                    <TextBlock Text="{Binding SizeText}" Style="{StaticResource Cell.Primary}" HorizontalAlignment="Right" Margin="0,0,8,0" />
-                                </DataTemplate>
-                            </GridViewColumn.CellTemplate>
-                        </GridViewColumn>
-                        <GridViewColumn Header="Confidence" Width="100">
-                            <GridViewColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:LeftoverItemViewModel}">
-                                    <Border>
-                                        <Border.Style>
-                                            <Style TargetType="Border" BasedOn="{StaticResource Pill}">
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsHigh}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Success.Subtle}" /></DataTrigger>
-                                                    <DataTrigger Binding="{Binding IsLow}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Warning.Subtle}" /></DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <TextBlock Text="{Binding ConfidenceText}">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock" BasedOn="{StaticResource Pill.Text}">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsHigh}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}" /></DataTrigger>
-                                                        <DataTrigger Binding="{Binding IsLow}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}" /></DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </Border>
-                                </DataTemplate>
-                            </GridViewColumn.CellTemplate>
-                        </GridViewColumn>
-                        <GridViewColumn Width="60">
-                            <GridViewColumn.CellTemplate>
-                                <DataTemplate DataType="{x:Type vm:LeftoverItemViewModel}">
-                                    <Button Style="{StaticResource Button.Ghost}" Content="&#xE8A7;" FontFamily="{StaticResource Font.Icons}" FontSize="12" Padding="6,4" ToolTip="Open location"
-                                            Command="{Binding OpenCommand}" />
-                                </DataTemplate>
-                            </GridViewColumn.CellTemplate>
-                        </GridViewColumn>
-                    </GridView>
-                </ListView.View>
+                <!-- RD1: one fluid row per leftover (fits the narrow uninstall panel and the wide tool windows). -->
+                <ListView.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:LeftoverItemViewModel}">
+                        <Grid Margin="4,3" ToolTip="{Binding Tooltip}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" Margin="0,0,8,0"
+                                      AutomationProperties.Name="{Binding Path}" />
+                            <TextBlock Grid.Column="1" Text="{Binding KindGlyph}" Style="{StaticResource Icon}" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource Brush.Text.Secondary}" ToolTip="{Binding KindText}" />
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Path}" Style="{StaticResource Cell.Primary}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding KindAndDetail}" Style="{StaticResource Cell.Secondary}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="3" Text="{Binding SizeText}" Style="{StaticResource Cell.Secondary}" VerticalAlignment="Center" Margin="8,0" />
+                            <Border Grid.Column="4" VerticalAlignment="Center">
+                                <Border.Style>
+                                    <Style TargetType="Border" BasedOn="{StaticResource Tag}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsHigh}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Success.Subtle}" /></DataTrigger>
+                                            <DataTrigger Binding="{Binding IsLow}" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Warning.Subtle}" /></DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock Text="{Binding ConfidenceText}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource Tag.Text}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsHigh}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}" /></DataTrigger>
+                                                <DataTrigger Binding="{Binding IsLow}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}" /></DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Border>
+                            <Button Grid.Column="5" Style="{StaticResource Button.Ghost}" Content="&#xE8A7;" FontFamily="{StaticResource Font.Icons}" FontSize="12" Padding="6,4" MinHeight="26"
+                                    Margin="4,0,0,0" ToolTip="Open location" Command="{Binding OpenCommand}" />
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
             </ListView>
         </Border>
     </Grid>

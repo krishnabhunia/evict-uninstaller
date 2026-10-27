@@ -32,7 +32,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Grid Margin="24,18,24,16">
+    <Grid Margin="28,4,28,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -45,14 +45,13 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="Software Updater" Style="{StaticResource Text.Title}" />
-                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,4,0,0" Text="Finds outdated programs and updates them in place, powered by the Windows Package Manager (winget) that ships with Windows 10/11." />
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,2,0,0" Text="Finds outdated programs and updates them in place, powered by the Windows Package Manager (winget) that ships with Windows 10/11." />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                 <ToggleButton Style="{StaticResource Button.Chip}" IsChecked="{Binding IncludeUnknown}" IsEnabled="{Binding CanEditSelection}" Content="Include unknown versions" MinHeight="34" ToolTip="Also list programs whose installed version winget cannot determine" />
                 <Button Style="{StaticResource Button.Primary}" Command="{Binding CheckCommand}" IsEnabled="{Binding CanEditSelection}" Margin="8,0,0,0" Padding="12,7">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE895;" Style="{StaticResource Icon}" FontSize="14" Foreground="White" />
+                        <TextBlock Text="&#xE895;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                         <TextBlock Text="Check for updates" Margin="7,0,0,0" />
                     </StackPanel>
                 </Button>
@@ -63,10 +62,10 @@
         <Border Grid.Row="1" Margin="0,14,0,0" BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
             <StackPanel Orientation="Horizontal">
                 <RadioButton Style="{StaticResource Button.Tab}" GroupName="UpdaterTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=Updates, Mode=TwoWay}">
-                    <StackPanel Orientation="Horizontal"><TextBlock Text="Available updates" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding Items.Count}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="Available" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding Items.Count}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
                 </RadioButton>
                 <RadioButton Style="{StaticResource Button.Tab}" GroupName="UpdaterTabs" IsChecked="{Binding SelectedTab, Converter={StaticResource EqualsToBool}, ConverterParameter=History, Mode=TwoWay}">
-                    <StackPanel Orientation="Horizontal"><TextBlock Text="History · last 7 days" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding HistoryCount}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="History · 7 days" /><Border Style="{StaticResource Badge}"><TextBlock Text="{Binding HistoryCount}" Style="{StaticResource Badge.Text}" /></Border></StackPanel>
                 </RadioButton>
             </StackPanel>
         </Border>
@@ -190,7 +189,7 @@
                 </StackPanel>
                 <Button Grid.Row="1" Grid.Column="1" Style="{StaticResource Button.Primary}" Command="{Binding UpdateSelectedCommand}" MinWidth="200" Padding="18,9">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE896;" Style="{StaticResource Icon}" FontSize="15" Foreground="White" />
+                        <TextBlock Text="&#xE896;" Style="{StaticResource Icon}" FontSize="15" Foreground="{DynamicResource Brush.Text.OnAccent}" />
                         <TextBlock Margin="9,0,0,0" Text="{Binding SelectedCount, Converter={StaticResource CountLabel}, ConverterParameter='Update selected|Update {0} program|Update {0} programs'}" />
                     </StackPanel>
                 </Button>

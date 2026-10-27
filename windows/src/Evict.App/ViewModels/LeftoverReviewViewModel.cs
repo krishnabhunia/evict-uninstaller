@@ -53,6 +53,7 @@ public sealed partial class LeftoverItemViewModel : ObservableObject
         _ => "Review",
     };
     public string Detail => Item.Detail ?? "";
+    public string KindAndDetail => string.IsNullOrEmpty(Detail) ? KindText : $"{KindText} · {Detail}";
     public bool IsHigh => Item.Confidence == LeftoverConfidence.High;
     public bool IsMedium => Item.Confidence == LeftoverConfidence.Medium;
     public bool IsLow => Item.Confidence == LeftoverConfidence.Low;
