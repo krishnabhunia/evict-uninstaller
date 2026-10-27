@@ -325,4 +325,45 @@ public sealed class ScheduledScanSafetyTests : IDisposable
         Assert.Equal(new[] { "Daily", "Weekly" }, saved);
         Assert.Equal(2, xmls.Count);
     }
+    [Fact]
+    public async Task NativeWindowsReaderRecognizesMissingTaskWithoutParsingErrorMessages()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var state = await ScheduledScanService.ReadNativeAsync("Evict-read-only-test-" + Guid.NewGuid().ToString("N"), CancellationToken.None);
+        Assert.True(state.IsKnown, state.Error);
+        Assert.False(state.Exists);
+    }
+
+    [Fact]
+    public void WindowsTaskDefinitionAcceptsAndPreservesTheRequestedSchedule()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        object? service = null, definition = null, settings = null;
+        try
+        {
+            var sid = ScheduledScanService.CurrentUserSid();
+            var type = Type.GetTypeFromProgID("Schedule.Service")!;
+            service = Activator.CreateInstance(type)!;
+            ((dynamic)service).Connect();
+            // In-memory XML validation only. Never register a task on the test machine.
+            definition = ((dynamic)service).NewTask(0);
+            foreach (var mode in new[] { "Daily", "Weekly" })
+            {
+                ((dynamic)definition).XmlText = ScheduledScanTask.BuildTaskXml(Exe, mode, 10, 2, sid);
+                var xml = (string)((dynamic)definition).XmlText;
+                settings = ((dynamic)definition).Settings;
+                var enabled = (bool)((dynamic)settings).Enabled;
+                Assert.True(ScheduledScanTask.Matches(xml, enabled, Exe, mode, 10, 2, sid), xml);
+                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(settings);
+                settings = null;
+            }
+        }
+        finally
+        {
+            foreach (var instance in new[] { settings, definition, service })
+                if (instance != null && System.Runtime.InteropServices.Marshal.IsComObject(instance))
+                    System.Runtime.InteropServices.Marshal.FinalReleaseComObject(instance);
+        }
+    }
+
 }

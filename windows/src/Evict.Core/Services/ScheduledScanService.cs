@@ -377,7 +377,7 @@ public sealed class ScheduledScanService
         return identity.User?.Value ?? throw new InvalidOperationException("The current user's security identifier could not be read.");
     }
 
-    private static Task<ScheduledTaskRead> ReadNativeAsync(string name, CancellationToken ct) => Task.Run(() =>
+    internal static Task<ScheduledTaskRead> ReadNativeAsync(string name, CancellationToken ct) => Task.Run(() =>
     {
         object? service = null, folder = null, task = null;
         try
