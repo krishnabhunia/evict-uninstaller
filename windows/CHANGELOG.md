@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.1 — 2026-10-27
+
+<!-- Evict automatic release; base: win-v4.0.0 -->
+
+- ChatGPT-Evict Branding, Icon and Scheduled Scan Fixes
+
 ## 4.0.0 — 2026-10-27
 
 <!-- Evict automatic release; base: win-v3.0.0 -->
