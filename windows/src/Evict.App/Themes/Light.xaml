@@ -5,6 +5,8 @@
     <SolidColorBrush x:Key="Brush.Window.Background" Color="#F7F9FC" />
     <SolidColorBrush x:Key="Brush.TitleBar.Background" Color="#FFFFFF" />
     <SolidColorBrush x:Key="Brush.Sidebar.Background" Color="#14243A" />
+    <!-- The navigation rail stays dark in both themes. -->
+    <SolidColorBrush x:Key="Brush.Sidebar.BrandText" Color="#FFFFFF" />
     <SolidColorBrush x:Key="Brush.Sidebar.Border" Color="#293C54" />
 
     <SolidColorBrush x:Key="Brush.Card.Background" Color="#FFFFFF" />

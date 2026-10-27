@@ -63,6 +63,8 @@ public sealed class AppSettings
     public string ScheduledScan { get; set; } = "Off";
     public int ScheduledScanHour { get; set; } = 10;
     public int ScheduledScanWeekday { get; set; } = 0; // 0 = Sunday … 6 = Saturday (weekly only)
+    /// <summary>When the active schedule was last explicitly applied and verified; distinct from a completed scan.</summary>
+    public DateTime? ScheduledScanAppliedUtc { get; set; }
     public DateTime? LastScheduledScanUtc { get; set; }
     public DateTime? LastUpdateCheckUtc { get; set; }
     /// <summary>A version the user chose to skip ("v1.3.0"); the banner stays hidden for it.</summary>
@@ -81,7 +83,18 @@ public sealed class SettingsStore
         PropertyNameCaseInsensitive = true,
     };
 
+    private readonly Func<string> _settingsFile;
+    private readonly Action<string, string> _publishFile;
     private readonly object _gate = new();
+
+    public SettingsStore() : this(() => AppPaths.SettingsFile) { }
+
+    internal SettingsStore(Func<string> settingsFile, Action<string, string>? publishFile = null)
+    {
+        _settingsFile = settingsFile;
+        _publishFile = publishFile ?? ((staged, destination) => File.Move(staged, destination, overwrite: true));
+    }
+
     public AppSettings Current { get; private set; } = new();
 
     public void Load()
@@ -90,9 +103,10 @@ public sealed class SettingsStore
         {
             try
             {
-                if (File.Exists(AppPaths.SettingsFile))
+                var settingsFile = _settingsFile();
+                if (File.Exists(settingsFile))
                 {
-                    var json = File.ReadAllText(AppPaths.SettingsFile);
+                    var json = File.ReadAllText(settingsFile);
                     Current = JsonSerializer.Deserialize<AppSettings>(json, Options) ?? new AppSettings();
                 }
             }
@@ -118,21 +132,44 @@ public sealed class SettingsStore
 
     public void Save() => TrySave();
 
-    /// <summary>Reports persistence failure to features that must keep their previous state.</summary>
+    /// <summary>Publishes complete settings atomically; a failed write leaves the previous file intact.</summary>
     public bool TrySave()
     {
         lock (_gate)
         {
+            string? staged = null;
+            var ownsStaged = false;
             try
             {
+                // Serialize before creating a file, then stage on the same volume as the destination.
                 var json = JsonSerializer.Serialize(Current, Options);
-                File.WriteAllText(AppPaths.SettingsFile, json);
+                var destination = Path.GetFullPath(_settingsFile());
+                var directory = Path.GetDirectoryName(destination)!;
+                Directory.CreateDirectory(directory);
+                staged = Path.Combine(directory, "." + Path.GetFileName(destination) + "." + Guid.NewGuid().ToString("N") + ".tmp");
+                using (var stream = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    ownsStaged = true;
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+                    stream.Write(bytes);
+                    stream.Flush(flushToDisk: true);
+                }
+                _publishFile(staged, destination);
+                staged = null; // The rename consumed this invocation's temporary file.
                 return true;
             }
             catch
             {
-                // Settings are a convenience; never crash for them.
+                // Keep the last complete settings file and let the caller restore its in-memory changes.
                 return false;
+            }
+            finally
+            {
+                if (staged != null && ownsStaged)
+                {
+                    try { File.Delete(staged); }
+                    catch { /* A failed cleanup must not hide the persistence failure. */ }
+                }
             }
         }
     }
