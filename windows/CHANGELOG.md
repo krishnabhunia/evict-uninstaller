@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.0 — 2026-10-27
+
+<!-- Evict automatic release; base: win-v3.0.0 -->
+
+- chatgpt-evict-windows-ui-redesign
+
 ## 3.0.0 — 2026-10-27
 
 <!-- Evict automatic release; base: win-v2.1.2 -->
