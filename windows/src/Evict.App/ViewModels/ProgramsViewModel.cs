@@ -38,6 +38,9 @@ public sealed partial class ProgramsViewModel : ObservableObject, IActivatable
         await _fullLoad.Task;
     }
 
+    /// <summary>The exception of the last failed inventory load (null after a successful one) – the start-up splash reads it.</summary>
+    public Exception? LoadError => _lastLoadException;
+
     /// <summary>Each new health scan needs a current inventory; share a load that is already in progress.</summary>
     public async Task RefreshForScanAsync()
     {

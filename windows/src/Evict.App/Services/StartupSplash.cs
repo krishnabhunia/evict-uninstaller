@@ -19,25 +19,34 @@ public static class StartupSplash
 
     public static bool IsShown => _dispatcher is not null;
 
+    private static readonly object Gate = new();
+    /// <summary>Start gave up waiting: a splash that finishes building afterwards must not appear.</summary>
+    private static bool _abandoned;
+
     public static void Start(string version, bool elevated)
     {
         if (_dispatcher is not null) return;
-        using var ready = new ManualResetEventSlim();
+        // Not disposed: after a timeout the splash thread may still Set() it.
+        var ready = new ManualResetEventSlim();
         var thread = new Thread(() =>
         {
+            SplashWindow? window = null;
             try
             {
-                var window = new SplashWindow(version, elevated);
-                window.Closed += (_, _) => Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
-                _window = window;
-                _dispatcher = Dispatcher.CurrentDispatcher;
+                window = new SplashWindow(version, elevated);
+                lock (Gate)
+                {
+                    if (_abandoned) return;   // too late: the App already went on without it
+                    window.Closed += (_, _) => Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
+                    _window = window;
+                    _dispatcher = Dispatcher.CurrentDispatcher;
+                }
                 window.Show();
             }
             catch (Exception ex)
             {
                 Log.Warn("Splash screen unavailable: " + ex.Message);
-                _window = null;
-                _dispatcher = null;
+                lock (Gate) { _window = null; _dispatcher = null; }
                 return;
             }
             finally { ready.Set(); }
@@ -46,7 +55,17 @@ public static class StartupSplash
         { IsBackground = true, Name = "Evict splash" };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        ready.Wait(TimeSpan.FromSeconds(3));
+        if (!ready.Wait(TimeSpan.FromSeconds(3)))
+        {
+            lock (Gate)
+            {
+                if (_dispatcher is null)
+                {
+                    _abandoned = true;
+                    Log.Warn("Splash screen took too long to appear; starting without it.");
+                }
+            }
+        }
     }
 
     public static void Report(StartupStep step) => Post(w => w.Show(step));

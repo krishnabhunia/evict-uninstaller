@@ -111,7 +111,8 @@ public partial class App : Application
         try
         {
             StartupSplash.Report(StartupStep.Programs);
-            var load = mainVm.GetPage<ProgramsViewModel>(PageKey.Programs).EnsureLoadedAsync();
+            var programs = mainVm.GetPage<ProgramsViewModel>(PageKey.Programs);
+            var load = programs.EnsureLoadedAsync();
             var openNow = new TaskCompletionSource();
             var giveUp = Task.Delay(StartupSplashRules.OpenAnywayAfter);
             if (await Task.WhenAny(load, Task.Delay(StartupSplashRules.OfferOpenNowAfter)) != load)
@@ -120,6 +121,8 @@ public partial class App : Application
                 await Task.WhenAny(load, openNow.Task, giveUp);
             }
             if (load.IsFaulted) throw load.Exception!.GetBaseException();
+            // A failed inventory completes the load normally and records the error: surface it on the splash.
+            if (load.IsCompleted && programs.LoadError is { } loadError) throw loadError;
         }
         catch (Exception ex)
         {
