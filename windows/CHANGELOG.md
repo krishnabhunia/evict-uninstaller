@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.1.0 — 2026-10-28
+
+<!-- Evict automatic release; base: win-v4.0.1 -->
+
+- claude-splash-screen: start-up splash while Evict loads (SP1)
+
 ## 4.0.1 — 2026-10-28
 
 <!-- Evict automatic release; base: win-v4.0.0 -->
