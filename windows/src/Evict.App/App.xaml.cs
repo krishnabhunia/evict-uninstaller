@@ -42,7 +42,9 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, args) => Log.Error("Unhandled exception", args.ExceptionObject as Exception);
 
         Services = new AppServices();
+        StartupSplash.Report(StartupStep.Settings);
         Services.Settings.Load();
+        StartupSplash.Report(StartupStep.History);
         Services.History.Load();
         Services.UpdateHistory.Load();
         // A self-update handed over before the last exit is resolved now: did this start reach the new version?
@@ -73,7 +75,7 @@ public partial class App : Application
         mainVm.Background = Background;
         var main = new MainWindow { DataContext = mainVm };
         MainWindow = main;
-        if (!StartedHeadless) main.Show();
+        var windowShown = StartedHeadless ? Task.CompletedTask : ShowWhenReadyAsync(mainVm, main);
 
         // Tray icon + installer detection (a headless start always gets a tray icon, otherwise the process would be invisible).
         Background.ApplySettings(forceTray: StartedHeadless);
@@ -84,14 +86,60 @@ public partial class App : Application
         _ = mainVm.GetPage<SettingsViewModel>(PageKey.Settings);
 
         SingleInstance.StartServer(args => HandleArgs(mainVm, args));
-        if (!startOptions.IsEmpty || startOptions.Unknown.Count > 0) HandleArgs(mainVm, Program.StartupArgs, activate: !startOptions.Headless);
-        else if (Services.Settings.Current.EasyUninstallWidgetVisible) mainVm.ShowWidgetCommand.Execute(null);
+        // Arguments (uninstall a file, open a page, the widget) act once the window is up: dialogs need a shown owner.
+        _ = windowShown.ContinueWith(_ =>
+        {
+            if (!startOptions.IsEmpty || startOptions.Unknown.Count > 0) HandleArgs(mainVm, Program.StartupArgs, activate: !startOptions.Headless);
+            else if (Services.Settings.Current.EasyUninstallWidgetVisible) mainVm.ShowWidgetCommand.Execute(null);
+        }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.FromCurrentSynchronizationContext());
 
         // Check once on every service-running launch, including tray and scheduled-scan launches.
         // The check is silent and cancellable; a short-lived scheduled scan can exit before the delay ends.
         Services.Updater.CleanupAfterUpdate();
         _ = mainVm.CheckForUpdatesOnStartupAsync(ShutdownToken);
         if (!startOptions.ScheduledScan) _ = mainVm.RunMissedScheduledScanIfDueAsync();
+    }
+
+    /// <summary>
+    /// Design SP1: with the splash up, the program list is read first and the window is drawn hidden (DWM cloak), then
+    /// shown and the splash fades out – no half-drawn or coloured flash. "Open now" after 8 s; opens anyway after 20 s.
+    /// Without a splash (it could not start) the window is shown at once, as before.
+    /// </summary>
+    private static async Task ShowWhenReadyAsync(MainViewModel mainVm, MainWindow main)
+    {
+        if (!StartupSplash.IsShown) { main.Show(); return; }
+        try
+        {
+            StartupSplash.Report(StartupStep.Programs);
+            var load = mainVm.GetPage<ProgramsViewModel>(PageKey.Programs).EnsureLoadedAsync();
+            var openNow = new TaskCompletionSource();
+            var giveUp = Task.Delay(StartupSplashRules.OpenAnywayAfter);
+            if (await Task.WhenAny(load, Task.Delay(StartupSplashRules.OfferOpenNowAfter)) != load)
+            {
+                StartupSplash.ShowSlow(() => openNow.TrySetResult());
+                await Task.WhenAny(load, openNow.Task, giveUp);
+            }
+            if (load.IsFaulted) throw load.Exception!.GetBaseException();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Start-up preparation failed", ex);
+            var choice = new TaskCompletionSource();
+            StartupSplash.ShowError(StartupSplashRules.ErrorText(ex), () => choice.TrySetResult(),
+                () => { try { Dialogs.OpenFolder(AppPaths.LogFile); } catch { /* best effort */ } });
+            await choice.Task;
+        }
+
+        StartupSplash.Report(StartupStep.Window);
+        if (main.IsVisible) { StartupSplash.Close(); return; }   // a second launch already brought it up
+        var revealed = new TaskCompletionSource();
+        main.Revealed += (_, _) => { StartupSplash.Close(); revealed.TrySetResult(); };
+        main.StartCloaked = true;
+        main.Show();
+        // Never wait on the reveal for ever (e.g. the cloak call failed and ContentRendered came first).
+        await Task.WhenAny(revealed.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+        main.EnsureRevealed();
+        StartupSplash.Close();
     }
 
     private static bool _windowElevationTried;

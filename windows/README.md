@@ -17,6 +17,8 @@ delivered as a single portable `Evict.exe` **or** an `Evict-Setup-x.y.z.exe` ins
 | **Settings** | Sections *General · Uninstalling · Updates · Background & tray · Appearance · Advanced · About*, with a search box |
 | **Ctrl+K** | Search box for programs, pages, tools and settings (also the box at the top of the menu) |
 
+Opening Evict shows a small splash while settings, history and programs load; the window appears when it is ready ([docs/splash-screen.md](../docs/splash-screen.md)).
+
 Uninstalling opens a full-height panel at the right edge of the window: *Confirm → Uninstall → Leftovers → Done*. Details: [docs/redesign-rd1.md](../docs/redesign-rd1.md).
 
 | Module | What it does | Status |
