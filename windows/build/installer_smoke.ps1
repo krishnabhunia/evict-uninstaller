@@ -10,6 +10,7 @@ if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or -not $env:RUNNER_TEMP
 }
 $setup = (Resolve-Path -LiteralPath $SetupPath).Path
 $package = (Resolve-Path -LiteralPath $PackagedExe).Path
+& (Join-Path $PSScriptRoot 'icon_smoke.ps1') -IconPath (Join-Path $PSScriptRoot '../src/Evict.App/Assets/app.ico') -ExecutablePath $package
 $expectedHash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
 $tempBase = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\', '/')
 $fixture = [IO.Path]::GetFullPath((Join-Path $tempBase ('evict-installer-smoke-' + [guid]::NewGuid().ToString('N'))))

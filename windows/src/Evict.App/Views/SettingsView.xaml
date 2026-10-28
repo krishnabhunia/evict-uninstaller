@@ -162,7 +162,7 @@
             <Border Style="{StaticResource Card}" Margin="0,0,0,14" Padding="20,18" Visibility="{Binding SelectedSection, Converter={StaticResource EqualsToVis}, ConverterParameter='Background &amp; tray'}">
                 <StackPanel>
                     <TextBlock Text="Scheduled Software Health scan" Style="{StaticResource Text.Section}" Margin="0,0,0,12" />
-                    <StackPanel Orientation="Horizontal">
+                    <StackPanel Orientation="Horizontal" IsEnabled="{Binding CanEditSchedule}">
                         <TextBlock Text="Run a scan" Style="{StaticResource Text.Body}" VerticalAlignment="Center" Margin="0,0,10,0" />
                         <ComboBox ItemsSource="{Binding ScheduledScanOptions}" DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding ScheduledScan, Mode=TwoWay}" Width="150" />
                         <TextBlock Text="on" Style="{StaticResource Text.Body}" VerticalAlignment="Center" Margin="10,0,10,0" Visibility="{Binding IsWeeklyScan, Converter={StaticResource BoolToVis}}" />
@@ -170,9 +170,14 @@
                         <TextBlock Text="at" Style="{StaticResource Text.Body}" VerticalAlignment="Center" Margin="10,0,10,0" Visibility="{Binding IsScheduledScanOn, Converter={StaticResource BoolToVis}}" />
                         <ComboBox ItemsSource="{Binding HourOptions}" DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding ScheduledScanHour, Mode=TwoWay}" Width="110" Visibility="{Binding IsScheduledScanOn, Converter={StaticResource BoolToVis}}" />
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                        <Button Style="{StaticResource Button.Primary}" Content="Apply schedule" Command="{Binding ApplyScheduleCommand}" Margin="0,0,8,0" />
+                        <Button Style="{StaticResource Button.Secondary}" Content="Cancel" Command="{Binding CancelScheduleCommand}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding SavedScheduleText}" Style="{StaticResource Text.Body}" Margin="0,12,0,0" />
                     <TextBlock Text="{Binding ScheduleStatusText}" Style="{StaticResource Text.Caption}" Margin="0,10,0,0" TextWrapping="Wrap" />
                     <TextBlock Style="{StaticResource Text.Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
-                               Text="Uses Windows Task Scheduler for your user account (no administrator needed). If the PC is off at that time the scan runs at the next start of Evict instead." />
+                               Text="Apply schedule creates or removes a Windows task for your account. Changing these fields alone does not change Windows. Background scans run only when the saved schedule can be verified." />
                 </StackPanel>
             </Border>
 

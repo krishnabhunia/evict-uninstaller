@@ -80,7 +80,7 @@ public partial class App : Application
         if (StartedHeadless && !Background.HasTray) { Log.Warn("No tray icon available – showing the window instead of running invisibly."); main.Show(); }
         if (Services.Settings.Current.StartWithWindows) StartupRegistration.RefreshIfStale();
 
-        // Initialize schedule status/migration even for a hidden launch that never visits Settings.
+        // Inspect schedule status even for a hidden launch; opening Settings must not register or migrate tasks.
         _ = mainVm.GetPage<SettingsViewModel>(PageKey.Settings);
 
         SingleInstance.StartServer(args => HandleArgs(mainVm, args));

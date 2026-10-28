@@ -38,6 +38,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         _services = services;
         _main = main;
+        ResetScheduleDraft();
         App.UiState.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(UiState.Scale)) OnPropertyChanged(nameof(TextSize)); };
         UpdateStatusText = S.LastUpdateCheckUtc is { } t ? $"Last checked {t.ToLocalTime():g}." : "Not checked yet.";
         if (_main.LastUpdateCheckResult is { } result) RefreshUpdateResult(result);
@@ -136,40 +137,129 @@ public sealed partial class SettingsViewModel : ObservableObject
     };
     public IReadOnlyList<KeyValuePair<int, string>> HourOptions { get; } = Enumerable.Range(0, 24).Select(h => new KeyValuePair<int, string>(h, new DateTime(2000, 1, 1, h, 0, 0).ToString("t"))).ToList();
     public IReadOnlyList<KeyValuePair<int, string>> WeekdayOptions { get; } = Enumerable.Range(0, 7).Select(d => new KeyValuePair<int, string>(d, System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetDayName((DayOfWeek)d))).ToList();
+    private string _scheduleDraft = "Off";
+    private int _scheduleHourDraft;
+    private int _scheduleDayDraft;
+    private int _scheduleRevision;
 
     public string ScheduledScan
     {
-        get => ScheduledScanTask.IsValidMode(S.ScheduledScan) ? S.ScheduledScan : "Off";
-        set { S.ScheduledScan = value; Save(); OnPropertyChanged(); OnPropertyChanged(nameof(IsScheduledScanOn)); OnPropertyChanged(nameof(IsWeeklyScan)); _ = ApplyScheduleAsync(); }
+        get => _scheduleDraft;
+        set
+        {
+            if (!CanEditSchedule || !ScheduledScanTask.IsValidMode(value)) return;
+            var canonical = ScheduledScanOptions.First(o => o.Key.Equals(value, StringComparison.OrdinalIgnoreCase)).Key;
+            if (SetProperty(ref _scheduleDraft, canonical)) ScheduleDraftChanged();
+        }
     }
-    public int ScheduledScanHour { get => Math.Clamp(S.ScheduledScanHour, 0, 23); set { S.ScheduledScanHour = Math.Clamp(value, 0, 23); Save(); OnPropertyChanged(); _ = ApplyScheduleAsync(); } }
-    public int ScheduledScanWeekday { get => Math.Clamp(S.ScheduledScanWeekday, 0, 6); set { S.ScheduledScanWeekday = Math.Clamp(value, 0, 6); Save(); OnPropertyChanged(); _ = ApplyScheduleAsync(); } }
-    public bool IsScheduledScanOn => ScheduledScan != "Off";
-    public bool IsWeeklyScan => ScheduledScan == "Weekly";
+    public int ScheduledScanHour
+    {
+        get => _scheduleHourDraft;
+        set { if (CanEditSchedule && SetProperty(ref _scheduleHourDraft, Math.Clamp(value, 0, 23))) ScheduleDraftChanged(); }
+    }
+    public int ScheduledScanWeekday
+    {
+        get => _scheduleDayDraft;
+        set { if (CanEditSchedule && SetProperty(ref _scheduleDayDraft, Math.Clamp(value, 0, 6))) ScheduleDraftChanged(); }
+    }
+    public bool IsScheduledScanOn => !ScheduledScan.Equals("Off", StringComparison.OrdinalIgnoreCase);
+    public bool IsWeeklyScan => ScheduledScan.Equals("Weekly", StringComparison.OrdinalIgnoreCase);
+    public bool CanEditSchedule => !IsApplyingSchedule;
+    public bool CanApplySchedule => CanEditSchedule && ScheduledScanTask.IsValidMode(ScheduledScan);
+    public string SavedScheduleText => "Saved: " + ScheduledScanTask.Describe(S.ScheduledScan, S.ScheduledScanHour, S.ScheduledScanWeekday);
+    [ObservableProperty] private bool _isApplyingSchedule;
     [ObservableProperty] private string _scheduleStatusText = "";
 
+    partial void OnIsApplyingScheduleChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanEditSchedule));
+        ApplyScheduleCommand.NotifyCanExecuteChanged();
+        CancelScheduleCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ScheduleDraftChanged()
+    {
+        _scheduleRevision++;
+        OnPropertyChanged(nameof(IsScheduledScanOn));
+        OnPropertyChanged(nameof(IsWeeklyScan));
+        ApplyScheduleCommand.NotifyCanExecuteChanged();
+        ScheduleStatusText = "Changes are pending. Select Apply schedule to update Windows.";
+    }
+
+    private void ResetScheduleDraft()
+    {
+        _scheduleDraft = ScheduledScanOptions.FirstOrDefault(o => o.Key.Equals(S.ScheduledScan, StringComparison.OrdinalIgnoreCase)).Key ?? "Off";
+        _scheduleHourDraft = Math.Clamp(S.ScheduledScanHour, 0, 23);
+        _scheduleDayDraft = Math.Clamp(S.ScheduledScanWeekday, 0, 6);
+        OnPropertyChanged(nameof(ScheduledScan));
+        OnPropertyChanged(nameof(ScheduledScanHour));
+        OnPropertyChanged(nameof(ScheduledScanWeekday));
+        OnPropertyChanged(nameof(IsScheduledScanOn));
+        OnPropertyChanged(nameof(IsWeeklyScan));
+        OnPropertyChanged(nameof(SavedScheduleText));
+    }
+
+    [RelayCommand(CanExecute = nameof(CanEditSchedule))]
+    private void CancelSchedule()
+    {
+        _scheduleRevision++;
+        ResetScheduleDraft();
+        ScheduleStatusText = "Pending edits cancelled. The saved schedule is unchanged.";
+    }
+
+    [RelayCommand(CanExecute = nameof(CanApplySchedule))]
     private async Task ApplyScheduleAsync()
     {
-        ScheduleStatusText = "Updating Task Scheduler…";
-        var (ok, error) = await _services.Scheduler.ApplyAsync(ScheduledScan, ScheduledScanHour, ScheduledScanWeekday, CancellationToken.None);
-        ScheduleStatusText = ok
-            ? (IsScheduledScanOn ? $"Scheduled: {ScheduledScanTask.Describe(ScheduledScan, ScheduledScanHour, ScheduledScanWeekday)} (for this Windows user). You get a notification with the result; nothing is deleted automatically." : "No scheduled scan.")
-            : "Task Scheduler refused the change: " + error;
+        if (IsApplyingSchedule) return;
+        _scheduleRevision++;
+        var requestedMode = ScheduledScan;
+        var requestedHour = ScheduledScanHour;
+        var requestedDay = ScheduledScanWeekday;
+        var previousMode = S.ScheduledScan;
+        var previousHour = S.ScheduledScanHour;
+        var previousDay = S.ScheduledScanWeekday;
+        var previousApplied = S.ScheduledScanAppliedUtc;
+        IsApplyingSchedule = true;
+        ScheduleStatusText = "Applying and verifying the Windows schedule…";
+        try
+        {
+            (bool Ok, string? Error) SaveVerifiedSchedule() =>
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                {
+                    S.ScheduledScan = requestedMode;
+                    S.ScheduledScanHour = requestedHour;
+                    S.ScheduledScanWeekday = requestedDay;
+                    S.ScheduledScanAppliedUtc = requestedMode == "Off" ? null : DateTime.UtcNow;
+                    if (_services.Settings.TrySave()) return (true, (string?)null);
+                    S.ScheduledScan = previousMode;
+                    S.ScheduledScanHour = previousHour;
+                    S.ScheduledScanWeekday = previousDay;
+                    S.ScheduledScanAppliedUtc = previousApplied;
+                    return (false, (string?)"The settings file could not be saved.");
+                });
+            var (ok, error) = await _services.Scheduler.ApplyAndSaveAsync(requestedMode, requestedHour, requestedDay, SaveVerifiedSchedule, App.ShutdownToken);
+            OnPropertyChanged(nameof(SavedScheduleText));
+            ScheduleStatusText = ok
+                ? (requestedMode == "Off" ? "Scheduled scans are off." : "Schedule applied and verified for this Windows user. Scans do not delete anything automatically.")
+                : "Could not apply the schedule. " + error;
+        }
+        catch (Exception ex) { ScheduleStatusText = "Could not apply the schedule. " + ex.Message; }
+        finally { IsApplyingSchedule = false; }
     }
 
     public async Task RefreshScheduleStatusAsync()
     {
-        var migration = await _services.Scheduler.MigrateLegacyAsync(ScheduledScan, ScheduledScanHour, ScheduledScanWeekday, CancellationToken.None);
-        if (!migration.Ok)
-        {
-            ScheduleStatusText = "Could not update the old scheduled scan: " + migration.Error;
-            return;
-        }
-        if (!IsScheduledScanOn) { ScheduleStatusText = "No scheduled scan."; return; }
-        var exists = await _services.Scheduler.ExistsAsync(CancellationToken.None);
-        ScheduleStatusText = exists
-            ? $"Scheduled: {ScheduledScanTask.Describe(ScheduledScan, ScheduledScanHour, ScheduledScanWeekday)}" + (S.LastScheduledScanUtc is { } t ? $" · last run {t.ToLocalTime():g}" : "")
-            : "The scheduled task is missing (removed outside Evict?). Choose the schedule again to recreate it.";
+        if (IsApplyingSchedule) return;
+        var revision = _scheduleRevision;
+        var mode = S.ScheduledScan;
+        var hour = S.ScheduledScanHour;
+        var day = S.ScheduledScanWeekday;
+        var matches = await _services.Scheduler.MatchesAsync(mode, hour, day, CancellationToken.None);
+        if (revision != _scheduleRevision || IsApplyingSchedule) return;
+        OnPropertyChanged(nameof(SavedScheduleText));
+        ScheduleStatusText = matches
+            ? (mode.Equals("Off", StringComparison.OrdinalIgnoreCase) ? "No scheduled scan." : "The saved schedule matches Windows Task Scheduler.")
+            : "The saved schedule could not be verified. Review the fields and select Apply schedule to repair or turn it off.";
     }
 
     // ───────────── updates ─────────────
