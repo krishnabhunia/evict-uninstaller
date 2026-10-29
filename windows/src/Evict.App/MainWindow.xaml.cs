@@ -21,7 +21,8 @@ public partial class MainWindow : Window
         }
         if (s.WindowMaximized) WindowState = WindowState.Maximized;
         StateChanged += (_, _) => UpdateMaxRestoreGlyph();
-        SourceInitialized += (_, _) => TryRoundCorners();
+        SourceInitialized += (_, _) => { TryRoundCorners(); if (StartCloaked) SetCloak(true); };
+        ContentRendered += (_, _) => Reveal();
 
         // Text size / zoom: scale the body (not the title bar, whose caption height is fixed).
         ApplyScale(App.UiState.Scale);
@@ -99,6 +100,57 @@ public partial class MainWindow : Window
     private void OnMinimize(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     private void OnMaximizeRestore(object sender, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
     private void OnClose(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>
+    /// Design SP1: set before the first Show. The window is drawn hidden (DWM cloak) and only appears once its first
+    /// frame is ready, so no empty, half-drawn or coloured window flashes up while the splash is showing.
+    /// </summary>
+    public bool StartCloaked { get; set; }
+
+    /// <summary>Raised once the window is visible after a cloaked start.</summary>
+    public event EventHandler? Revealed;
+    private bool _revealed;
+
+    private void Reveal()
+    {
+        if (_revealed || !StartCloaked) return;
+        _revealed = true;
+        // Let the first layout pass of the page finish before showing it.
+        Dispatcher.BeginInvoke(FinishReveal, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+    }
+
+    /// <summary>Safety net: uncloak now if the first frame never arrived (so the window can never stay invisible).</summary>
+    public void EnsureRevealed()
+    {
+        if (!StartCloaked || _revealDone) return;
+        _revealed = true;
+        FinishReveal();
+    }
+
+    private bool _revealDone;
+    private void FinishReveal()
+    {
+        if (_revealDone) return;
+        _revealDone = true;
+        SetCloak(false);
+        Activate();
+        Revealed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SetCloak(bool on)
+    {
+        try
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            int value = on ? 1 : 0;
+            int hr = DwmSetWindowAttribute(hwnd, 13 /* DWMWA_CLOAK */, ref value, sizeof(int));
+            if (hr != 0) Log.Warn($"Window cloak {(on ? "on" : "off")} failed: 0x{hr:X8}");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Window cloak unavailable: " + ex.Message);
+        }
+    }
 
     // Windows 11 rounded corners for a WindowChrome window (harmless no-op on Windows 10).
     [DllImport("dwmapi.dll", PreserveSig = true)]

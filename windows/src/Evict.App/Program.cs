@@ -47,14 +47,19 @@ public static class Program
             return 0;
         }
 
+        // Design SP1: the splash appears before anything else loads (its own thread), for starts the user can see.
+        if (StartupSplashRules.ShouldShow(options)) StartupSplash.Start(UpdateChecker.CurrentVersionLabel, ElevationHelper.IsElevated);
+
         if (StartupElevation.ShouldElevate(ReadStartAsAdministrator(), ElevationHelper.IsElevated, ElevationHelper.CanElevateSameUser, options))
         {
+            StartupSplash.Report(StartupStep.WaitingForAdministrator);
             if (ElevationHelper.RestartElevated(StartupElevation.RelaunchArgs(args, Environment.ProcessId)))
             {
                 ReleaseSingleInstance();
-                return 0;
+                return 0;   // the elevated copy shows its own splash
             }
             // UAC prompt declined: carry on with the user's own rights (the banner offers "Restart as administrator").
+            StartupSplash.Report(StartupStep.Starting);
         }
 
         var app = new App();
