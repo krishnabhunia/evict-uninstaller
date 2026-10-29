@@ -1,0 +1,58 @@
+<Window x:Class="Evict.App.Views.StartupSplashWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Starting Evict" Width="520" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen" WindowStyle="None" ShowInTaskbar="True"
+        Background="{DynamicResource Brush.Card.Background}" Foreground="{DynamicResource Brush.Text.Primary}"
+        FontFamily="Segoe UI" FontSize="13" UseLayoutRounding="True"
+        Icon="pack://application:,,,/Assets/app.ico" Closing="OnClosing" PreviewKeyDown="OnKeyDown">
+    <Border BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1" Padding="28">
+        <StackPanel>
+            <DockPanel Margin="0,0,0,24" MouseLeftButtonDown="OnDrag">
+                <Button DockPanel.Dock="Right" Content="&#x2715;" Click="OnCancel" Padding="9,4"
+                        ToolTip="Cancel startup" AutomationProperties.Name="Cancel startup" />
+                <Image Source="pack://application:,,,/Assets/app-256.png" Width="42" Height="42"
+                       DockPanel.Dock="Left" Margin="0,0,13,0" RenderOptions.BitmapScalingMode="HighQuality" />
+                <StackPanel><TextBlock Text="Evict" FontSize="24" FontWeight="Bold" />
+                    <TextBlock x:Name="VersionLabel" Foreground="{DynamicResource Brush.Text.Secondary}" /></StackPanel>
+            </DockPanel>
+            <Border x:Name="BrandPanel" Visibility="Collapsed" Background="#14243A" CornerRadius="10" Padding="20" Margin="0,0,0,20">
+                <StackPanel><TextBlock Text="A cleaner start." FontSize="24" FontWeight="SemiBold" Foreground="White" />
+                    <TextBlock Text="Uninstall. Update. Stay in control." Foreground="#C1D1DC" Margin="0,8,0,0" /></StackPanel>
+            </Border>
+            <TextBlock x:Name="StageLabel" Text="Starting Evict…" FontSize="17" FontWeight="SemiBold"
+                       TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+            <TextBlock x:Name="StageCount" Text="Preparing startup" Margin="0,8,0,14"
+                       Foreground="{DynamicResource Brush.Text.Secondary}" />
+            <ProgressBar x:Name="BusyIndicator" IsIndeterminate="True" Height="4" BorderThickness="0"
+                         Foreground="{DynamicResource Brush.Accent}" Background="{DynamicResource Brush.Progress.Track}"
+                         AutomationProperties.Name="Startup is in progress" />
+            <TextBlock x:Name="SlowLabel" Visibility="Collapsed" TextWrapping="Wrap" Margin="0,14,0,0"
+                       Foreground="{DynamicResource Brush.Text.Secondary}"
+                       Text="Taking longer than usual. Evict is still preparing this stage. You can cancel; no unfinished window will be opened." />
+            <Border x:Name="ChecklistPanel" Visibility="Collapsed" Background="{DynamicResource Brush.Surface.Sunken}"
+                    Padding="14" CornerRadius="8" Margin="0,18,0,0">
+                <StackPanel x:Name="ChecklistRows" />
+            </Border>
+            <Border x:Name="ErrorPanel" Visibility="Collapsed" Background="{DynamicResource Brush.Danger.Subtle}"
+                    Padding="14" CornerRadius="8" Margin="0,18,0,0">
+                <TextBlock x:Name="ErrorLabel" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Danger.Text}" />
+            </Border>
+            <TextBlock Text="Online checks and detailed scans do not delay opening." TextWrapping="Wrap"
+                       Margin="0,20,0,0" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" />
+            <DockPanel Margin="0,22,0,0">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="LogButton" Content="Show log" Click="OnShowLog" Visibility="Collapsed" Margin="0,0,8,0" Padding="12,7" />
+                    <Button x:Name="CancelButton" Content="Cancel" Click="OnCancel" Padding="12,7" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="View" Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center" Margin="0,0,9,0" />
+                    <ComboBox x:Name="StylePicker" Width="112" SelectedIndex="0" SelectionChanged="OnStyleChanged"
+                              AutomationProperties.Name="Splash presentation">
+                        <ComboBoxItem Content="Compact" /><ComboBoxItem Content="Checklist" /><ComboBoxItem Content="Branded" />
+                    </ComboBox>
+                </StackPanel>
+            </DockPanel>
+        </StackPanel>
+    </Border>
+</Window>

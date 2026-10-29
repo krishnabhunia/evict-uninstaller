@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Evict.App.Services;
 using Evict.App.ViewModels;
+using Evict.App.Views;
 using Evict.Core.Services;
 using Evict.Core.Util;
 
@@ -11,18 +12,20 @@ public partial class App : Application
 {
     private System.Threading.Timer? _historyCleanupTimer;
     private static readonly CancellationTokenSource ShutdownCancellation = new();
+    private readonly Queue<string[]> _pendingStartupArgs = new();
+    private MainViewModel? _readyMain;
+    private bool _startupComplete;
     public static CancellationToken ShutdownToken => ShutdownCancellation.Token;
     public static AppServices Services { get; private set; } = null!;
     public static UiState UiState { get; } = new();
     public static BackgroundCoordinator Background { get; private set; } = null!;
-    /// <summary>Set when the user really wants to quit (tray → Exit, or close with "close to tray" off).</summary>
+    /// <summary>Set when the user really wants to quit, including cancellation of startup.</summary>
     public static bool IsExiting { get; set; }
     /// <summary>--tray / --scheduled-scan: the window is not shown at start.</summary>
     public static bool StartedHeadless { get; private set; }
-    /// <summary>Set by <c>--self-cleanup ask</c>: only the "remove Evict's leftovers" window runs.</summary>
+    /// <summary>Self-cleanup has its own minimal lifecycle and never shows the startup splash.</summary>
     public static CommandLineOptions? SelfCleanupMode { get; set; }
 
-    /// <summary>The one way to quit: marks the exit as intentional so "close to tray" does not intercept it.</summary>
     public static void Quit()
     {
         IsExiting = true;
@@ -30,27 +33,120 @@ public partial class App : Application
         Current.Shutdown();
     }
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         if (SelfCleanupMode != null) { StartSelfCleanup(SelfCleanupMode); return; }
-        // The window can be hidden in the tray, so the process lifetime is controlled explicitly.
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
-
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         TaskScheduler.UnobservedTaskException += (_, args) => { Log.Error("Unobserved task exception", args.Exception); args.SetObserved(); };
         AppDomain.CurrentDomain.UnhandledException += (_, args) => Log.Error("Unhandled exception", args.ExceptionObject as Exception);
 
-        Services = new AppServices();
-        Services.Settings.Load();
-        Services.History.Load();
-        Services.UpdateHistory.Load();
-        // A self-update handed over before the last exit is resolved now: did this start reach the new version?
-        try { Services.UpdateHistory.ResolveSelfUpdate(Services.Updater.CurrentVersionLabel); }
-        catch (Exception ex) { Log.Warn("Could not record Evict's own update: " + ex.Message); }
-        _historyCleanupTimer = new System.Threading.Timer(_ => Services.UpdateHistory.PruneNow(), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
-        ApplyTheme(Services.Settings.Current.Theme);
-        UiState.Scale = UiState.Clamp(Services.Settings.Current.UiScale);
+        var options = CommandLineOptions.Parse(Program.StartupArgs);
+        StartedHeadless = options.Headless;
+        if (options.Exit) { Quit(); return; }
+        // Listen before slow I/O. Secondary launches are queued, not dropped or allowed to
+        // expose a half-initialized window; Setup's --exit is honored immediately.
+        SingleInstance.StartServer(ReceiveStartupArgs);
+        StartupSplashWindow? splash = null;
+        MainWindow? main = null;
+        MainViewModel? vm = null;
+        try
+        {
+            ApplyTheme(Program.StartupTheme);
+            if (StartupSequence.ShouldShowSplash(StartedHeadless, SelfCleanupMode != null, options.Exit))
+            {
+                splash = new StartupSplashWindow();
+                await StartupWindowPresenter.ShowAndWaitForFrameAsync(splash, ShutdownToken);
+            }
+            ShutdownToken.ThrowIfCancellationRequested();
+            // Construct UI-affine services on the dispatcher; only store reads move to workers.
+            Services = new AppServices();
+            var steps = new List<StartupStep>
+            {
+                new("Loading your preferences", async ct =>
+                {
+                    await Task.Run(() => Services.Settings.Load(), ct);
+                    ct.ThrowIfCancellationRequested();
+                    ApplyTheme(Services.Settings.Current.Theme);
+                    UiState.Scale = UiState.Clamp(Services.Settings.Current.UiScale);
+                }),
+                new("Loading local history", async ct =>
+                {
+                    await Task.Run(() =>
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        Services.History.Load();
+                        ct.ThrowIfCancellationRequested();
+                        Services.UpdateHistory.Load();
+                        ct.ThrowIfCancellationRequested();
+                        try { Services.UpdateHistory.ResolveSelfUpdate(Services.Updater.CurrentVersionLabel); }
+                        catch (Exception ex) { Log.Warn("Could not record Evict's own update: " + ex.Message); }
+                    }, ct);
+                }),
+                new("Preparing your workspace", _ =>
+                {
+                    vm = new MainViewModel(Services);
+                    Background = new BackgroundCoordinator(Services, vm);
+                    vm.Background = Background;
+                    return Task.CompletedTask;
+                })
+            };
+            if (!StartedHeadless)
+                steps.Add(new("Loading installed programs", ct => vm!.GetPage<ProgramsViewModel>(PageKey.Programs).PrepareStartupInventoryAsync(ct)));
+            steps.Add(new("Preparing the first window frame", async ct =>
+            {
+                main = new MainWindow { DataContext = vm };
+                MainWindow = main;
+                if (!StartedHeadless) await StartupWindowPresenter.RevealWhenReadyAsync(main, ct);
+            }));
+            splash?.SetStages(steps.Select(s => s.Name));
+            await StartupSequence.RunAsync(steps, progress => splash?.Report(progress), ShutdownToken);
+            ShutdownToken.ThrowIfCancellationRequested();
+
+            _startupComplete = true;
+            var activateMain = splash?.IsActive == true;
+            splash?.Dismiss();
+            if (activateMain) main!.Activate();
+            Log.Info($"{AppPaths.ProductName} ready. Elevated={ElevationHelper.IsElevated}, OS={Environment.OSVersion}, .NET={Environment.Version}");
+            await CompleteStartupAsync(vm!, main!, options);
+        }
+        catch (OperationCanceledException) when (ShutdownToken.IsCancellationRequested) { /* intentional exit */ }
+        catch (Exception ex)
+        {
+            Log.Error("Application startup failed", ex);
+            if (IsExiting) return;
+            if (_startupComplete)
+            {
+                vm?.ShowNotice("Evict opened, but a background startup operation failed. See the log for details.", () => Dialogs.OpenFolder(AppPaths.LogFile));
+            }
+            else if (splash is { IsLoaded: true })
+            {
+                main?.Hide();
+                splash.ShowFailure(ex);
+            }
+            else
+            {
+                MessageBox.Show("Evict could not start. Details were written to:\n" + AppPaths.LogFile,
+                    AppPaths.ProductName, MessageBoxButton.OK, MessageBoxImage.Error);
+                Quit();
+            }
+        }
+    }
+
+    private void ReceiveStartupArgs(string[] args)
+    {
+        if (IsExiting) return;
+        var options = CommandLineOptions.Parse(args);
+        if (options.Exit) { Quit(); return; }
+        if (_readyMain is { } vm) HandleArgs(vm, args);
+        else _pendingStartupArgs.Enqueue(args);
+    }
+
+    private async Task CompleteStartupAsync(MainViewModel vm, MainWindow main, CommandLineOptions options)
+    {
+        _historyCleanupTimer = new System.Threading.Timer(_ => Services.UpdateHistory.PruneNow(), null,
+            TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
         UiState.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(UiState.Scale))
@@ -59,48 +155,47 @@ public partial class App : Application
                 Services.Settings.Save();
             }
         };
+        try { Background.ApplySettings(forceTray: StartedHeadless); }
+        catch (Exception ex) { Log.Error("Background initialization failed", ex); }
+        if (StartedHeadless && !Background.HasTray)
+        {
+            Log.Warn("No tray icon available - showing the prepared window instead of running invisibly.");
+            await StartupWindowPresenter.RevealWhenReadyAsync(main, ShutdownToken);
+        }
+        _readyMain = vm;
+        // These operations must not delay the essential-data/first-frame readiness gate.
+        _ = vm.GetPage<SettingsViewModel>(PageKey.Settings);
+        if (!options.IsEmpty || options.Unknown.Count > 0) HandleArgs(vm, Program.StartupArgs, activate: !options.Headless);
+        else if (Services.Settings.Current.EasyUninstallWidgetVisible) vm.ShowWidgetCommand.Execute(null);
+        while (_pendingStartupArgs.Count > 0 && !IsExiting) HandleArgs(vm, _pendingStartupArgs.Dequeue());
+        if (IsExiting) return;
+        _ = RunPostStartupMaintenanceAsync();
+        _ = vm.CheckForUpdatesOnStartupAsync(ShutdownToken);
+        if (!options.ScheduledScan) _ = vm.RunMissedScheduledScanIfDueAsync();
+    }
 
-        Log.Info($"{AppPaths.ProductName} starting. Elevated={ElevationHelper.IsElevated}, OS={Environment.OSVersion}, .NET={Environment.Version}, args=[{string.Join(" ", Program.StartupArgs)}]");
-
-        // Keep the Explorer context-menu command pointing at this exe if it moved.
-        if (Services.Settings.Current.ExplorerContextMenu && ShellIntegration.NeedsRefresh()) ShellIntegration.Register();
-
-        var startOptions = CommandLineOptions.Parse(Program.StartupArgs);
-        StartedHeadless = startOptions.Headless;
-
-        var mainVm = new MainViewModel(Services);
-        Background = new BackgroundCoordinator(Services, mainVm);
-        mainVm.Background = Background;
-        var main = new MainWindow { DataContext = mainVm };
-        MainWindow = main;
-        if (!StartedHeadless) main.Show();
-
-        // Tray icon + installer detection (a headless start always gets a tray icon, otherwise the process would be invisible).
-        Background.ApplySettings(forceTray: StartedHeadless);
-        if (StartedHeadless && !Background.HasTray) { Log.Warn("No tray icon available – showing the window instead of running invisibly."); main.Show(); }
-        if (Services.Settings.Current.StartWithWindows) StartupRegistration.RefreshIfStale();
-
-        // Inspect schedule status even for a hidden launch; opening Settings must not register or migrate tasks.
-        _ = mainVm.GetPage<SettingsViewModel>(PageKey.Settings);
-
-        SingleInstance.StartServer(args => HandleArgs(mainVm, args));
-        if (!startOptions.IsEmpty || startOptions.Unknown.Count > 0) HandleArgs(mainVm, Program.StartupArgs, activate: !startOptions.Headless);
-        else if (Services.Settings.Current.EasyUninstallWidgetVisible) mainVm.ShowWidgetCommand.Execute(null);
-
-        // Check once on every service-running launch, including tray and scheduled-scan launches.
-        // The check is silent and cancellable; a short-lived scheduled scan can exit before the delay ends.
-        Services.Updater.CleanupAfterUpdate();
-        _ = mainVm.CheckForUpdatesOnStartupAsync(ShutdownToken);
-        if (!startOptions.ScheduledScan) _ = mainVm.RunMissedScheduledScanIfDueAsync();
+    private static async Task RunPostStartupMaintenanceAsync()
+    {
+        try
+        {
+            var contextMenu = Services.Settings.Current.ExplorerContextMenu;
+            var autostart = Services.Settings.Current.StartWithWindows;
+            await Task.Run(() =>
+            {
+                ShutdownToken.ThrowIfCancellationRequested();
+                if (contextMenu && ShellIntegration.NeedsRefresh()) ShellIntegration.Register();
+                ShutdownToken.ThrowIfCancellationRequested();
+                if (autostart) StartupRegistration.RefreshIfStale();
+                ShutdownToken.ThrowIfCancellationRequested();
+                Services.Updater.CleanupAfterUpdate();
+            }, ShutdownToken);
+        }
+        catch (OperationCanceledException) when (ShutdownToken.IsCancellationRequested) { }
+        catch (Exception ex) { Log.Error("Post-startup maintenance failed", ex); }
     }
 
     private static bool _windowElevationTried;
 
-    /// <summary>
-    /// A start hidden in the notification area (sign-in autostart, scheduled scan) never shows a UAC prompt. The first
-    /// time its window is opened, "Start as administrator" applies: an elevated copy takes over (with these arguments) and
-    /// this one exits. Not while an installation is being recorded, and asked at most once per process.
-    /// </summary>
     public static bool TryRestartElevatedForWindow(IReadOnlyList<string>? args = null)
     {
         if (!StartedHeadless || _windowElevationTried || Services is null) return false;
@@ -114,7 +209,6 @@ public partial class App : Application
         return true;
     }
 
-    /// <summary>Minimal start: theme + the self-cleanup window. No services, no settings writes, no log file.</summary>
     private void StartSelfCleanup(CommandLineOptions options)
     {
         ShutdownMode = ShutdownMode.OnMainWindowClose;
@@ -130,7 +224,7 @@ public partial class App : Application
         }
         catch { /* default theme */ }
         ApplyTheme(theme);
-        var window = new Views.SelfCleanupWindow { DataContext = new SelfCleanupViewModel(options.Portable) };
+        var window = new SelfCleanupWindow { DataContext = new SelfCleanupViewModel(options.Portable) };
         MainWindow = window;
         window.Show();
     }
@@ -141,9 +235,7 @@ public partial class App : Application
         {
             var options = CommandLineOptions.Parse(args);
             if (options.Exit) { Log.Info("Asked to exit (--exit)."); Quit(); return; }
-            // Started hidden in the tray without administrator rights: the first window to open follows "Start as administrator".
             if (activate && !options.Headless && TryRestartElevatedForWindow(args)) return;
-            // A forwarded --tray / --scheduled-scan (e.g. sign-in autostart while Evict is open) must not pop the window up.
             if (activate && !options.Headless) vm.ShowMainWindow();
             if (!options.IsEmpty) _ = vm.HandleCommandLineAsync(options);
         }
@@ -172,7 +264,7 @@ public partial class App : Application
 
     protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
     {
-        IsExiting = true; // sign-out / shutdown must not be diverted to the tray
+        IsExiting = true;
         ShutdownCancellation.Cancel();
         base.OnSessionEnding(e);
     }
@@ -181,8 +273,11 @@ public partial class App : Application
     {
         ShutdownCancellation.Cancel();
         _historyCleanupTimer?.Dispose();
+        SingleInstance.Stop();
         try { Background?.Shutdown(); } catch { /* ignore */ }
-        try { Services?.Settings.Save(); } catch { /* ignore */ }
+        // A cancellation can happen while a worker is reading settings. Never overwrite that
+        // file with partially initialized/default preferences during failed startup.
+        if (_startupComplete) try { Services?.Settings.Save(); } catch { /* ignore */ }
         Log.Info("Exit.");
         base.OnExit(e);
     }
