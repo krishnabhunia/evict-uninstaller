@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
-using Evict.Core.Util;
+using Evict.Core.Services;
 
 namespace Evict.App.Services;
 

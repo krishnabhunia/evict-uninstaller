@@ -43,6 +43,16 @@ class StartupSplashWiringTests(unittest.TestCase):
         self.assertIn("if (!ready) window.Hide();", source)
         self.assertNotIn("Task.Delay", source)
 
+    def test_window_presenter_imports_the_diagnostic_logger_namespace(self):
+        # Core-only .NET tests do not compile this WPF file. Catch the missing
+        # import before the later application publish step (CS0103 in PR #32).
+        source = (APP / "Services/StartupWindowPresenter.cs").read_text(encoding="utf-8")
+        logger = (ROOT / "windows/src/Evict.Core/Services/Log.cs").read_text(encoding="utf-8")
+        namespace_line = next(line.strip() for line in logger.splitlines() if line.startswith("namespace "))
+        namespace = namespace_line.removeprefix("namespace ").removesuffix(";")
+        self.assertIn(f"using {namespace};", source.splitlines())
+        self.assertIn("Log.Warn(", source)
+
     def test_initial_inventory_does_not_wait_for_folder_sizes(self):
         source = (APP / "ViewModels/ProgramsViewModel.Startup.cs").read_text(encoding="utf-8")
         self.assertIn("EnsureLoadedAsync()", source)

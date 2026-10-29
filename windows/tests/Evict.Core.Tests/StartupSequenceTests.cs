@@ -24,7 +24,7 @@ public sealed class StartupSequenceTests
         await StartupSequence.RunAsync(steps, reports.Add, CancellationToken.None);
         Assert.Equal(steps.Select(s => s.Name), order);
         Assert.Equal(10, reports.Count);
-        Assert.Single(reports.Where(p => p.IsComplete));
+        Assert.Single(reports, p => p.IsComplete);
         Assert.True(reports.Last().IsComplete);
         Assert.Equal("5 of 5 stages complete", reports.Last().Summary);
     }
