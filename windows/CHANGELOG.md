@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.1.0 — 2026-10-29
+
+<!-- Evict automatic release; base: win-v4.0.1 -->
+
+- ChatGPT-Evict Startup Splash Screen
+
 ## 4.0.1 — 2026-10-28
 
 <!-- Evict automatic release; base: win-v4.0.0 -->
