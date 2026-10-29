@@ -28,12 +28,14 @@ internal static class StartupWindowPresenter
         var opacity = window.Opacity;
         var taskbar = window.ShowInTaskbar;
         var activate = window.ShowActivated;
+        var hitTest = window.IsHitTestVisible;
         var hwnd = IntPtr.Zero;
         var cloaked = false;
         var ready = false;
         window.Opacity = 0;
         window.ShowInTaskbar = false;
         window.ShowActivated = false;
+        window.IsHitTestVisible = false;
         try
         {
             // EnsureHandle creates the native window without showing it. DWM cloak additionally
@@ -51,7 +53,14 @@ internal static class StartupWindowPresenter
             if (!ready) window.Hide();
             window.Opacity = opacity;
             window.ShowActivated = activate;
-            if (cloaked) SetCloak(hwnd, false);
+            window.IsHitTestVisible = hitTest;
+            var uncloaked = !cloaked || SetCloak(hwnd, false);
+            if (ready && !uncloaked)
+            {
+                // Never dismiss the splash while leaving the only usable window invisible.
+                window.Hide();
+                throw new InvalidOperationException("Windows could not reveal the prepared application window.");
+            }
             window.ShowInTaskbar = taskbar;
         }
     }
