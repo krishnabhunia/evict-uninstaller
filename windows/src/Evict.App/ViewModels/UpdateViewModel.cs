@@ -123,6 +123,8 @@ public sealed partial class UpdateViewModel : ObservableObject
                 });
             if (ok)
             {
+                if (_explicitlySelected)
+                    _services.Settings.Current.PinnedAppVersion = Release.DisplayVersion;
                 _services.Settings.Current.SkippedUpdateVersion = null;
                 _services.Settings.Save();
                 _ = Application.Current.Dispatcher.BeginInvoke(App.Quit);
