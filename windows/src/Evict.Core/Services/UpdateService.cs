@@ -126,6 +126,22 @@ public static class UpdateChecker
             .ThenByDescending(r => r.PublishedAt)
             .FirstOrDefault();
 
+    /// <summary>Selectable Windows releases with a checksum-backed asset for this installation mode.</summary>
+    public static IReadOnlyList<ReleaseInfo> SelectVersions(
+        IEnumerable<ReleaseInfo> releases, string current, bool older, bool includePrereleases, bool installedMode)
+    {
+        var installed = UpdateVersion.Parse(current) ?? throw new ArgumentException("Invalid installed version.", nameof(current));
+        return releases
+            .Where(r => IsWindowsTag(r.TagName) && (includePrereleases || !r.IsPreview)
+                && (older ? r.SemanticVersion.CompareTo(installed) < 0 : r.SemanticVersion.CompareTo(installed) > 0)
+                && PickAsset(r, installedMode) is { } asset && PickChecksumAsset(r, asset) != null)
+            .OrderByDescending(r => r.SemanticVersion)
+            .ThenByDescending(r => r.TagName.StartsWith("win-v", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(r => r.SemanticVersion.ToString())
+            .Select(group => group.First())
+            .ToList();
+    }
+
     private static ReleaseInfo? ParseRelease(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object) return null;
@@ -291,6 +307,25 @@ public sealed class UpdateService
             try { Directory.CreateDirectory(d); } catch { /* ignore */ }
             return d;
         }
+    }
+
+    /// <summary>Loads all published Windows release versions, including stable and beta, without installing anything.</summary>
+    public async Task<IReadOnlyList<ReleaseInfo>> ListVersionsAsync(CancellationToken ct)
+    {
+        var releases = new List<ReleaseInfo>();
+        string? next = UpdateChecker.ReleasesApiUrl;
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        for (int page = 0; next != null; page++)
+        {
+            if (page >= 20 || !visited.Add(next))
+                throw new InvalidDataException("GitHub's release list is incomplete. Try again later.");
+            using var response = await _http.GetAsync(next, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            releases.AddRange(UpdateChecker.ParseReleases(json));
+            next = NextReleasePage(response);
+        }
+        return releases;
     }
 
     // ───────────────────────────── check ─────────────────────────────
