@@ -93,6 +93,18 @@ public static class VersionPicker
         return LatestStable(Newer(releases, currentVersion));
     }
 
+    /// <summary>
+    /// Adds the versions kept on this PC that GitHub did not list (offline, or a release that was removed), so a roll
+    /// back to them works without a connection. A version GitHub lists keeps GitHub's entry.
+    /// </summary>
+    public static IReadOnlyList<ReleaseInfo> WithKept(IEnumerable<ReleaseInfo> remote, IEnumerable<ReleaseInfo> kept)
+    {
+        var list = remote.ToList();
+        var known = new HashSet<UpdateVersion>(list.Select(r => r.SemanticVersion));
+        list.AddRange(kept.Where(k => known.Add(k.SemanticVersion)));
+        return list;
+    }
+
     /// <summary>True when Evict can install this release itself: the file for this edition and its checksum are published.</summary>
     public static bool CanInstall(ReleaseInfo release, bool installedMode) =>
         UpdateChecker.PickAsset(release, installedMode) is { } asset && UpdateChecker.PickChecksumAsset(release, asset) != null;
@@ -166,6 +178,22 @@ public static class VersionChange
         }
     }
 
+    /// <summary>The settings <see cref="ApplyChoices"/> changes, taken before it runs.</summary>
+    public sealed record Snapshot(string? PreviousVersion, string? SkippedUpdateVersion, bool KeepVersionCopies, string? PinnedVersion, bool CheckForUpdates);
+
+    public static Snapshot Take(AppSettings s) =>
+        new(s.PreviousVersion, s.SkippedUpdateVersion, s.KeepVersionCopies, s.PinnedVersion, s.CheckForUpdates);
+
+    /// <summary>The change did not happen (cancelled, or the hand-over failed): no pin to a version that never ran.</summary>
+    public static void Restore(AppSettings s, Snapshot before)
+    {
+        s.PreviousVersion = before.PreviousVersion;
+        s.SkippedUpdateVersion = before.SkippedUpdateVersion;
+        s.KeepVersionCopies = before.KeepVersionCopies;
+        s.PinnedVersion = before.PinnedVersion;
+        s.CheckForUpdates = before.CheckForUpdates;
+    }
+
     /// <summary>Settings carried into the older settings file when it is put back (they describe this change).</summary>
     public static Dictionary<string, JsonNode?> CarriedSettings(AppSettings s) => new()
     {
@@ -200,8 +228,13 @@ public sealed class VersionArchive
         return Path.Combine(_root, name);
     }
 
-    /// <summary>Copies a verified file into the version's folder and records its SHA-256. Returns the stored path.</summary>
-    public string Keep(string version, string sourceFile, string fileName, string sha256)
+    private const string ReleaseFileName = "release.json";
+
+    /// <summary>
+    /// Copies a verified file into the version's folder and records its SHA-256 (and, when known, the release's date
+    /// and notes, so the version can be listed offline). Returns the stored path.
+    /// </summary>
+    public string Keep(string version, string sourceFile, string fileName, string sha256, ReleaseInfo? release = null)
     {
         var folder = Folder(version);
         Directory.CreateDirectory(folder);
@@ -209,8 +242,62 @@ public sealed class VersionArchive
         if (!Path.GetFullPath(sourceFile).Equals(Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase))
             File.Copy(sourceFile, target, overwrite: true);
         File.WriteAllText(target + ".sha256", sha256.ToLowerInvariant());
+        if (release != null)
+        {
+            try
+            {
+                var meta = new JsonObject
+                {
+                    ["tag"] = release.TagName,
+                    ["name"] = release.Name,
+                    ["url"] = release.HtmlUrl,
+                    ["notes"] = release.Body,
+                    ["published"] = release.PublishedAt?.ToString("O"),
+                    ["prerelease"] = release.IsPreview,
+                };
+                File.WriteAllText(Path.Combine(folder, ReleaseFileName), meta.ToJsonString());
+            }
+            catch { /* the copy is still usable without its date and notes */ }
+        }
         Directory.SetLastWriteTimeUtc(folder, DateTime.UtcNow);
         return target;
+    }
+
+    /// <summary>
+    /// The versions kept here as releases whose files are the kept copies (with their recorded SHA-256), for the
+    /// version picker when GitHub cannot be reached. Folders without a kept program file are left out.
+    /// </summary>
+    public IReadOnlyList<ReleaseInfo> KeptReleases()
+    {
+        var list = new List<ReleaseInfo>();
+        if (!Directory.Exists(_root)) return list;
+        foreach (var folder in Directory.EnumerateDirectories(_root))
+        {
+            try
+            {
+                var version = UpdateVersion.Parse(Path.GetFileName(folder));
+                if (version is null) continue;
+                var files = Directory.EnumerateFiles(folder, "*.exe")
+                    .Where(f => File.Exists(f + ".sha256"))
+                    .Select(f => Path.GetFileName(f)!)
+                    .ToList();
+                if (files.Count == 0) continue;
+                JsonObject? meta = null;
+                var metaFile = Path.Combine(folder, ReleaseFileName);
+                if (File.Exists(metaFile)) { try { meta = JsonNode.Parse(File.ReadAllText(metaFile)) as JsonObject; } catch { /* listed without it */ } }
+                var tag = (string?)meta?["tag"] ?? "win-v" + version;
+                DateTimeOffset? published = DateTimeOffset.TryParse((string?)meta?["published"], out var p) ? p : null;
+                var assets = files.SelectMany(f => new[]
+                {
+                    new ReleaseAsset(f, new Uri(Path.Combine(folder, f)).AbsoluteUri, new FileInfo(Path.Combine(folder, f)).Length),
+                    new ReleaseAsset(f + ".sha256", new Uri(Path.Combine(folder, f + ".sha256")).AbsoluteUri, 0),
+                }).ToList();
+                list.Add(new ReleaseInfo(version.Core, tag, (string?)meta?["name"] ?? tag, (string?)meta?["url"] ?? UpdateChecker.ReleasesUrl,
+                    (string?)meta?["notes"], published, version.IsPrerelease || ((bool?)meta?["prerelease"] ?? false), assets));
+            }
+            catch { /* one unreadable folder does not hide the others */ }
+        }
+        return list;
     }
 
     /// <summary>True when a copy of this file is kept for the version (not yet checked against its hash).</summary>
@@ -261,15 +348,21 @@ public sealed class VersionArchive
 
     /// <summary>
     /// Replaces <paramref name="settingsFile"/> with the settings saved for <paramref name="version"/> and then applies
-    /// <paramref name="overrides"/> (top-level settings such as the pin). Returns false when there is no backup.
+    /// <paramref name="overrides"/> (top-level settings such as the pin). Returns false — and leaves the file alone —
+    /// when there is no backup or it cannot be read as a settings object.
     /// </summary>
     public bool RestoreSettings(string version, string settingsFile, IReadOnlyDictionary<string, JsonNode?>? overrides = null)
     {
         var backup = SettingsBackup(version);
         if (backup is null) return false;
         JsonObject json;
-        try { json = JsonNode.Parse(File.ReadAllText(backup)) as JsonObject ?? new JsonObject(); }
-        catch { json = new JsonObject(); }
+        try
+        {
+            // A damaged or non-object backup must never replace the current, valid settings.
+            if (JsonNode.Parse(File.ReadAllText(backup)) is not JsonObject parsed) return false;
+            json = parsed;
+        }
+        catch { return false; }
         if (overrides != null)
             foreach (var (key, value) in overrides) json[key] = value?.DeepClone();
         var directory = Path.GetDirectoryName(Path.GetFullPath(settingsFile))!;
