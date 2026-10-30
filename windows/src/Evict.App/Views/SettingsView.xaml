@@ -119,10 +119,14 @@
                     <TextBlock Style="{StaticResource Hint}" Text="{Binding EditionText}" />
                     <StackPanel Orientation="Horizontal">
                         <Button Style="{StaticResource Button.Secondary}" Content="Check now" Command="{Binding CheckForUpdatesNowCommand}" IsEnabled="{Binding CanChangeUpdateChannel}" />
-                        <Button Style="{StaticResource Button.Primary}" Content="Install update" Command="{Binding ShowUpdateCommand}" Margin="8,0,0,0" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVis}}" />
+                        <Button Style="{StaticResource Button.Primary}" Content="Choose update" Command="{Binding ShowUpdateCommand}" Margin="8,0,0,0" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVis}}" />
                         <Button Style="{StaticResource Button.Secondary}" Content="Choose version / Roll back" Command="{Binding ShowVersionHistoryCommand}" Margin="8,0,0,0" />
                         <Button Style="{StaticResource Button.Link}" Content="All releases on GitHub" Command="{Binding OpenReleasesCommand}" Margin="8,0,0,0" />
                         <ProgressBar IsIndeterminate="True" Width="120" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsCheckingForUpdates, Converter={StaticResource BoolToVis}}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <TextBlock Text="{Binding PinnedVersionText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                        <Button Style="{StaticResource Button.Secondary}" Content="Clear pin" Command="{Binding ClearVersionPinCommand}" Margin="12,0,0,0" />
                     </StackPanel>
                     <TextBlock Text="{Binding UpdateStatusText}" Style="{StaticResource Text.Caption}" Margin="0,10,0,0" TextWrapping="Wrap" />
                     <Border Background="{DynamicResource Brush.Warning.Subtle}" CornerRadius="8" Padding="12" Margin="0,10,0,0"
