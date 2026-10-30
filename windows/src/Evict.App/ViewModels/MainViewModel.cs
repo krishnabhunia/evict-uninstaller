@@ -512,17 +512,11 @@ public sealed partial class MainViewModel : ObservableObject
         var skipped = string.Equals(_services.Settings.Current.SkippedUpdateVersion, release.TagName, StringComparison.OrdinalIgnoreCase);
         UpdateBannerText = $"Evict {release.DisplayVersion}{(release.IsPreview ? " (beta/prerelease)" : "")} is available (you have {_services.Updater.CurrentVersionLabel}).";
         if (fromUser) ShowUpdate();
-        else ShowUpdateBanner = !skipped;
+        else ShowUpdateBanner = !skipped && string.IsNullOrWhiteSpace(_services.Settings.Current.PinnedAppVersion);
     }
 
     [RelayCommand]
-    private void ShowUpdate()
-    {
-        if (AvailableUpdate is null || AvailableUpdate.IsPreview && !IncludeBetaUpdates) return;
-        var vm = new UpdateViewModel(_services, AvailableUpdate, this);
-        new UpdateWindow { DataContext = vm, Owner = Application.Current.MainWindow }.ShowDialog();
-        if (AvailableUpdate != null && string.Equals(_services.Settings.Current.SkippedUpdateVersion, AvailableUpdate.TagName, StringComparison.OrdinalIgnoreCase)) ShowUpdateBanner = false;
-    }
+    private void ShowUpdate() => ShowVersionHistory();
 
     [RelayCommand] private void DismissUpdateBanner() => ShowUpdateBanner = false;
 
