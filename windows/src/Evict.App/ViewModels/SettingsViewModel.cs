@@ -322,6 +322,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     [RelayCommand] private void ShowUpdate() => _main.ShowUpdateCommand.Execute(null);
+    [RelayCommand] private void ShowVersionHistory() => _main.ShowVersionHistoryCommand.Execute(null);
     [RelayCommand] private void OpenReleases() => Dialogs.OpenUrl(UpdateChecker.ReleasesUrl);
     [RelayCommand] private void OpenUpdateConnectionHelp() => Dialogs.OpenUrl(UpdateNetworkDiagnostics.FirewallHelpUrl);
     [RelayCommand] private void OpenApplicationFolder() => Dialogs.OpenFolder(Path.GetDirectoryName(ExecutablePath) ?? AppContext.BaseDirectory);
