@@ -52,14 +52,10 @@ public sealed partial class MainViewModel : ObservableObject
     public MainViewModel(AppServices services)
     {
         _services = services;
-        // A selected version is pinned only if that exact binary actually started.
-        // An installer that never completed must not suppress subsequent update notices.
-        if (_services.Settings.Current.PinnedAppVersion is { Length: > 0 } pinned &&
-            !string.Equals(pinned, _services.Updater.CurrentVersionLabel, StringComparison.OrdinalIgnoreCase))
-        {
-            _services.Settings.Current.PinnedAppVersion = null;
+        // A version is pinned only while that exact version runs: a roll back whose installer never finished must not
+        // leave this version pinned (and its start-up check off) to a version that never started.
+        if (VersionChange.ClearStalePin(_services.Settings.Current, _services.Updater.CurrentVersionLabel))
             _services.Settings.Save();
-        }
         _scheduledScanGuard = new ScheduledScanExecutionGuard(CaptureSchedule,
             (s, ct) => _services.Scheduler.MatchesAsync(s.Mode, s.Hour, s.Weekday, ct),
             _ => ScanAndNotifyAsync());
@@ -153,12 +149,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         LastUpdateCheckResult = null;
         OnPropertyChanged(nameof(IncludeBetaUpdates));
-        OnPropertyChanged(nameof(HasAvailableUpdate));
-        if (AvailableUpdate?.IsPreview == true && !IncludeBetaUpdates)
-        {
-            AvailableUpdate = null;
-            ShowUpdateBanner = false;
-        }
+        RefreshOffer();
         if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel vm) vm.RefreshUpdateChannel();
     }
 
@@ -174,31 +165,16 @@ public sealed partial class MainViewModel : ObservableObject
     private bool CanOpenUpdates() => !IsCheckingForUpdates;
 
     [RelayCommand(CanExecute = nameof(CanOpenUpdates))]
-    private Task OpenUpdatesAsync()
+    private async Task OpenUpdatesAsync()
     {
-        ShowVersionHistory();
-        return Task.CompletedTask;
-    }
-
-    [RelayCommand]
-    private void ShowVersionHistory()
-    {
-        var picker = new VersionHistoryWindow(_services.Updater) { Owner = Application.Current.MainWindow };
-        if (picker.ShowDialog() != true || picker.SelectedRelease is not { } selected) return;
-        var direction = picker.IsRollback ? "roll back" : "update";
-        if (picker.IsRollback && UpdateService.IsInstalledMode())
+        if (HasAvailableUpdate)
         {
-            if (Dialogs.Confirm($"Evict was installed with Setup. Rolling back to {selected.DisplayVersion} may require uninstalling the current version and restoring data from a backup. Open the exact release page and review its installer?"))
-                Dialogs.OpenUrl(selected.HtmlUrl);
+            ShowUpdate();
             return;
         }
-        if (!Dialogs.Confirm($"Do you want to {direction} Evict from {_services.Updater.CurrentVersionLabel} to {selected.DisplayVersion}{(selected.IsPreview ? " (BETA)" : "")}?\n\nExisting settings and history should be backed up before a downgrade. The downloaded file must match the published SHA-256 checksum."))
-            return;
-        new UpdateWindow
-        {
-            DataContext = new UpdateViewModel(_services, selected, this, explicitlySelected: true),
-            Owner = Application.Current.MainWindow
-        }.ShowDialog();
+
+        OpenSettings("Updates");
+        await GetPage<SettingsViewModel>(PageKey.Settings).CheckForUpdatesNowCommand.ExecuteAsync(null);
     }
 
     public void Navigate(PageKey key, bool activate = true)
@@ -464,19 +440,29 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ───────────────────────────── updates ─────────────────────────────
 
-    /// <summary>Latest release found by the start-up check (or Settings → Check now); drives the blue banner.</summary>
+    /// <summary>
+    /// Every Windows release the last check saw (design VP1). The banner and the header button count the newer ones on
+    /// the chosen channel; nothing is offered while a version is pinned.
+    /// </summary>
+    public IReadOnlyList<ReleaseInfo> KnownReleases { get; private set; } = Array.Empty<ReleaseInfo>();
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasAvailableUpdate))]
     [NotifyPropertyChangedFor(nameof(AvailableUpdateButtonText))]
-    private ReleaseInfo? _availableUpdate;
-    public bool HasAvailableUpdate => AvailableUpdate is { } release && (!release.IsPreview || IncludeBetaUpdates);
-    public string AvailableUpdateButtonText => AvailableUpdate is { } release ? $"Update to v{release.DisplayVersion}" : "";
+    private IReadOnlyList<ReleaseInfo> _offeredUpdates = Array.Empty<ReleaseInfo>();
+    public bool HasAvailableUpdate => OfferedUpdates.Count > 0;
+    public string AvailableUpdateButtonText => OfferedUpdates.Count switch
+    {
+        0 => "",
+        1 => "1 update available",
+        var n => $"{n} updates available",
+    };
 
     [ObservableProperty] private bool _showUpdateBanner;
     [ObservableProperty] private string? _updateBannerText;
-    /// <summary>Green "Evict was updated" notice shown once after a self-update (--updated).</summary>
+    /// <summary>Green "Evict is now version x" notice shown once after a version change (--updated).</summary>
     [ObservableProperty] private bool _showUpdatedNotice;
-    public string UpdatedNoticeText => $"Evict was updated to version {_services.Updater.CurrentVersionLabel}.";
+    public string UpdatedNoticeText => $"Evict is now version {_services.Updater.CurrentVersionLabel}.";
 
     /// <summary>One background check per application start; shutdown cancellation and failures stay silent.</summary>
     public async Task CheckForUpdatesOnStartupAsync(CancellationToken ct = default)
@@ -486,7 +472,7 @@ public sealed partial class MainViewModel : ObservableObject
             var result = await _updateChecks.CheckOnStartupAsync(ct);
             if (result is null) return;
             RecordUpdateCheck(result);
-            if (result.Status == UpdateStatus.UpdateAvailable && result.Release != null) OfferUpdate(result.Release, fromUser: false);
+            OfferUpdates(fromUser: false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* normal shutdown */ }
         catch (Exception ex) { Log.Warn("Start-up update check failed: " + ex.Message); }
@@ -505,26 +491,72 @@ public sealed partial class MainViewModel : ObservableObject
     private void RecordUpdateCheck(UpdateCheckResult result)
     {
         LastUpdateCheckResult = result;
+        if (result.Releases.Count > 0) RememberReleases(result.Releases);
         _services.Settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
         _services.Settings.Save();
-        if (result.Status == UpdateStatus.UpToDate) { AvailableUpdate = null; ShowUpdateBanner = false; }
         Log.Info("Update check: " + result.Message);
         if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel vm) vm.RefreshUpdateResult(result);
     }
 
-    /// <summary>Shows the banner (start-up) or the dialog directly (user clicked "Check now").</summary>
-    public void OfferUpdate(ReleaseInfo release, bool fromUser)
+    /// <summary>Keeps the newest release list (from a check or the version picker) and recounts the offer.</summary>
+    public void RememberReleases(IReadOnlyList<ReleaseInfo> releases)
     {
-        if (release.IsPreview && !IncludeBetaUpdates) return;
-        AvailableUpdate = release;
-        var skipped = string.Equals(_services.Settings.Current.SkippedUpdateVersion, release.TagName, StringComparison.OrdinalIgnoreCase);
-        UpdateBannerText = $"Evict {release.DisplayVersion}{(release.IsPreview ? " (beta/prerelease)" : "")} is available (you have {_services.Updater.CurrentVersionLabel}).";
-        if (fromUser) ShowUpdate();
-        else ShowUpdateBanner = !skipped && string.IsNullOrWhiteSpace(_services.Settings.Current.PinnedAppVersion);
+        KnownReleases = releases;
+        RefreshOffer();
     }
 
-    [RelayCommand]
-    private void ShowUpdate() => ShowVersionHistory();
+    /// <summary>Recounts the newer versions after a check, a channel change, a skip or a pin change.</summary>
+    public void RefreshOffer()
+    {
+        var s = _services.Settings.Current;
+        OfferedUpdates = VersionPicker.Offered(KnownReleases, _services.Updater.CurrentVersionLabel, IncludeBetaUpdates, s.PinnedVersion);
+        UpdateBannerText = OfferedUpdates.Count == 0 ? null
+            : $"{VersionPicker.OfferText(OfferedUpdates)} — you have {_services.Updater.CurrentVersionLabel}. Nothing installs on its own.";
+        if (OfferedUpdates.Count == 0) ShowUpdateBanner = false;
+    }
+
+    /// <summary>
+    /// Start-up: shows the notice (hidden when you skipped these versions). "Check now": opens the version picker. There
+    /// is no one-click update — you always choose the exact version (VP1).
+    /// </summary>
+    public void OfferUpdates(bool fromUser)
+    {
+        RefreshOffer();
+        if (OfferedUpdates.Count == 0) return;
+        if (fromUser) { ShowUpdate(); return; }
+        var newest = VersionPicker.Newest(OfferedUpdates)!;
+        var skipped = UpdateVersion.Parse(_services.Settings.Current.SkippedUpdateVersion) is { } s && newest.SemanticVersion.CompareTo(s) <= 0;
+        ShowUpdateBanner = !skipped;
+    }
+
+    /// <summary>Opens the version picker on the Updates tab.</summary>
+    [RelayCommand] private void ShowUpdate() => ShowVersionPicker(rollBack: false);
+
+    /// <summary>Opens the version picker on the "Version history &amp; roll back" tab.</summary>
+    [RelayCommand] private void OpenVersionHistory() => ShowVersionPicker(rollBack: true);
+
+    private void ShowVersionPicker(bool rollBack)
+    {
+        ShowUpdateBanner = false;
+        var vm = new VersionPickerViewModel(_services, this, KnownReleases, rollBack);
+        var window = new VersionPickerWindow { DataContext = vm, Owner = Application.Current.MainWindow };
+        if (vm.NeedsLoading) _ = vm.RefreshAsync();
+        window.ShowDialog();
+        RefreshOffer();
+        if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel svm) svm.RefreshPin();
+    }
+
+    /// <summary>Ends a pin: newer versions are offered again and the start-up check is back on.</summary>
+    public void Unpin()
+    {
+        var s = _services.Settings.Current;
+        if (s.PinnedVersion is null) return;
+        s.PinnedVersion = null;
+        s.CheckForUpdates = true;
+        _services.Settings.Save();
+        RefreshOffer();
+        if (_pages.TryGetValue(PageKey.Settings, out var settings) && settings is SettingsViewModel svm) svm.RefreshPin();
+    }
 
     [RelayCommand] private void DismissUpdateBanner() => ShowUpdateBanner = false;
 

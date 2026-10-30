@@ -442,7 +442,10 @@ public sealed class SoftwareUpdateHistoryStore
             var lastSeen = _data.LastSeenEvictVersion;
             if (pending != null)
             {
-                bool reached = current != null && UpdateVersion.Parse(pending.ToVersion) is { } target && current.CompareTo(target) >= 0;
+                // A roll back (VP1) only succeeded on exactly the older version; an update also when something newer runs.
+                var target = UpdateVersion.Parse(pending.ToVersion);
+                bool rollBack = target != null && UpdateVersion.Parse(pending.FromVersion) is { } from && target.CompareTo(from) < 0;
+                bool reached = current != null && target != null && (rollBack ? current.CompareTo(target) == 0 : current.CompareTo(target) >= 0);
                 entry = new SoftwareUpdateHistoryEntry
                 {
                     Name = "Evict", PackageId = SoftwareUpdateHistory.EvictPackageId, IsEvict = true,
@@ -450,8 +453,8 @@ public sealed class SoftwareUpdateHistoryStore
                     StartedUtc = pending.StartedUtc, FinishedUtc = _nowUtc(), StartedBy = pending.StartedBy,
                     Outcome = reached ? SoftwareUpdateOutcome.Updated : SoftwareUpdateOutcome.Failed,
                     Message = reached
-                        ? "Evict updated itself and started again."
-                        : $"The update did not finish — Evict is still on {shown}. Try again from Settings › Updates.",
+                        ? (rollBack ? $"Evict rolled back to {shown} and started again." : "Evict updated itself and started again.")
+                        : $"The {(rollBack ? "roll back" : "update")} did not finish — Evict is still on {shown}. Try again from Settings › Updates.",
                     Output = pending.Output.Concat(new[] { reached ? $"Started Evict {shown}" : $"Evict {shown} started instead of {pending.ToVersion}" }).ToList(),
                 };
                 _data.PendingSelfUpdate = null;

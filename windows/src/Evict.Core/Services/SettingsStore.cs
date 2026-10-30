@@ -69,8 +69,20 @@ public sealed class AppSettings
     public DateTime? LastUpdateCheckUtc { get; set; }
     /// <summary>A version the user chose to skip ("v1.3.0"); the banner stays hidden for it.</summary>
     public string? SkippedUpdateVersion { get; set; }
-    /// <summary>The exact version explicitly selected by the user. Automatic notifications cannot override it.</summary>
+    /// <summary>
+    /// 4.1.1's pin (an exact version chosen in its chooser). Read once at start and moved to <see cref="PinnedVersion"/>;
+    /// kept only so 4.1.1 settings files load.
+    /// </summary>
     public string? PinnedAppVersion { get; set; }
+    /// <summary>
+    /// Version picker (VP1): the version the user pinned after a roll back ("4.0.1"). While set, no newer version is
+    /// offered. Pinning also turns <see cref="CheckForUpdates"/> off, so versions without the picker stay quiet too.
+    /// </summary>
+    public string? PinnedVersion { get; set; }
+    /// <summary>The version Evict ran before the last change made from the version picker (tagged "Your previous version").</summary>
+    public string? PreviousVersion { get; set; }
+    /// <summary>Keep a copy of the version being replaced, so rolling back to it needs no download.</summary>
+    public bool KeepVersionCopies { get; set; } = true;
     public double WindowWidth { get; set; } = 1240;
     public double WindowHeight { get; set; } = 800;
     public bool WindowMaximized { get; set; } = false;
@@ -98,6 +110,9 @@ public sealed class SettingsStore
     }
 
     public AppSettings Current { get; private set; } = new();
+
+    /// <summary>The settings.json this store reads and writes.</summary>
+    public string FilePath => _settingsFile();
 
     public void Load()
     {
@@ -129,16 +144,33 @@ public sealed class SettingsStore
             if (Math.Abs(s.UiScale - 1.0) < 0.001) s.UiScale = 1.2;
         }
         s.SoftwareUpdateExclusions ??= new();
+        // 4.1.1 pinned a chosen version in PinnedAppVersion; the version picker (VP1) keeps it in PinnedVersion.
+        if (!string.IsNullOrWhiteSpace(s.PinnedAppVersion))
+        {
+            s.PinnedVersion ??= s.PinnedAppVersion;
+            s.PinnedAppVersion = null;
+        }
         s.SettingsVersion = AppSettings.CurrentVersion;
     }
 
     public void Save() => TrySave();
+
+    private bool _savesSuspended;
+
+    /// <summary>
+    /// Version picker (VP1): after the settings of an older version were put back for a roll back, nothing this
+    /// closing instance saves may overwrite them. <see cref="ResumeSaves"/> undoes it when the roll back fails.
+    /// </summary>
+    public void SuspendSaves() { lock (_gate) _savesSuspended = true; }
+    public void ResumeSaves() { lock (_gate) _savesSuspended = false; }
+    public bool SavesSuspended { get { lock (_gate) return _savesSuspended; } }
 
     /// <summary>Publishes complete settings atomically; a failed write leaves the previous file intact.</summary>
     public bool TrySave()
     {
         lock (_gate)
         {
+            if (_savesSuspended) return true; // deliberately not written (see SuspendSaves)
             string? staged = null;
             var ownsStaged = false;
             try
