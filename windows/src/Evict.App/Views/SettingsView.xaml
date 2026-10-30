@@ -120,6 +120,7 @@
                     <StackPanel Orientation="Horizontal">
                         <Button Style="{StaticResource Button.Secondary}" Content="Check now" Command="{Binding CheckForUpdatesNowCommand}" IsEnabled="{Binding CanChangeUpdateChannel}" />
                         <Button Style="{StaticResource Button.Primary}" Content="Install update" Command="{Binding ShowUpdateCommand}" Margin="8,0,0,0" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVis}}" />
+                        <Button Style="{StaticResource Button.Secondary}" Content="Choose version / Roll back" Command="{Binding ShowVersionHistoryCommand}" Margin="8,0,0,0" />
                         <Button Style="{StaticResource Button.Link}" Content="All releases on GitHub" Command="{Binding OpenReleasesCommand}" Margin="8,0,0,0" />
                         <ProgressBar IsIndeterminate="True" Width="120" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsCheckingForUpdates, Converter={StaticResource BoolToVis}}" />
                     </StackPanel>
