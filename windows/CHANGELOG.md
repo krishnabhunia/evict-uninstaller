@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.1.1 — 2026-10-30
+
+<!-- Evict automatic release; base: win-v4.1.0 -->
+
+- ChatGPT-Evict-Version-Manager
+
 ## 4.1.0 — 2026-10-29
 
 <!-- Evict automatic release; base: win-v4.0.1 -->
