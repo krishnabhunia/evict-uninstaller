@@ -1,6 +1,6 @@
 # Beta updates
 
-Evict's preferred update flow uses GitHub Releases. Stable releases are selected by default. The optional **Include beta releases** setting allows a newer Windows beta to appear in the usual update banner and release-notes dialog. The user chooses whether to download and install it; a beta needs an additional confirmation.
+Evict's preferred update flow uses GitHub Releases. Stable releases are selected by default. The optional **Include beta releases** setting lets newer Windows betas count in the update notice. Every newer and older release — stable and beta — is listed in the [version picker](version-picker.md), where you choose the exact version; a beta shows an extra warning on the confirm step.
 
 ## First installation
 

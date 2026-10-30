@@ -32,6 +32,8 @@ public enum UpdateStatus { UpToDate, UpdateAvailable, Unavailable }
 public sealed record UpdateCheckResult(UpdateStatus Status, Version CurrentVersion, ReleaseInfo? Release, string Message)
 {
     public bool NetworkAccessBlocked { get; init; }
+    /// <summary>Every published Windows release the check saw (stable and beta), for the version picker (VP1).</summary>
+    public IReadOnlyList<ReleaseInfo> Releases { get; init; } = Array.Empty<ReleaseInfo>();
 
     public static UpdateCheckResult Unavailable(Version current, string message, bool networkAccessBlocked = false) =>
         new(UpdateStatus.Unavailable, current, null, message) { NetworkAccessBlocked = networkAccessBlocked };
@@ -301,33 +303,14 @@ public sealed class UpdateService
         var channel = includePrereleases ? "stable and beta" : "stable";
         try
         {
-            var releases = new List<ReleaseInfo>();
-            string? next = UpdateChecker.ReleasesApiUrl;
-            var visited = new HashSet<string>(StringComparer.Ordinal);
-            for (int page = 0; next != null; page++)
-            {
-                if (page >= 20 || !visited.Add(next))
-                    return UpdateCheckResult.Unavailable(current, "The release list is incomplete. Please try again or open GitHub Releases.");
-                using var response = await _http.GetAsync(next, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-                if (!response.IsSuccessStatusCode)
-                {
-                    var reason = response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests
-                        ? "GitHub API rate limit reached. Please try again later."
-                        : response.StatusCode == HttpStatusCode.NotFound
-                            ? "No published release was found."
-                            : $"GitHub answered {(int)response.StatusCode} {response.ReasonPhrase}.";
-                    return UpdateCheckResult.Unavailable(current, reason);
-                }
-                var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                releases.AddRange(UpdateChecker.ParseReleases(json));
-                next = NextReleasePage(response);
-            }
+            var (releases, failure) = await FetchReleasesAsync(ct).ConfigureAwait(false);
+            if (releases is null) return UpdateCheckResult.Unavailable(current, failure ?? "Could not read the release list.");
             var release = UpdateChecker.SelectLatestRelease(releases, includePrereleases);
             if (release is null)
-                return UpdateCheckResult.Unavailable(current, $"No published Windows release is available on the {channel} channel.");
+                return UpdateCheckResult.Unavailable(current, $"No published Windows release is available on the {channel} channel.") with { Releases = releases };
             if (UpdateChecker.IsNewer(CurrentVersionLabel, release))
-                return new(UpdateStatus.UpdateAvailable, current, release, $"Version {release.DisplayVersion} is available (you have {CurrentVersionLabel}).");
-            return new(UpdateStatus.UpToDate, current, release, $"No newer Windows release is available on the {channel} channel (you have {CurrentVersionLabel}).");
+                return new(UpdateStatus.UpdateAvailable, current, release, $"Version {release.DisplayVersion} is available (you have {CurrentVersionLabel}).") { Releases = releases };
+            return new(UpdateStatus.UpToDate, current, release, $"No newer Windows release is available on the {channel} channel (you have {CurrentVersionLabel}).") { Releases = releases };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
@@ -338,6 +321,52 @@ public sealed class UpdateService
                     UpdateNetworkDiagnostics.PermissionDeniedMessage(ExePath), networkAccessBlocked: true);
             return UpdateCheckResult.Unavailable(current, "Could not check GitHub releases: " + (ex.InnerException?.Message ?? ex.Message));
         }
+    }
+
+    /// <summary>
+    /// Every published Windows release, stable and beta (design VP1). Errors come back as a plain message, never thrown
+    /// (except cancellation).
+    /// </summary>
+    public async Task<(IReadOnlyList<ReleaseInfo>? Releases, string? Error)> ListReleasesAsync(CancellationToken ct)
+    {
+        try
+        {
+            var (releases, failure) = await FetchReleasesAsync(ct).ConfigureAwait(false);
+            return (releases, failure);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            LogWarn("Listing releases failed: " + ex.Message);
+            if (UpdateNetworkDiagnostics.IsSocketAccessDenied(ex)) return (null, UpdateNetworkDiagnostics.PermissionDeniedMessage(ExePath));
+            return (null, "Could not read GitHub releases: " + (ex.InnerException?.Message ?? ex.Message));
+        }
+    }
+
+    private async Task<(List<ReleaseInfo>? Releases, string? Failure)> FetchReleasesAsync(CancellationToken ct)
+    {
+        var releases = new List<ReleaseInfo>();
+        string? next = UpdateChecker.ReleasesApiUrl;
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        for (int page = 0; next != null; page++)
+        {
+            if (page >= 20 || !visited.Add(next))
+                return (null, "The release list is incomplete. Please try again or open GitHub Releases.");
+            using var response = await _http.GetAsync(next, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var reason = response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests
+                    ? "GitHub API rate limit reached. Please try again later."
+                    : response.StatusCode == HttpStatusCode.NotFound
+                        ? "No published release was found."
+                        : $"GitHub answered {(int)response.StatusCode} {response.ReasonPhrase}.";
+                return (null, reason);
+            }
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            releases.AddRange(UpdateChecker.ParseReleases(json));
+            next = NextReleasePage(response);
+        }
+        return (releases, null);
     }
 
     private static string? NextReleasePage(HttpResponseMessage response)

@@ -264,7 +264,28 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     // ───────────── updates ─────────────
 
-    public bool CheckForUpdates { get => S.CheckForUpdates; set { S.CheckForUpdates = value; Save(); OnPropertyChanged(); } }
+    public bool CheckForUpdates
+    {
+        get => S.CheckForUpdates;
+        set
+        {
+            // Turning the start-up check back on ends a pin (VP1): pinning is what turned it off.
+            if (value && S.PinnedVersion != null) { _main.Unpin(); OnPropertyChanged(); return; }
+            S.CheckForUpdates = value; Save(); OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Version picker (VP1): "Pinned to v4.0.1" with an Unpin button.</summary>
+    public bool IsPinned => !string.IsNullOrWhiteSpace(S.PinnedVersion);
+    public string PinnedText => IsPinned ? $"Pinned to v{S.PinnedVersion} after a roll back — no update notices and no start-up check until you unpin it." : "";
+    public void RefreshPin()
+    {
+        OnPropertyChanged(nameof(IsPinned));
+        OnPropertyChanged(nameof(PinnedText));
+        OnPropertyChanged(nameof(CheckForUpdates));
+    }
+    [RelayCommand] private void Unpin() => _main.Unpin();
+    [RelayCommand] private void OpenVersionHistory() => _main.OpenVersionHistoryCommand.Execute(null);
     public bool IncludeBetaUpdates { get => _main.IncludeBetaUpdates; set => _main.IncludeBetaUpdates = value; }
     public string UpdateChannelText => IncludeBetaUpdates ? "Stable releases and optional beta/prerelease builds. Every installation requires your approval." : "Stable releases only. Enable beta updates to try prerelease builds.";
 
@@ -310,10 +331,15 @@ public sealed partial class SettingsViewModel : ObservableObject
             RefreshUpdateResult(result);
             if (UpdateAvailable && result.Release != null)
             {
+                if (IsPinned)
+                {
+                    UpdateStatusText = result.Message + $" Evict is pinned to v{S.PinnedVersion}; unpin it to choose a newer version.";
+                    return;
+                }
                 S.SkippedUpdateVersion = null; // the user asked explicitly – show it even if skipped before
                 Save();
                 IsCheckingForUpdates = false;
-                _main.OfferUpdate(result.Release, fromUser: true);
+                _main.OfferUpdates(fromUser: true); // opens the version picker – you choose the exact version (VP1)
             }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { UpdateStatusText = "Update check cancelled."; }

@@ -117,9 +117,18 @@
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding IncludeBetaUpdates}" Content="Include beta and other prerelease updates (optional)" IsEnabled="{Binding CanChangeUpdateChannel}" />
                     <TextBlock Style="{StaticResource Hint}" Text="{Binding UpdateChannelText}" TextWrapping="Wrap" />
                     <TextBlock Style="{StaticResource Hint}" Text="{Binding EditionText}" />
+                    <Border Background="{DynamicResource Brush.Info.Subtle}" CornerRadius="8" Padding="12,8" Margin="0,0,0,10"
+                            Visibility="{Binding IsPinned, Converter={StaticResource BoolToVis}}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource Button.Secondary}" Content="Unpin" Command="{Binding UnpinCommand}" Margin="12,0,0,0" />
+                            <TextBlock Text="&#xE718;" Style="{StaticResource Icon}" Foreground="{DynamicResource Brush.Accent}" DockPanel.Dock="Left" Margin="0,0,10,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding PinnedText}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        </DockPanel>
+                    </Border>
                     <StackPanel Orientation="Horizontal">
                         <Button Style="{StaticResource Button.Secondary}" Content="Check now" Command="{Binding CheckForUpdatesNowCommand}" IsEnabled="{Binding CanChangeUpdateChannel}" />
-                        <Button Style="{StaticResource Button.Primary}" Content="Install update" Command="{Binding ShowUpdateCommand}" Margin="8,0,0,0" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVis}}" />
+                        <Button Style="{StaticResource Button.Primary}" Content="Choose version…" Command="{Binding ShowUpdateCommand}" Margin="8,0,0,0" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVis}}" />
+                        <Button Style="{StaticResource Button.Secondary}" Content="Version history &amp; roll back…" Command="{Binding OpenVersionHistoryCommand}" Margin="8,0,0,0" />
                         <Button Style="{StaticResource Button.Link}" Content="All releases on GitHub" Command="{Binding OpenReleasesCommand}" Margin="8,0,0,0" />
                         <ProgressBar IsIndeterminate="True" Width="120" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsCheckingForUpdates, Converter={StaticResource BoolToVis}}" />
                     </StackPanel>
