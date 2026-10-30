@@ -166,16 +166,31 @@ public sealed partial class MainViewModel : ObservableObject
     private bool CanOpenUpdates() => !IsCheckingForUpdates;
 
     [RelayCommand(CanExecute = nameof(CanOpenUpdates))]
-    private async Task OpenUpdatesAsync()
+    private Task OpenUpdatesAsync()
     {
-        if (AvailableUpdate is { } release && (!release.IsPreview || IncludeBetaUpdates))
+        ShowVersionHistory();
+        return Task.CompletedTask;
+    }
+
+    [RelayCommand]
+    private void ShowVersionHistory()
+    {
+        var picker = new VersionHistoryWindow(_services.Updater) { Owner = Application.Current.MainWindow };
+        if (picker.ShowDialog() != true || picker.SelectedRelease is not { } selected) return;
+        var direction = picker.IsRollback ? "roll back" : "update";
+        if (picker.IsRollback && UpdateService.IsInstalledMode())
         {
-            ShowUpdate();
+            if (Dialogs.Confirm($"Evict was installed with Setup. Rolling back to {selected.DisplayVersion} may require uninstalling the current version and restoring data from a backup. Open the exact release page and review its installer?"))
+                Dialogs.OpenUrl(selected.HtmlUrl);
             return;
         }
-
-        OpenSettings("Updates");
-        await GetPage<SettingsViewModel>(PageKey.Settings).CheckForUpdatesNowCommand.ExecuteAsync(null);
+        if (!Dialogs.Confirm($"Do you want to {direction} Evict from {_services.Updater.CurrentVersionLabel} to {selected.DisplayVersion}{(selected.IsPreview ? " (BETA)" : "")}?\\n\\nExisting settings and history should be backed up before a downgrade. The downloaded file must match the published SHA-256 checksum."))
+            return;
+        new UpdateWindow
+        {
+            DataContext = new UpdateViewModel(_services, selected, this, explicitlySelected: true),
+            Owner = Application.Current.MainWindow
+        }.ShowDialog();
     }
 
     public void Navigate(PageKey key, bool activate = true)
