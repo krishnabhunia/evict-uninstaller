@@ -102,6 +102,24 @@ public sealed class ReleaseChannelTests
         => Assert.Equal(expected, UpdateChecker.IsNewer(current, UpdateChecker.ParseRelease(Release(candidate))!));
 
     [Fact]
+    public void VersionPickerOffersAnExactOlderOrNewerVersionWithVerifiedAssets()
+    {
+        var releases = UpdateChecker.ParseReleases(ListJson(
+            Release("win-v1.8.0"),
+            Release("win-v1.9.0-beta.2"),
+            Release("win-v1.9.0"),
+            Release("win-v1.7.0"),
+            Release("mac-v9.0.0")));
+        var newer = UpdateChecker.SelectVersions(releases, "1.8.0", older: false, includePrereleases: true, installedMode: false);
+        var stable = UpdateChecker.SelectVersions(releases, "1.8.0", older: false, includePrereleases: false, installedMode: false);
+        var older = UpdateChecker.SelectVersions(releases, "1.8.0", older: true, includePrereleases: true, installedMode: false);
+
+        Assert.Equal(new[] { "1.9.0", "1.9.0-beta.2" }, newer.Select(r => r.DisplayVersion));
+        Assert.Equal(new[] { "1.9.0" }, stable.Select(r => r.DisplayVersion));
+        Assert.Equal(new[] { "1.7.0" }, older.Select(r => r.DisplayVersion));
+    }
+
+    [Fact]
     public async Task CheckDefaultsToStableAndOptInFindsANewerBeta()
     {
         using var handler = new FixtureHandler(_ => Response(ListJson(Release("win-v1.8.0"), Release("win-v1.8.1-beta.1", prerelease: true))));
