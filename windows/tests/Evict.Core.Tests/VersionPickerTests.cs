@@ -283,4 +283,69 @@ public sealed class VersionPickerTests : IDisposable
         Assert.Null(store.Current.PreviousVersion);
         Assert.True(store.Current.KeepVersionCopies);
     }
+
+    // ───────────── review fixes ─────────────
+
+    [Theory]
+    [InlineData("{ not json")]
+    [InlineData("[1, 2, 3]")]
+    [InlineData("")]
+    public void ADamagedSettingsBackupNeverReplacesTheCurrentSettings(string damaged)
+    {
+        var archive = new VersionArchive(Path.Combine(_dir, "versions"));
+        var settingsFile = Path.Combine(_dir, "settings.json");
+        File.WriteAllText(settingsFile, """{ "Theme": "Dark" }""");
+        Assert.True(archive.BackUpSettings("4.0.1", settingsFile));
+        File.WriteAllText(archive.SettingsBackup("4.0.1")!, damaged);
+        File.WriteAllText(settingsFile, """{ "Theme": "Light" }""");
+
+        Assert.False(archive.RestoreSettings("4.0.1", settingsFile));
+        Assert.Equal("""{ "Theme": "Light" }""", File.ReadAllText(settingsFile));
+    }
+
+    [Fact]
+    public void AFailedChangeTakesBackThePinAndTheOtherChoices()
+    {
+        var s = new AppSettings { SkippedUpdateVersion = "win-v4.1.1", PreviousVersion = "3.0.0" };
+        var before = VersionChange.Take(s);
+        VersionChange.ApplyChoices(s, new VersionChangeRequest(R("win-v4.0.1"), "4.1.0", InstalledMode: false, KeepCurrentCopy: false, Pin: true));
+        Assert.Equal("4.0.1", s.PinnedVersion);
+
+        VersionChange.Restore(s, before);
+
+        Assert.Null(s.PinnedVersion);
+        Assert.True(s.CheckForUpdates);
+        Assert.Equal("win-v4.1.1", s.SkippedUpdateVersion);
+        Assert.Equal("3.0.0", s.PreviousVersion);
+        Assert.True(s.KeepVersionCopies);
+    }
+
+    [Fact]
+    public void KeptVersionsAreListedOfflineWithTheirDateAndCanBeRolledBackTo()
+    {
+        var archive = new VersionArchive(Path.Combine(_dir, "versions"));
+        var source = Path.Combine(_dir, "setup.exe");
+        File.WriteAllText(source, "setup 4.0.1");
+        var release = R("win-v4.0.1", published: "2026-10-28T06:40:07Z");
+        archive.Keep("4.0.1", source, "Evict-Setup-4.0.1.exe", VersionArchive.Sha256(source), release);
+        Directory.CreateDirectory(Path.Combine(_dir, "versions", "4.0.0")); // settings only: not listed
+
+        var kept = archive.KeptReleases();
+
+        var only = Assert.Single(kept);
+        Assert.Equal("4.0.1", only.DisplayVersion);
+        Assert.Equal("win-v4.0.1", only.TagName);
+        Assert.Equal(DateTimeOffset.Parse("2026-10-28T06:40:07Z"), only.PublishedAt);
+        Assert.True(VersionPicker.CanInstall(only, installedMode: true));
+        Assert.Contains(VersionPicker.Older(VersionPicker.WithKept(Array.Empty<ReleaseInfo>(), kept), "4.1.0"), r => r.DisplayVersion == "4.0.1");
+    }
+
+    [Fact]
+    public void GitHubsEntryWinsOverTheKeptOneForTheSameVersion()
+    {
+        var kept = new[] { R("win-v4.0.1", published: "2020-01-01T00:00:00Z"), R("win-v3.0.0") };
+        var merged = VersionPicker.WithKept(Sample, kept);
+        Assert.Same(Sample.Single(r => r.TagName == "win-v4.0.1"), merged.Single(r => r.DisplayVersion == "4.0.1"));
+        Assert.Contains(merged, r => r.DisplayVersion == "3.0.0");
+    }
 }

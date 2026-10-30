@@ -12,3 +12,5 @@ TestResults/
 installer/Output/
 Zip/
 CiDownload/
+__pycache__/
+*.pyc

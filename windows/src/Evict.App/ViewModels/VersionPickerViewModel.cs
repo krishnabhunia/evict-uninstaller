@@ -45,13 +45,17 @@ public sealed partial class VersionPickerViewModel : ObservableObject
     private readonly AppServices _services;
     private readonly MainViewModel _main;
     private readonly VersionArchive _archive = VersionArchive.Default;
+    /// <summary>What GitHub listed (may be empty offline).</summary>
+    private IReadOnlyList<ReleaseInfo> _remote;
+    /// <summary>GitHub's releases plus the versions kept on this PC that GitHub did not list.</summary>
     private IReadOnlyList<ReleaseInfo> _releases;
 
     public VersionPickerViewModel(AppServices services, MainViewModel main, IReadOnlyList<ReleaseInfo> releases, bool rollBack)
     {
         _services = services;
         _main = main;
-        _releases = releases;
+        _remote = releases;
+        _releases = VersionPicker.WithKept(releases, _archive.KeptReleases());
         InstalledMode = UpdateService.IsInstalledMode();
         _isHistoryTab = rollBack;
         _filter = !rollBack && !services.Settings.Current.IncludeBetaUpdates ? VersionFilter.Stable : VersionFilter.All;
@@ -155,10 +159,13 @@ public sealed partial class VersionPickerViewModel : ObservableObject
             var (releases, error) = await _services.Updater.ListReleasesAsync(App.ShutdownToken);
             if (releases != null)
             {
-                _releases = releases;
+                _remote = releases;
                 _main.RememberReleases(releases);
             }
-            else LoadError = error;
+            else LoadError = _archive.KeptReleases().Count > 0
+                ? error + " Versions kept on this PC are still listed."
+                : error;
+            _releases = VersionPicker.WithKept(_remote, _archive.KeptReleases());
         }
         catch (OperationCanceledException) { /* closing */ }
         finally
@@ -168,7 +175,7 @@ public sealed partial class VersionPickerViewModel : ObservableObject
         }
     }
 
-    public bool NeedsLoading => _releases.Count == 0;
+    public bool NeedsLoading => _remote.Count == 0;
 
     // ───────────── selection and detail ─────────────
 
@@ -262,6 +269,7 @@ public sealed partial class VersionPickerViewModel : ObservableObject
         var startedUtc = DateTime.UtcNow;
         var output = new List<string> { $"{(request.IsRollBack ? "Rolling back" : "Updating")} Evict {fromVersion} → {toVersion} ({target.TagName}), chosen in the version picker" };
         bool handedOver = false, settingsPutBack = false;
+        VersionChange.Snapshot? before = null;
         Error = null;
         IsBusy = true;
         IsIndeterminate = true;
@@ -316,6 +324,7 @@ public sealed partial class VersionPickerViewModel : ObservableObject
 
             // 4. Remember the choice; put back the older settings for a roll back.
             IsIndeterminate = true;
+            before = VersionChange.Take(S);
             VersionChange.ApplyChoices(S, request);
             _services.Settings.Save();
             if (request.WillRestoreSettings)
@@ -349,20 +358,20 @@ public sealed partial class VersionPickerViewModel : ObservableObject
                 _ = Application.Current.Dispatcher.BeginInvoke(App.Quit);
                 return;
             }
-            UndoSettingsPutBack(settingsPutBack);
+            UndoChoices(before, settingsPutBack);
             Error = error;
             RecordFailure(error ?? "The version change could not be applied");
         }
         catch (OperationCanceledException) when (!handedOver)
         {
-            UndoSettingsPutBack(settingsPutBack);
+            UndoChoices(before, settingsPutBack);
             StatusText = "Cancelled — nothing changed.";
             try { _services.UpdateHistory.CancelSelfUpdate(fromVersion, toVersion, target.TagName, "You", startedUtc, output); }
             catch (Exception ex) { Log.Warn("Could not record the cancelled version change: " + ex.Message); }
         }
         catch (Exception ex)
         {
-            UndoSettingsPutBack(settingsPutBack);
+            UndoChoices(before, settingsPutBack);
             Log.Error("Version change failed", ex);
             Error = ex.Message;
             RecordFailure(ex.Message);
@@ -374,11 +383,15 @@ public sealed partial class VersionPickerViewModel : ObservableObject
         }
     }
 
-    /// <summary>The roll back did not happen: write this version's settings again over the older ones.</summary>
-    private void UndoSettingsPutBack(bool settingsPutBack)
+    /// <summary>
+    /// The change did not happen (cancelled, or the hand-over failed): take back the pin and the other choices, and
+    /// write this version's settings again over any older ones that were put back.
+    /// </summary>
+    private void UndoChoices(VersionChange.Snapshot? before, bool settingsPutBack)
     {
-        if (!settingsPutBack) return;
-        _services.Settings.ResumeSaves();
+        if (before is null && !settingsPutBack) return;
+        if (before != null) VersionChange.Restore(S, before);
+        if (settingsPutBack) _services.Settings.ResumeSaves();
         _services.Settings.Save();
     }
 
@@ -390,17 +403,17 @@ public sealed partial class VersionPickerViewModel : ObservableObject
             {
                 StatusText = $"Keeping a copy of v{version}…";
                 var exe = UpdateService.ExePath;
-                _archive.Keep(version, exe, "Evict.exe", VersionArchive.Sha256(exe));
+                _archive.Keep(version, exe, "Evict.exe", VersionArchive.Sha256(exe), CurrentRelease(version));
                 output.Add($"Kept a copy of Evict {version} on this PC");
                 return;
             }
-            var current = VersionPicker.Distinct(_releases).FirstOrDefault(r => r.DisplayVersion == UpdateVersion.Parse(version)?.ToString());
+            var current = CurrentRelease(version);
             var setup = current is null ? null : UpdateChecker.PickAsset(current, installedMode: true);
             if (current is null || setup is null) { output.Add($"Evict {version} is not on GitHub, so no copy was kept"); return; }
             if (_archive.Find(version, setup.Name) != null) { output.Add($"A copy of Evict {version} is already on this PC"); return; }
             StatusText = $"Keeping a copy of v{version} (downloading its installer)…";
             var file = await _services.Updater.DownloadAsync(current, setup, null, ct);
-            _archive.Keep(version, file, setup.Name, VersionArchive.Sha256(file));
+            _archive.Keep(version, file, setup.Name, VersionArchive.Sha256(file), current);
             output.Add($"Kept the installer of Evict {version} on this PC");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -411,6 +424,9 @@ public sealed partial class VersionPickerViewModel : ObservableObject
         }
     }
 
+    private ReleaseInfo? CurrentRelease(string version) =>
+        VersionPicker.Distinct(_remote).FirstOrDefault(r => r.DisplayVersion == UpdateVersion.Parse(version)?.ToString());
+
     // ───────────── other buttons ─────────────
 
     [RelayCommand] private void OpenReleasePage() => Dialogs.OpenUrl(Selected?.Release.HtmlUrl ?? UpdateChecker.ReleasesUrl);
@@ -420,7 +436,8 @@ public sealed partial class VersionPickerViewModel : ObservableObject
     [RelayCommand]
     private void SkipThese()
     {
-        if (VersionPicker.Newest(VersionPicker.Newer(_releases, CurrentVersion)) is { } newest)
+        // Only the versions on screen are skipped — not a beta hidden by the Stable filter.
+        if (!IsHistoryTab && VersionPicker.Newest(Items.Select(i => i.Release)) is { } newest)
         {
             S.SkippedUpdateVersion = newest.TagName;
             _services.Settings.Save();
