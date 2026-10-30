@@ -71,7 +71,9 @@ class WindowsOrangeRedesignTests(unittest.TestCase):
         self.assertIn('AutomationProperties.Name="{Binding AvailableUpdateButtonText}"', shell)
         self.assertIn('Text="{Binding VersionText}"', shell)
         self.assertIn("public bool HasAvailableUpdate =>", vm)
-        self.assertIn("Update to v{release.DisplayVersion}", vm)
+        # Version picker (VP1): the button counts the newer versions and opens the picker; no one-click "Update to vX".
+        self.assertIn('$"{n} updates available"', vm)
+        self.assertNotIn("Update to v{release.DisplayVersion}", vm)
 
     def test_health_retains_real_data_and_new_home_layout(self) -> None:
         health = read(VIEWS / "HealthView.xaml")
