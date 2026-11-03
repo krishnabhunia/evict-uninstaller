@@ -68,7 +68,18 @@ public sealed class PublishedUpdateScenarioTests(ITestOutputHelper output)
             // This also proves that beta and draft releases cannot become the default channel.
             var baselineProbe = new UpdateService(client, directory, _ =>
                 throw new InvalidOperationException("Release discovery must not launch an installer."), "0.0.0");
-            var baselineCheck = await baselineProbe.CheckAsync(timeout.Token);
+            // The public release API can temporarily reject or truncate an otherwise valid
+            // paginated response during concurrent publication. Retry only unavailable
+            // discovery; never substitute fabricated metadata or skip the live assertion.
+            UpdateCheckResult baselineCheck = await baselineProbe.CheckAsync(timeout.Token);
+            for (var attempt = 1; attempt < 3 && baselineCheck.Status == UpdateStatus.Unavailable; attempt++)
+            {
+                output.WriteLine($"Stable baseline lookup {attempt} unavailable: {baselineCheck.Message}; retrying.");
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2), timeout.Token);
+                baselineCheck = await baselineProbe.CheckAsync(timeout.Token);
+            }
+            Assert.True(baselineCheck.Release is not null,
+                "Could not discover the public stable baseline: " + baselineCheck.Message);
             var stableBaseline = Assert.IsType<ReleaseInfo>(baselineCheck.Release);
             Assert.Equal(UpdateStatus.UpdateAvailable, baselineCheck.Status);
             Assert.False(stableBaseline.IsPreview);

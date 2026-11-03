@@ -266,6 +266,18 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public bool CheckForUpdates { get => S.CheckForUpdates; set { S.CheckForUpdates = value; Save(); OnPropertyChanged(); } }
     public bool IncludeBetaUpdates { get => _main.IncludeBetaUpdates; set => _main.IncludeBetaUpdates = value; }
+    public string PinnedVersionText => S.PinnedAppVersion is { Length: > 0 } value
+        ? $"Pinned to Evict v{value}. Manual selection is required to change versions."
+        : "No version pinned.";
+
+    [RelayCommand]
+    private void ClearVersionPin()
+    {
+        S.PinnedAppVersion = null;
+        Save();
+        OnPropertyChanged(nameof(PinnedVersionText));
+    }
+
     public string UpdateChannelText => IncludeBetaUpdates ? "Stable releases and optional beta/prerelease builds. Every installation requires your approval." : "Stable releases only. Enable beta updates to try prerelease builds.";
 
     public void RefreshUpdateChannel()
@@ -322,6 +334,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     [RelayCommand] private void ShowUpdate() => _main.ShowUpdateCommand.Execute(null);
+    [RelayCommand] private void ShowVersionHistory()
+    {
+        _main.ShowVersionHistoryCommand.Execute(null);
+        OnPropertyChanged(nameof(PinnedVersionText));
+    }
     [RelayCommand] private void OpenReleases() => Dialogs.OpenUrl(UpdateChecker.ReleasesUrl);
     [RelayCommand] private void OpenUpdateConnectionHelp() => Dialogs.OpenUrl(UpdateNetworkDiagnostics.FirewallHelpUrl);
     [RelayCommand] private void OpenApplicationFolder() => Dialogs.OpenFolder(Path.GetDirectoryName(ExecutablePath) ?? AppContext.BaseDirectory);

@@ -69,6 +69,8 @@ public sealed class AppSettings
     public DateTime? LastUpdateCheckUtc { get; set; }
     /// <summary>A version the user chose to skip ("v1.3.0"); the banner stays hidden for it.</summary>
     public string? SkippedUpdateVersion { get; set; }
+    /// <summary>The exact version explicitly selected by the user. Automatic notifications cannot override it.</summary>
+    public string? PinnedAppVersion { get; set; }
     public double WindowWidth { get; set; } = 1240;
     public double WindowHeight { get; set; } = 800;
     public bool WindowMaximized { get; set; } = false;

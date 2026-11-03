@@ -52,6 +52,14 @@ public sealed partial class MainViewModel : ObservableObject
     public MainViewModel(AppServices services)
     {
         _services = services;
+        // A selected version is pinned only if that exact binary actually started.
+        // An installer that never completed must not suppress subsequent update notices.
+        if (_services.Settings.Current.PinnedAppVersion is { Length: > 0 } pinned &&
+            !string.Equals(pinned, _services.Updater.CurrentVersionLabel, StringComparison.OrdinalIgnoreCase))
+        {
+            _services.Settings.Current.PinnedAppVersion = null;
+            _services.Settings.Save();
+        }
         _scheduledScanGuard = new ScheduledScanExecutionGuard(CaptureSchedule,
             (s, ct) => _services.Scheduler.MatchesAsync(s.Mode, s.Hour, s.Weekday, ct),
             _ => ScanAndNotifyAsync());
@@ -166,16 +174,31 @@ public sealed partial class MainViewModel : ObservableObject
     private bool CanOpenUpdates() => !IsCheckingForUpdates;
 
     [RelayCommand(CanExecute = nameof(CanOpenUpdates))]
-    private async Task OpenUpdatesAsync()
+    private Task OpenUpdatesAsync()
     {
-        if (AvailableUpdate is { } release && (!release.IsPreview || IncludeBetaUpdates))
+        ShowVersionHistory();
+        return Task.CompletedTask;
+    }
+
+    [RelayCommand]
+    private void ShowVersionHistory()
+    {
+        var picker = new VersionHistoryWindow(_services.Updater) { Owner = Application.Current.MainWindow };
+        if (picker.ShowDialog() != true || picker.SelectedRelease is not { } selected) return;
+        var direction = picker.IsRollback ? "roll back" : "update";
+        if (picker.IsRollback && UpdateService.IsInstalledMode())
         {
-            ShowUpdate();
+            if (Dialogs.Confirm($"Evict was installed with Setup. Rolling back to {selected.DisplayVersion} may require uninstalling the current version and restoring data from a backup. Open the exact release page and review its installer?"))
+                Dialogs.OpenUrl(selected.HtmlUrl);
             return;
         }
-
-        OpenSettings("Updates");
-        await GetPage<SettingsViewModel>(PageKey.Settings).CheckForUpdatesNowCommand.ExecuteAsync(null);
+        if (!Dialogs.Confirm($"Do you want to {direction} Evict from {_services.Updater.CurrentVersionLabel} to {selected.DisplayVersion}{(selected.IsPreview ? " (BETA)" : "")}?\n\nExisting settings and history should be backed up before a downgrade. The downloaded file must match the published SHA-256 checksum."))
+            return;
+        new UpdateWindow
+        {
+            DataContext = new UpdateViewModel(_services, selected, this, explicitlySelected: true),
+            Owner = Application.Current.MainWindow
+        }.ShowDialog();
     }
 
     public void Navigate(PageKey key, bool activate = true)
@@ -497,17 +520,11 @@ public sealed partial class MainViewModel : ObservableObject
         var skipped = string.Equals(_services.Settings.Current.SkippedUpdateVersion, release.TagName, StringComparison.OrdinalIgnoreCase);
         UpdateBannerText = $"Evict {release.DisplayVersion}{(release.IsPreview ? " (beta/prerelease)" : "")} is available (you have {_services.Updater.CurrentVersionLabel}).";
         if (fromUser) ShowUpdate();
-        else ShowUpdateBanner = !skipped;
+        else ShowUpdateBanner = !skipped && string.IsNullOrWhiteSpace(_services.Settings.Current.PinnedAppVersion);
     }
 
     [RelayCommand]
-    private void ShowUpdate()
-    {
-        if (AvailableUpdate is null || AvailableUpdate.IsPreview && !IncludeBetaUpdates) return;
-        var vm = new UpdateViewModel(_services, AvailableUpdate, this);
-        new UpdateWindow { DataContext = vm, Owner = Application.Current.MainWindow }.ShowDialog();
-        if (AvailableUpdate != null && string.Equals(_services.Settings.Current.SkippedUpdateVersion, AvailableUpdate.TagName, StringComparison.OrdinalIgnoreCase)) ShowUpdateBanner = false;
-    }
+    private void ShowUpdate() => ShowVersionHistory();
 
     [RelayCommand] private void DismissUpdateBanner() => ShowUpdateBanner = false;
 

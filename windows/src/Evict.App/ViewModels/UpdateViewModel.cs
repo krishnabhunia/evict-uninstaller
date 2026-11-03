@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Evict.App.Services;
@@ -14,11 +15,13 @@ public sealed partial class UpdateViewModel : ObservableObject
 {
     private readonly AppServices _services;
     private readonly MainViewModel _main;
+    private readonly bool _explicitlySelected;
 
-    public UpdateViewModel(AppServices services, ReleaseInfo release, MainViewModel main)
+    public UpdateViewModel(AppServices services, ReleaseInfo release, MainViewModel main, bool explicitlySelected = false)
     {
         _services = services;
         _main = main;
+        _explicitlySelected = explicitlySelected;
         Release = release;
         InstalledMode = UpdateService.IsInstalledMode();
         Asset = UpdateChecker.PickAsset(release, InstalledMode);
@@ -29,7 +32,7 @@ public sealed partial class UpdateViewModel : ObservableObject
     public ReleaseAsset? Asset { get; private set; }
     public bool InstalledMode { get; }
     public bool FallbackToPortable { get; private set; }
-    public bool CanInstall => Asset != null && !(InstalledMode && FallbackToPortable) && (!IsBetaRelease || IncludeBetaUpdates);
+    public bool CanInstall => Asset != null && !(InstalledMode && FallbackToPortable) && (_explicitlySelected || !IsBetaRelease || IncludeBetaUpdates);
     public bool IsBetaRelease => Release.IsPreview;
     public bool IncludeBetaUpdates
     {
@@ -99,6 +102,11 @@ public sealed partial class UpdateViewModel : ObservableObject
             });
             var path = await _services.Updater.DownloadAsync(Release, Asset, progress, ct);
             output.Add($"Downloaded {Asset?.Name} and checked it against the release");
+            if (UpdateVersion.Parse(fromVersion) is { } installedVersion && Release.SemanticVersion.CompareTo(installedVersion) < 0)
+            {
+                var backup = BackupDataForRollback();
+                output.Add("Rollback backup saved: " + backup);
+            }
 
             IsIndeterminate = true;
             StatusText = InstalledMode ? "Starting the installer…" : "Replacing Evict.exe…";
@@ -116,6 +124,8 @@ public sealed partial class UpdateViewModel : ObservableObject
                 });
             if (ok)
             {
+                if (_explicitlySelected)
+                    _services.Settings.Current.PinnedAppVersion = Release.DisplayVersion;
                 _services.Settings.Current.SkippedUpdateVersion = null;
                 _services.Settings.Save();
                 _ = Application.Current.Dispatcher.BeginInvoke(App.Quit);
@@ -141,6 +151,23 @@ public sealed partial class UpdateViewModel : ObservableObject
             IsBusy = false;
             IsIndeterminate = false;
         }
+    }
+
+    private static string BackupDataForRollback()
+    {
+        var directory = Path.Combine(AppPaths.DataRoot, "backups",
+            "rollback-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff"));
+        Directory.CreateDirectory(directory);
+        // The app's JSON settings and histories may not be backward-compatible with an old executable.
+        foreach (var file in Directory.EnumerateFiles(AppPaths.DataRoot, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("A data file is a link; the rollback was stopped to protect your settings.");
+            // Stop before replacing the app if a saved JSON data file cannot be read.
+            using (var document = JsonDocument.Parse(File.ReadAllText(file))) { }
+            File.Copy(file, Path.Combine(directory, Path.GetFileName(file)), overwrite: false);
+        }
+        return directory;
     }
 
     [RelayCommand] private void OpenReleasePage() => Dialogs.OpenUrl(Release.HtmlUrl);
