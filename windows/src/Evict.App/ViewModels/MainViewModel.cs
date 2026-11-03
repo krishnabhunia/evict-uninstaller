@@ -52,6 +52,14 @@ public sealed partial class MainViewModel : ObservableObject
     public MainViewModel(AppServices services)
     {
         _services = services;
+        // A selected version is pinned only if that exact binary actually started.
+        // An installer that never completed must not suppress subsequent update notices.
+        if (_services.Settings.Current.PinnedAppVersion is { Length: > 0 } pinned &&
+            !string.Equals(pinned, _services.Updater.CurrentVersionLabel, StringComparison.OrdinalIgnoreCase))
+        {
+            _services.Settings.Current.PinnedAppVersion = null;
+            _services.Settings.Save();
+        }
         _scheduledScanGuard = new ScheduledScanExecutionGuard(CaptureSchedule,
             (s, ct) => _services.Scheduler.MatchesAsync(s.Mode, s.Hour, s.Weekday, ct),
             _ => ScanAndNotifyAsync());
@@ -184,7 +192,7 @@ public sealed partial class MainViewModel : ObservableObject
                 Dialogs.OpenUrl(selected.HtmlUrl);
             return;
         }
-        if (!Dialogs.Confirm($"Do you want to {direction} Evict from {_services.Updater.CurrentVersionLabel} to {selected.DisplayVersion}{(selected.IsPreview ? " (BETA)" : "")}?\\n\\nExisting settings and history should be backed up before a downgrade. The downloaded file must match the published SHA-256 checksum."))
+        if (!Dialogs.Confirm($"Do you want to {direction} Evict from {_services.Updater.CurrentVersionLabel} to {selected.DisplayVersion}{(selected.IsPreview ? " (BETA)" : "")}?\n\nExisting settings and history should be backed up before a downgrade. The downloaded file must match the published SHA-256 checksum."))
             return;
         new UpdateWindow
         {

@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Evict.App.Services;
@@ -89,11 +90,6 @@ public sealed partial class UpdateViewModel : ObservableObject
         }
         try
         {
-            if (UpdateVersion.Parse(fromVersion) is { } installedVersion && Release.SemanticVersion.CompareTo(installedVersion) < 0)
-            {
-                var backup = BackupDataForRollback();
-                output.Add("Rollback backup saved: " + backup);
-            }
             var progress = new Progress<(long Done, long Total)>(p =>
             {
                 if (p.Total > 0)
@@ -106,6 +102,11 @@ public sealed partial class UpdateViewModel : ObservableObject
             });
             var path = await _services.Updater.DownloadAsync(Release, Asset, progress, ct);
             output.Add($"Downloaded {Asset?.Name} and checked it against the release");
+            if (UpdateVersion.Parse(fromVersion) is { } installedVersion && Release.SemanticVersion.CompareTo(installedVersion) < 0)
+            {
+                var backup = BackupDataForRollback();
+                output.Add("Rollback backup saved: " + backup);
+            }
 
             IsIndeterminate = true;
             StatusText = InstalledMode ? "Starting the installer…" : "Replacing Evict.exe…";
@@ -159,7 +160,13 @@ public sealed partial class UpdateViewModel : ObservableObject
         Directory.CreateDirectory(directory);
         // The app's JSON settings and histories may not be backward-compatible with an old executable.
         foreach (var file in Directory.EnumerateFiles(AppPaths.DataRoot, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("A data file is a link; the rollback was stopped to protect your settings.");
+            // Stop before replacing the app if a saved JSON data file cannot be read.
+            using (var document = JsonDocument.Parse(File.ReadAllText(file))) { }
             File.Copy(file, Path.Combine(directory, Path.GetFileName(file)), overwrite: false);
+        }
         return directory;
     }
 

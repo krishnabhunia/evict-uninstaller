@@ -81,9 +81,16 @@ public sealed class VersionHistoryWindow : Window
         {
             _choose.IsEnabled = _versions.SelectedItem is VersionOption;
             if (_versions.SelectedItem is VersionOption selected)
-                _status.Text = selected.Release.IsPreview
-                    ? "Beta builds may contain unfinished changes. The next step requires confirmation."
-                    : "The next step requires confirmation; no update has started.";
+            {
+                _choose.Content = IsRollback
+                    ? $"Review rollback to v{selected.Release.DisplayVersion}"
+                    : $"Install v{selected.Release.DisplayVersion}";
+                var notes = string.IsNullOrWhiteSpace(selected.Release.Body)
+                    ? "No release notes provided."
+                    : selected.Release.Body!.Trim();
+                if (notes.Length > 240) notes = notes[..240] + "…";
+                _status.Text = $"{(selected.Release.IsPreview ? "Beta / prerelease. " : "")}{notes}  Confirmation is required before downloading.";
+            }
         };
         content.Children.Add(_versions);
         Loaded += async (_, _) =>
@@ -113,11 +120,12 @@ public sealed class VersionHistoryWindow : Window
             $"v{r.DisplayVersion}  ·  {(r.IsPreview ? "Beta" : "Stable")}" +
             (r.PublishedAt is { } published ? $"  ·  {published.LocalDateTime:d}" : ""))).ToList();
         _choose.IsEnabled = false;
+        _choose.Content = "Select a version to continue";
         _status.Text = releases.Count == 0
-            ? "No checksum-verified Windows release matches this filter."
+            ? "No Windows release with a published checksum matches this filter."
             : older && installedMode
                 ? "Installed edition rollback requires a manual installer review; the selected release page will open."
-                : $"{releases.Count} verified version(s). Select one; installation requires another confirmation.";
+                : $"{releases.Count} version(s) with published checksum assets. Select one; the download checksum will be verified before installation.";
     }
 
     private sealed record VersionOption(ReleaseInfo Release, string Label);

@@ -508,6 +508,34 @@ public sealed class UpdateService
     public (bool Ok, string? Error) Apply(string downloadedPath, bool installedMode, Action beforeRestart, Action? restartFailed = null)
     {
         bool ownershipReleased = false;
+        string? portableExe = null;
+        string? previousPortableExe = null;
+        string? RestorePortableBinary()
+        {
+            if (portableExe is null || previousPortableExe is null || !File.Exists(previousPortableExe)) return null;
+            var failedPath = Path.Combine(UpdatesDir, $"Evict.failed.{Guid.NewGuid():N}.exe");
+            bool movedReplacement = false;
+            try
+            {
+                if (File.Exists(portableExe))
+                {
+                    File.Move(portableExe, failedPath);
+                    movedReplacement = true;
+                }
+                File.Move(previousPortableExe, portableExe);
+                LogWarn("Restored the previous portable Evict.exe after the update handoff failed.");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                if (movedReplacement && !File.Exists(portableExe) && File.Exists(failedPath))
+                {
+                    try { File.Move(failedPath, portableExe); } catch { /* preserve the original recovery error */ }
+                }
+                LogError("Failed to restore the previous portable executable", ex);
+                return " The previous Evict.exe could not be restored automatically; recover it from " + previousPortableExe + ".";
+            }
+        }
         string? RestoreOwnership()
         {
             if (!ownershipReleased || restartFailed is null) return null;
@@ -543,6 +571,8 @@ public sealed class UpdateService
                 throw;
             }
 
+            portableExe = exe;
+            previousPortableExe = old;
             beforeRestart();
             ownershipReleased = true;
             _startProcess(new ProcessStartInfo(exe, "--updated") { UseShellExecute = true, WorkingDirectory = dir });
@@ -552,12 +582,12 @@ public sealed class UpdateService
         catch (UnauthorizedAccessException ex)
         {
             LogError("Applying update failed", ex);
-            return (false, $"No permission to replace {ExePath}. Restart Evict as administrator or download the new version manually from {UpdateChecker.ReleasesUrl}." + RestoreOwnership());
+            return (false, $"No permission to replace {ExePath}. Restart Evict as administrator or download the new version manually from {UpdateChecker.ReleasesUrl}." + RestorePortableBinary() + RestoreOwnership());
         }
         catch (Exception ex)
         {
             LogError("Applying update failed", ex);
-            return (false, ex.Message + RestoreOwnership());
+            return (false, ex.Message + RestorePortableBinary() + RestoreOwnership());
         }
     }
 
