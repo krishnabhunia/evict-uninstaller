@@ -348,4 +348,28 @@ public sealed class VersionPickerTests : IDisposable
         Assert.Same(Sample.Single(r => r.TagName == "win-v4.0.1"), merged.Single(r => r.DisplayVersion == "4.0.1"));
         Assert.Contains(merged, r => r.DisplayVersion == "3.0.0");
     }
+
+    [Fact]
+    public void ThePinFrom411CarriesOverToTheVersionPicker()
+    {
+        var file = Path.Combine(_dir, "settings.json");
+        File.WriteAllText(file, """{ "PinnedAppVersion": "4.0.1", "CheckForUpdates": true }""");
+        var store = new SettingsStore(() => file);
+        store.Load();
+        Assert.Equal("4.0.1", store.Current.PinnedVersion);
+        Assert.Null(store.Current.PinnedAppVersion);
+    }
+
+    [Theory]
+    [InlineData("4.0.1", "4.0.1", false)]          // the pinned version runs: keep the pin
+    [InlineData("4.0.1", "4.0.1+abc123", false)]   // build metadata is not a different version
+    [InlineData("4.0.1", "4.1.0", true)]           // the roll back never finished: end the pin
+    [InlineData("4.0.1", "4.2.0-beta.1", true)]    // installed outside Evict
+    public void APinEndsWhenAnotherVersionRuns(string pinned, string running, bool cleared)
+    {
+        var s = new AppSettings { PinnedVersion = pinned, CheckForUpdates = false };
+        Assert.Equal(cleared, VersionChange.ClearStalePin(s, running));
+        Assert.Equal(cleared ? null : pinned, s.PinnedVersion);
+        Assert.Equal(cleared, s.CheckForUpdates);
+    }
 }

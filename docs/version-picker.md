@@ -37,6 +37,9 @@ The three most recently used versions are kept; the current and the target are n
 | 4 | A release without its file or SHA-256 for your edition is listed as *GitHub only* and cannot be installed by Evict |
 | 5 | A roll back counts as done only when exactly that version starts |
 | 6 | Versions released before VP1 do not know the picker; the pin still works for them because it turns the start-up check off |
+| 7 | A pin belongs to the version that runs: when another version starts (a roll back that never finished, or Setup run by hand), the pin ends and the start-up check is back on |
+| 8 | The pin chosen in 4.1.1's chooser (`PinnedAppVersion`) carries over to this pin on first start; the picker replaces that chooser |
+| 9 | A cancelled or failed change puts the pin, skip and start-up check back as they were; a damaged settings backup is never used |
 
 ## Tests
 
