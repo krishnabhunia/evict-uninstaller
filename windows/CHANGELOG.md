@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.2.0 — 2026-11-04
+
+<!-- Evict automatic release; base: win-v4.1.1 -->
+
+- feat: choose the exact version to update to or roll back to (VP1)
+
 ## 4.1.1 — 2026-11-03
 
 <!-- Evict automatic release; base: win-v4.1.0 -->
