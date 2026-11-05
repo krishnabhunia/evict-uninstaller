@@ -32,7 +32,7 @@ LEGACY_FOLDERS = ("portable", "windows-installer", "macOS")
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_DMG_METADATA_BYTES = 16 * 1024 * 1024
 CORE_VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-VERSION = CORE_VERSION + r"(?:-beta\.[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*)?"
+VERSION = CORE_VERSION + r"(?:-beta(?:(?!000)[0-9]{3}|\.[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*))?"
 MACHO_MAGICS = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
     b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
@@ -315,7 +315,7 @@ def check_dmg(stream, size, label):
 
 def installation_root(version):
     if not isinstance(version, str) or re.fullmatch(VERSION, version) is None:
-        raise ZipError("Installation version must be x.y.z or a complete x.y.z-beta.RUN.PR.ATTEMPT version")
+        raise ZipError("Installation version must be x.y.z or a valid three-digit betaNNN version")
     return f"Evict_{version}"
 
 
