@@ -15,6 +15,7 @@ public sealed class VersionHistoryWindow : Window
     private readonly ComboBox _channel = new() { Width = 170 };
     private readonly ListBox _versions = new() { MinHeight = 210, Margin = new Thickness(0, 12, 0, 8) };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly Button _details = new() { Content = "ⓘ What's new in selected version", IsEnabled = false, MinWidth = 194, Margin = new Thickness(0, 0, 8, 0) };
     private readonly Button _choose = new() { Content = "Continue with selected version", MinWidth = 180, IsEnabled = false };
     private IReadOnlyList<ReleaseInfo> _available = [];
 
@@ -25,8 +26,8 @@ public sealed class VersionHistoryWindow : Window
     {
         _updater = updater;
         Title = "Evict · Version history";
-        Width = 620;
-        Height = 500;
+        Width = 730;
+        Height = 610;
         MinWidth = 530;
         MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -43,6 +44,12 @@ public sealed class VersionHistoryWindow : Window
             DialogResult = true;
         };
         footer.Children.Add(_choose);
+        footer.Children.Insert(0, _details);
+        _details.Click += (_, _) =>
+        {
+            if (_versions.SelectedItem is VersionOption choice)
+                new ReleaseNotesWindow(choice.Release, _updater.CurrentVersionLabel) { Owner = this }.ShowDialog();
+        };
         footer.Children.Add(cancel);
         DockPanel.SetDock(footer, Dock.Bottom);
         root.Children.Add(footer);
@@ -80,6 +87,7 @@ public sealed class VersionHistoryWindow : Window
         _versions.SelectionChanged += (_, _) =>
         {
             _choose.IsEnabled = _versions.SelectedItem is VersionOption;
+            _details.IsEnabled = _versions.SelectedItem is VersionOption;
             if (_versions.SelectedItem is VersionOption selected)
             {
                 _choose.Content = IsRollback
@@ -88,8 +96,7 @@ public sealed class VersionHistoryWindow : Window
                 var notes = string.IsNullOrWhiteSpace(selected.Release.Body)
                     ? "No release notes provided."
                     : selected.Release.Body!.Trim();
-                if (notes.Length > 240) notes = notes[..240] + "…";
-                _status.Text = $"{(selected.Release.IsPreview ? "Beta / prerelease. " : "")}{notes}  Confirmation is required before downloading.";
+                _status.Text = $"{(selected.Release.IsPreview ? "Beta / prerelease. " : "")}{notes.Split('\n').FirstOrDefault(x => x.Trim().StartsWith("- "))?.Trim() ?? "Select What's new to read the full implementation details."}  Confirmation is required before downloading.";
             }
         };
         content.Children.Add(_versions);
@@ -120,6 +127,7 @@ public sealed class VersionHistoryWindow : Window
             $"v{r.DisplayVersion}  ·  {(r.IsPreview ? "Beta" : "Stable")}" +
             (r.PublishedAt is { } published ? $"  ·  {published.LocalDateTime:d}" : ""))).ToList();
         _choose.IsEnabled = false;
+        _details.IsEnabled = false;
         _choose.Content = "Select a version to continue";
         _status.Text = releases.Count == 0
             ? "No Windows release with a published checksum matches this filter."

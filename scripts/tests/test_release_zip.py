@@ -144,9 +144,17 @@ class InstallationZipTests(unittest.TestCase):
                                 for name in reader.namelist()))
         release_zip.check_zip(archive)
 
+    def test_three_digit_beta_version_is_accepted(self):
+        self.installer.unlink()
+        self.version = "1.12.1-beta001"
+        (self.setup / f"Evict-Setup-{self.version}.exe").write_bytes(pe_bytes())
+        archive = self.build()
+        self.assertEqual(archive.name, "Evict_1.12.1-beta001.zip")
+        release_zip.check_zip(archive)
+
     def test_reject_incomplete_or_unsafe_versions(self):
         for version in ("1.12", "01.12.1", "../1.12.1", "1.12.1-beta",
-                        "1.12.1-beta.42.16", "1.12.1-beta.0.16.1", "1.12.1\n"):
+                        "1.12.1-beta.42.16", "1.12.1-beta.0.16.1", "1.12.1-beta000", "1.12.1\n"):
             with self.subTest(version=version):
                 self.version = version
                 with self.assertRaises(release_zip.ZipError):
