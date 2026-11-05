@@ -334,6 +334,26 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     [RelayCommand] private void ShowUpdate() => _main.ShowUpdateCommand.Execute(null);
+    [RelayCommand]
+    private async Task ShowInstalledReleaseNotesAsync()
+    {
+        try
+        {
+            var versions = await _services.Updater.ListVersionsAsync(CancellationToken.None);
+            var installed = _services.Updater.CurrentVersionLabel;
+            var release = versions.FirstOrDefault(r => string.Equals(r.DisplayVersion, installed.TrimStart('v'), StringComparison.OrdinalIgnoreCase));
+            if (release is null)
+            {
+                Dialogs.Error($"Release notes for installed Evict v{installed} were not found in published GitHub Releases. No implementation information was invented.");
+                return;
+            }
+            new Evict.App.Views.ReleaseNotesWindow(release, installed)
+            {
+                Owner = System.Windows.Application.Current.MainWindow
+            }.ShowDialog();
+        }
+        catch (Exception ex) { Dialogs.Error("Could not load implementation details: " + ex.Message); }
+    }
     [RelayCommand] private void ShowVersionHistory()
     {
         _main.ShowVersionHistoryCommand.Execute(null);
