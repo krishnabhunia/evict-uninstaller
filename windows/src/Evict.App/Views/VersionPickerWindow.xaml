@@ -182,6 +182,8 @@
 
                             <DockPanel Margin="0,16,0,6">
                                 <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="Release page" Command="{Binding OpenReleasePageCommand}" />
+                                <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="ⓘ Full details" Command="{Binding ShowReleaseNotesCommand}" Margin="0,0,14,0"
+                                        ToolTip="Full implementation details for the selected version" />
                                 <TextBlock Text="What's new" Style="{StaticResource Text.Section}" />
                             </DockPanel>
                             <TextBlock Text="{Binding Selected.Notes}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" />

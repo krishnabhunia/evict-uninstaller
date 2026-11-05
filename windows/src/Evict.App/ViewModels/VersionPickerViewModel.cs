@@ -432,6 +432,16 @@ public sealed partial class VersionPickerViewModel : ObservableObject
     [RelayCommand] private void OpenReleasePage() => Dialogs.OpenUrl(Selected?.Release.HtmlUrl ?? UpdateChecker.ReleasesUrl);
     [RelayCommand] private void OpenAllReleases() => Dialogs.OpenUrl(UpdateChecker.ReleasesUrl);
 
+    /// <summary>What's New for the selected version (from main, PR #37): the full, formatted implementation list. Read-only.</summary>
+    [RelayCommand]
+    private void ShowReleaseNotes()
+    {
+        if (Selected is not { } s) return;
+        var owner = Application.Current?.Windows.OfType<Views.VersionPickerWindow>().FirstOrDefault(w => w.DataContext == this)
+                    ?? Application.Current?.MainWindow;
+        new Views.ReleaseNotesWindow(s.Release, CurrentVersion) { Owner = owner }.ShowDialog();
+    }
+
     /// <summary>"Don't remind me about these": the notice stays hidden until a version newer than the newest one shown appears.</summary>
     [RelayCommand]
     private void SkipThese()

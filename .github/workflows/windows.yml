@@ -3,7 +3,7 @@ name: Evict Build & Release
 on:
   push:
     branches: [ main ]
-    tags: [ 'win-v*', '!win-v*-beta.*' ]
+    tags: [ 'win-v*', '!win-v*-beta*' ]
     paths: [ 'windows/**', 'macos/**', 'scripts/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
   pull_request:
     branches: [ main ]
@@ -15,9 +15,10 @@ permissions:
   contents: read
   pull-requests: read
 
-# Serialize planning through publication for main, stable tags and dispatches. PR previews have their own locks.
+# Serialize beta planning through publication across ALL PRs so that the next
+# three-digit beta tag cannot be allocated twice by concurrent pull requests.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('evict-pr-{0}', github.event.pull_request.number) || 'evict-stable' }}
+  group: ${{ github.event_name == 'pull_request' && 'evict-beta' || 'evict-stable' }}
   cancel-in-progress: false
   queue: max
 
@@ -231,13 +232,13 @@ jobs:
               if ($line -match '^([^=]+)=(.*)$') { $result[$Matches[1]] = $Matches[2] }
             }
             if ($result.core_version -notmatch '^\d+\.\d+\.\d+$' -or
-                $result.version -notmatch '^\d+\.\d+\.\d+(?:-beta\.\d+\.\d+\.\d+)?$' -or
+                $result.version -notmatch '^\d+\.\d+\.\d+(?:-beta(?!000)\d{3})?$' -or
                 $result.numeric_version -ne "$($result.core_version).0" -or
                 $result.tag -ne "win-v$($result.version)" -or $result.publish -notin @("true", "false")) {
               throw "Invalid semantic version plan"
             }
             if ($mode -eq "beta" -and ($result.channel -ne "beta" -or $result.prerelease -ne "true" -or
-                $result.version -notmatch '^\d+\.\d+\.\d+-beta\.\d+\.\d+\.\d+$')) {
+                $result.version -notmatch '^\d+\.\d+\.\d+-beta(?!000)\d{3}$')) {
               throw "Every PR release must be a beta"
             }
             return $result
@@ -669,10 +670,11 @@ jobs:
             }
             const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
             const p = manifest.plan, coreVersion = process.env.BETA_CORE;
-            const expectedVersion = coreVersion + '-beta.' + process.env.GITHUB_RUN_NUMBER + '.' + pr.number + '.' + process.env.GITHUB_RUN_ATTEMPT;
+            const expectedVersion = process.env.BETA_VERSION;
             const allowed = ['windows/Directory.Build.props', 'windows/installer/Evict.iss', 'windows/CHANGELOG.md'];
             if (manifest.source_sha !== process.env.PREPARED_SOURCE || p.source_sha !== manifest.source_sha ||
-                p.version !== process.env.BETA_VERSION || p.version !== expectedVersion ||
+                p.version !== process.env.BETA_VERSION ||
+                !/^\d+\.\d+\.\d+-beta(?!000)\d{3}$/.test(expectedVersion) ||
                 !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(coreVersion) ||
                 coreVersion.split('.').some(n => Number(n) > 65535) ||
                 p.core_version !== coreVersion || p.source_version !== coreVersion ||
@@ -978,6 +980,10 @@ jobs:
           if (-not $notes -and $env:WILL_PUBLISH -eq 'true') { throw 'The frozen source changelog is missing its version section' }
           if (-not $notes) { $notes = @('- Validation build; no release publication.') }
           ($notes -join [char]10).Trim() | Set-Content -LiteralPath Zip/release-notes.md -Encoding utf8
+          if ($env:WILL_PUBLISH -eq 'true') {
+            python ../scripts/release_notes_check.py Zip/release-notes.md
+            if ($LASTEXITCODE -ne 0) { throw 'Release notes must identify the actual implementations' }
+          }
       - uses: actions/upload-artifact@v7
         id: installation
         with:
@@ -1053,7 +1059,7 @@ jobs:
           MAC_VERSION: ${{ needs.package.outputs.mac_version }}
         run: |
           $v = $env:RELEASE_VERSION; $mac = $env:MAC_VERSION
-          if ($v -notmatch '^\d+\.\d+\.\d+(?:-beta\.\d+\.\d+\.\d+)?$' -or $mac -notmatch '^\d+\.\d+\.\d+$') {
+          if ($v -notmatch '^\d+\.\d+\.\d+(?:-beta(?!000)\d{3})?$' -or $mac -notmatch '^\d+\.\d+\.\d+$') {
             throw 'Invalid release artifact identity'
           }
           $root = "Evict_$v"
@@ -1145,8 +1151,7 @@ jobs:
                   pr.user.type !== 'User' || context.payload.sender?.type !== 'User' ||
                   /\[bot\]$/.test(pr.user.login) || /\[bot\]$/.test(context.payload.sender.login) ||
                   current.state !== 'open' || current.head.sha !== pr.head.sha ||
-                  !new RegExp('^\\d+\\.\\d+\\.\\d+-beta\\.' + process.env.GITHUB_RUN_NUMBER + '\\.' +
-                    pr.number + '\\.' + process.env.GITHUB_RUN_ATTEMPT + '$').test(version)) {
+                  !/^\d+\.\d+\.\d+-beta(?!000)\d{3}$/.test(version)) {
                 throw new Error('Every PR release must be a beta of the current trusted reviewed head.');
               }
             } else {
@@ -1254,7 +1259,7 @@ jobs:
           script: |
             const version = process.env.RELEASE_VERSION;
             const prerelease = context.eventName === 'pull_request';
-            if (prerelease && !/^\d+\.\d+\.\d+-beta\.\d+\.\d+\.\d+$/.test(version)) throw new Error('PR promotion requires a beta.');
+            if (prerelease && !/^\d+\.\d+\.\d+-beta(?!000)\d{3}$/.test(version)) throw new Error('PR promotion requires a beta.');
             if (!prerelease && !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Main promotion requires x.y.z.');
             const release_id = Number(process.env.RELEASE_ID);
             if (!Number.isSafeInteger(release_id) || release_id <= 0) throw new Error('No release draft was created.');
@@ -1333,7 +1338,7 @@ jobs:
           $v = $env:RELEASE_VERSION
           $channel = $env:RELEASE_CHANNEL
           $mac = '${{ needs.package.outputs.mac_version }}'
-          if ($v -notmatch '^\d+\.\d+\.\d+(?:-beta\.\d+\.\d+\.\d+)?$' -or $channel -notin @("stable", "beta")) {
+          if ($v -notmatch '^\d+\.\d+\.\d+(?:-beta(?!000)\d{3})?$' -or $channel -notin @("stable", "beta")) {
             throw "Invalid published release-test identity"
           }
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json"; "X-GitHub-Api-Version" = "2022-11-28" }
@@ -1468,7 +1473,7 @@ jobs:
           python - <<'PY'
           import hashlib, json, os, pathlib, re, urllib.parse, urllib.request
           version = os.environ["RELEASE_VERSION"]
-          assert re.fullmatch(r"\d+\.\d+\.\d+(?:-beta\.\d+\.\d+\.\d+)?", version)
+          assert re.fullmatch(r"\d+\.\d+\.\d+(?:-beta(?!000)\d{3})?", version)
           repo = os.environ["GITHUB_REPOSITORY"]
           assert repo == "krishnabhunia/evict-uninstaller"
           api = os.environ["GITHUB_API_URL"] + "/repos/" + repo + "/releases/tags/win-v" + version
@@ -1651,7 +1656,7 @@ jobs:
             // Cleanup runs without checkout and receives only artifact metadata from successful jobs.
             const EXPECTED_REPOSITORY = 'krishnabhunia/evict-uninstaller';
             const WORKFLOW_PATH = '.github/workflows/windows.yml';
-            const VERSION_PATTERN = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-beta\\.[1-9]\\d*\\.[1-9]\\d*\\.[1-9]\\d*)?';
+            const VERSION_PATTERN = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-beta(?!000)\\d{3})?';
             const VERSIONED_FINAL = new RegExp('^Evict_(' + VERSION_PATTERN + ')$');
             const NATIVE_ZIP = new RegExp('^(Evict-' + VERSION_PATTERN + '-([a-f0-9]{40}))-release-zip$');
             const LEGACY_FINAL = new RegExp('^Evict-(' + VERSION_PATTERN + ')-([a-f0-9]{40})$');
