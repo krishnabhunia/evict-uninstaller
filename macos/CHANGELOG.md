@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.1 — 2026-11-05
+
+<!-- Evict automatic release; base: mac-v1.0.0 -->
+
+- ChatGPT-Evict-Three-Digit-Beta-Whats-New
+- Generate permanent `win-vX.Y.Z-beta001`–`beta999` tags from published releases within serialized beta CI; preserve stable tags and reject serial exhaustion.
+- Populate release notes from exact feature-level PR descriptions, rather than PR titles alone. Require detail in the publish workflow.
+- Add **What's New** for installed Evict in Windows Settings and a full per-version implementation-detail window in Version History. Keep exact platform, beta/stable status, publication date and current/selected version visible.
+- Update every release-freeze, install-archive, artifact, promotion, and published-release validation to understand the three-digit beta format; add tests.
+- Python suite: **186 tests passed** locally; workflow YAML validated.
+- GitHub Actions [Evict Build & Release](https://github.com/krishnabhunia/evict-uninstaller/actions/runs/42003628693): **success**, including frozen-source validation, .NET tests, native installer/package checks, publication and post-publication verification.
+- Windows manual visual review remains available for reviewer; no merge into `main`.
+- GitHub API commits are marked Unverified (unsigned).
+
 ## 1.0.0 — 2026-10-10
 
 <!-- Evict automatic release; base: mac-v0.2.0 -->
