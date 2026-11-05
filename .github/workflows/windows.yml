@@ -3,7 +3,7 @@ name: Evict Build & Release
 on:
   push:
     branches: [ main ]
-    tags: [ 'win-v*', '!win-v*-beta.*' ]
+    tags: [ 'win-v*', '!win-v*-beta*' ]
     paths: [ 'windows/**', 'macos/**', 'scripts/**', '.github/release-policy.json', '.github/workflows/windows.yml' ]
   pull_request:
     branches: [ main ]
@@ -15,9 +15,10 @@ permissions:
   contents: read
   pull-requests: read
 
-# Serialize planning through publication for main, stable tags and dispatches. PR previews have their own locks.
+# Serialize beta planning through publication across ALL PRs so that the next
+# three-digit beta tag cannot be allocated twice by concurrent pull requests.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('evict-pr-{0}', github.event.pull_request.number) || 'evict-stable' }}
+  group: ${{ github.event_name == 'pull_request' && 'evict-beta' || 'evict-stable' }}
   cancel-in-progress: false
   queue: max
 
@@ -978,6 +979,10 @@ jobs:
           if (-not $notes -and $env:WILL_PUBLISH -eq 'true') { throw 'The frozen source changelog is missing its version section' }
           if (-not $notes) { $notes = @('- Validation build; no release publication.') }
           ($notes -join [char]10).Trim() | Set-Content -LiteralPath Zip/release-notes.md -Encoding utf8
+          if ($env:WILL_PUBLISH -eq 'true') {
+            python ../scripts/release_notes_check.py Zip/release-notes.md
+            if ($LASTEXITCODE -ne 0) { throw 'Release notes must identify the actual implementations' }
+          }
       - uses: actions/upload-artifact@v7
         id: installation
         with:
