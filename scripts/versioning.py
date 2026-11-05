@@ -405,6 +405,30 @@ class GitHub:
                 and release.get("published_at")
                 and stable_tag_version(str(release.get("tag_name") or ""), platform) is not None]
 
+    def next_beta_serial(self, platform: str, core: CoreVersion) -> int:
+        """Allocate a permanent three-digit beta in globally serialized PR CI.
+
+        The workflow locks all PR beta runs through publication; a later run
+        sees its predecessor's GitHub Release before choosing a new number.
+        Older run/PR/attempt tags remain untouched and available for rollback.
+        """
+        self.published_stable_releases(platform)  # Fills the complete release cache.
+        prefix = PREFIX[platform] + str(core) + "-beta"
+        used = []
+        for release in self.release_cache or []:
+            if release.get("draft") is not False or release.get("prerelease") is not True:
+                continue
+            tag = str(release.get("tag_name") or "")
+            if tag.startswith(prefix) and re.fullmatch(r"[0-9]{3}", tag[len(prefix):]):
+                serial = int(tag[len(prefix):])
+                if serial == 0:
+                    raise VersionError("Beta 000 is reserved")
+                used.append(serial)
+        next_serial = max(used, default=0) + 1
+        if next_serial > 999:
+            raise VersionError("Three-digit beta series exhausted; advance the core version")
+        return next_serial
+
 
     def retired_stable_reservations(self, platform: str) -> list[dict[str, Any]]:
         if platform != "windows":
@@ -434,8 +458,34 @@ def source_version(root: Path, platform: str, git: Git | None = None, commit: st
 
 
 def change_notes(message: str, pulls: list[dict[str, Any]]) -> list[str]:
+    """Retain exact user-facing PR implementations, not just the PR title.
+
+    The release chooser reads the published body; implementation detail must
+    travel with the GitHub Release even when the PR is later closed or edited.
+    """
     titles = [str(pull.get("title") or "") for pull in pulls] or [message.splitlines()[0]]
-    return [re.sub(r"\s+", " ", title).strip() for title in titles if title.strip()]
+    notes = [re.sub(r"\s+", " ", title).strip() for title in titles if title.strip()]
+    for pull in pulls:
+        inside, blocked = False, False
+        for raw in str(pull.get("body") or "").splitlines():
+            line = raw.strip()
+            heading = re.match(r"^#{2,4}\s+(.+)$", line)
+            if heading:
+                label = heading[1].lower()
+                if re.search(r"validation|tests?|ci|checklist|release type|how tested", label):
+                    blocked = True
+                elif "changes" in label or "implementation" in label or "features" in label:
+                    inside, blocked = True, False
+                continue
+            if not inside or blocked:
+                continue
+            if line.startswith("| ") and re.match(r"^\|\s*[1-9]\d*\s*\|", line):
+                cells = [c.strip() for c in line.strip("|").split("|")]
+                if len(cells) >= 3:
+                    notes.append(f"{cells[1]} — {cells[2]}")
+            elif line.startswith("- ") and len(line) >= 28 and not line.startswith("- ["):
+                notes.append(line[2:])
+    return list(dict.fromkeys(notes))
 
 
 def update_changelog(text: str, version: str, base_tag: str, notes: list[str], today: str) -> str:
@@ -646,7 +696,7 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
         publish = core > max(base, floor) and (mode != "beta" or pr_affects)
         version_text = str(core)
         if channel == "beta":
-            version_text += f"-beta.{run_number}.{number}.{run_attempt}"
+            version_text += f"-beta{github.next_beta_serial(platform, core):03d}"
         plan = {"bump": intent.name.lower(), "publish": publish, "core_version": str(core), "version": version_text,
                 "tag": PREFIX[platform] + version_text if mode == "beta" or core != base or not base_tag else base_tag,
                 "base_tag": base_tag, "base_version": str(base), "tag_source_sha": tag_sha,
