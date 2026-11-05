@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.1.2 — 2026-11-05
+
+<!-- Evict automatic release; base: win-v4.1.1 -->
+
+- ChatGPT-Evict-Three-Digit-Beta-Whats-New
+- Generate permanent sequential three-digit `win-vX.Y.Z-beta001`–`beta999` tags from published releases under a serialized GitHub Actions beta workflow, preserving existing stable tags and refusing counter exhaustion.
+- Enrich release changelog from PR **Changes / Implementation** descriptions and number-based feature tables, retaining concrete details instead of generic PR titles.
+- Block release publication if notes contain no detailed implementations, with new automated quality-gate tests.
+- Expand Windows Version History with a full **What's New** dialog for each selected release, exposing every published feature, fix, release date and platform rather than truncating to 240 characters.
+- Add Settings → Updates → **What's New** for the currently installed version; keep checksum and manual-install confirmation behavior.
+
 ## 4.1.1 — 2026-11-03
 
 <!-- Evict automatic release; base: win-v4.1.0 -->
