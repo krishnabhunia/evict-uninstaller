@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.2.0 — 2026-11-05
+
+<!-- Evict automatic release; base: win-v4.1.2 -->
+
+- Claude : Feature: choose the exact version to update to or roll back to (VP1, #36) — 4.2.0
+- Notice + header button — "3 newer versions found (1 stable, 2 beta)" → **Choose version…**. No one-click update
+- Updates tab — Every newer release, **All / Stable / Beta** filter with counts, *Newest* / *Latest stable* tags. Nothing is selected; the button stays grey until you pick
+- Confirm step — From → To, numbered "What will happen" list, amber note when a beta skips a newer stable
+- Version history & roll back tab — Every older release (stable + beta), *On this PC* vs download, *Your previous version*, settings restore, **Pin this version**
+- Settings → Updates — **Choose version…**, **Version history & roll back…**, pinned notice with **Unpin**
+
 ## 4.1.2 — 2026-11-05
 
 <!-- Evict automatic release; base: win-v4.1.1 -->
