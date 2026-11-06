@@ -123,6 +123,8 @@ public static class SoftwareUpdateHistory
             return (SoftwareUpdateOutcome.Cancelled, $"You cancelled this update. Check the installed version before trying again.");
         if (ok && WingetService.IsRestartToFinish(message))
             return (SoftwareUpdateOutcome.UpdatedRestartNeeded, "Installed. Windows needs a restart to finish — until then the old version may still run.");
+        if (ok && WingetService.IsAlreadyCurrent(message))
+            return (SoftwareUpdateOutcome.Updated, $"No change: winget found nothing newer to install, so {name} is treated as already up to date.");
         if (ok) return (SoftwareUpdateOutcome.Updated, $"{name} is on the new version.");
         var reason = string.IsNullOrWhiteSpace(message) ? "winget reported an error" : message.Trim().TrimEnd('.');
         return (SoftwareUpdateOutcome.Failed, $"{Capitalise(reason)}. The installed version has not been verified. Check for updates before trying again.");

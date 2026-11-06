@@ -50,6 +50,13 @@ public sealed class AppSettings
     /// <summary>Packages hidden from Software Updater until explicitly restored.</summary>
     public List<SoftwareUpdateExclusion> SoftwareUpdateExclusions { get; set; } = new();
 
+    /// <summary>Skipped versions, offers that stayed unchanged after an update, and restored offers (design VM1).</summary>
+    public List<HiddenUpdateRecord> HiddenSoftwareUpdates { get; set; } = new();
+    /// <summary>Hide offers that do not change the installed version (rules 1 and 2 of design VM1).</summary>
+    public bool HideUnchangedSoftwareUpdates { get; set; } = true;
+    /// <summary>Hide same-build repackages such as 6.43.18 → 6.43.18.1 (rule 3, design VM1 option B).</summary>
+    public bool HideRepackagedSoftwareUpdates { get; set; } = true;
+
     // ── tray & background (1.3.0) ──
     public bool ShowTrayIcon { get; set; } = true;
     public bool MinimizeToTray { get; set; } = false;
@@ -129,6 +136,7 @@ public sealed class SettingsStore
             if (Math.Abs(s.UiScale - 1.0) < 0.001) s.UiScale = 1.2;
         }
         s.SoftwareUpdateExclusions ??= new();
+        s.HiddenSoftwareUpdates ??= new();
         s.SettingsVersion = AppSettings.CurrentVersion;
     }
 

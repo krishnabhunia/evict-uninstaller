@@ -186,6 +186,8 @@ public sealed class WingetService
             if (res.TimedOut) return new(false, "The update timed out. The installer result is unknown; check for updates again.", false);
             // Installed but Windows must restart to finish: a success, not a failure (design SH1 "restart needed").
             if (IsRestartToFinish(res.ExitCode, text)) return new(true, RestartToFinishMessage);
+            // "Already installed" / "available version is not newer": nothing to install, the program is current.
+            if (IsAlreadyCurrent(res.ExitCode)) return new(true, AlreadyCurrentMessage);
             bool ok = res.ExitCode == 0;
             if (ok) return new(true, "Updated.");
             if (IsInstallerBusy(res.ExitCode, text) && attempt < 6)
@@ -279,6 +281,14 @@ public sealed class WingetService
             _ => null,
         };
     }
+
+    public const string AlreadyCurrentMessage = "Already up to date – winget found nothing newer to install.";
+
+    /// <summary>winget's "already installed" (0x8A150061, 0x8A15010D) and "available version is not newer" (0x8A15004F).</summary>
+    public static bool IsAlreadyCurrent(int exitCode) => unchecked((uint)exitCode) is 0x8A150061 or 0x8A15010D or 0x8A15004F;
+
+    /// <summary>True for the message <see cref="UpgradeWithResultAsync"/> returns when nothing needed installing.</summary>
+    public static bool IsAlreadyCurrent(string? message) => string.Equals(message, AlreadyCurrentMessage, StringComparison.Ordinal);
 
     public const string RestartToFinishMessage = "Updated – restart Windows to finish.";
 
