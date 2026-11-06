@@ -72,6 +72,13 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public bool HealthAutoScan { get => S.HealthAutoScan; set { S.HealthAutoScan = value; Save(); OnPropertyChanged(); } }
 
+    // ───────────── Software Updater (design VM1) ─────────────
+
+    /// <summary>Hide offers that leave the installed version unchanged after updating, or are the same version written differently.</summary>
+    public bool HideUnchangedSoftwareUpdates { get => S.HideUnchangedSoftwareUpdates; set { S.HideUnchangedSoftwareUpdates = value; Save(); OnPropertyChanged(); } }
+    /// <summary>Hide same-build repackages such as 6.43.18 → 6.43.18.1.</summary>
+    public bool HideRepackagedSoftwareUpdates { get => S.HideRepackagedSoftwareUpdates; set { S.HideRepackagedSoftwareUpdates = value; Save(); OnPropertyChanged(); } }
+
     // ───────────── notification area & background ─────────────
 
     public bool ShowTrayIcon

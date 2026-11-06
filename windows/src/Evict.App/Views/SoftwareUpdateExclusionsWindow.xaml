@@ -1,35 +1,68 @@
 <Window x:Class="Evict.App.Views.SoftwareUpdateExclusionsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Style="{StaticResource Window.Dialog}" Title="Excluded software"
-        Width="800" Height="550" MinWidth="600" MinHeight="400"
+        Style="{StaticResource Window.Dialog}" Title="Hidden updates"
+        Width="980" Height="600" MinWidth="680" MinHeight="420"
         Icon="pack://application:,,,/Assets/app.ico">
+    <!-- Design VM1: every update left out of the list, with its reason, in one place. -->
     <Grid Margin="24">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" /><RowDefinition Height="*" />
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" />
             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <StackPanel Margin="0,0,0,14">
-            <TextBlock Text="{Binding ExclusionsLabel}" Style="{StaticResource Text.Title}" />
-            <TextBlock Text="Excluded packages remain hidden across scans and restarts. Restore a package to include it in the next update check; available updates return immediately."
+        <StackPanel Margin="0,0,0,12">
+            <TextBlock Text="{Binding HiddenLabel}" Style="{StaticResource Text.Title}" />
+            <TextBlock Text="These updates are left out of the list, the Software Health count, the tray and scheduled scans. Each one comes back by itself when its reason no longer applies; you can also restore any of them now."
                        Style="{StaticResource Text.Body}" TextWrapping="Wrap" Margin="0,6,0,0" />
         </StackPanel>
-        <DataGrid x:Name="ExcludedList" Grid.Row="1" ItemsSource="{Binding Exclusions}"
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+            <TextBlock Text="Show" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <ComboBox Width="200" ItemsSource="{Binding HiddenFilters}" SelectedItem="{Binding HiddenFilter, Mode=TwoWay}"
+                      AutomationProperties.Name="Hidden updates filter" />
+        </StackPanel>
+        <DataGrid x:Name="HiddenList" Grid.Row="2" ItemsSource="{Binding HiddenItems}"
                   Style="{StaticResource DataGrid.Flat}" AutoGenerateColumns="False" IsReadOnly="True"
                   SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="SelectionChanged">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Program" Binding="{Binding Name}" Width="*" />
-                <DataGridTextColumn Header="Package ID" Binding="{Binding Id}" Width="220" />
-                <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="100" />
+                <DataGridTextColumn Header="SrNo." Binding="{Binding SrNo}" Width="56" />
+                <DataGridTemplateColumn Header="Program" Width="2*" MinWidth="180" SortMemberPath="Name">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="{Binding Name}" Style="{StaticResource Cell.Primary}" />
+                                <TextBlock Text="{Binding Id}" Style="{StaticResource Cell.Secondary}" FontSize="11" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Versions" Binding="{Binding Versions}" Width="160" />
+                <DataGridTemplateColumn Header="Why hidden" Width="3*" MinWidth="220" SortMemberPath="ReasonText">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="{Binding ReasonText}" Style="{StaticResource Cell.Primary}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding ReasonDetail}" Style="{StaticResource Cell.Secondary}" TextWrapping="Wrap" ToolTip="{Binding ReasonDetail}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Comes back when" Width="2*" MinWidth="180">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding ComesBack}" Style="{StaticResource Cell.Secondary}" TextWrapping="Wrap" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="80" />
             </DataGrid.Columns>
         </DataGrid>
-        <TextBlock Grid.Row="2" Text="{Binding Error}" TextWrapping="Wrap" Margin="0,10,0,0"
+        <TextBlock Grid.Row="3" Text="{Binding Error}" TextWrapping="Wrap" Margin="0,10,0,0"
                    Foreground="{DynamicResource Brush.Warning}" />
-        <WrapPanel Grid.Row="3" Margin="0,14,0,0">
+        <WrapPanel Grid.Row="4" Margin="0,14,0,0">
             <Button x:Name="RestoreSelectedButton" Content="Restore selected" Style="{StaticResource Button.Primary}"
                     Click="RestoreSelected" IsEnabled="False" Margin="0,0,8,4" />
             <Button Content="Restore all" Style="{StaticResource Button.Secondary}" Click="RestoreAll" Margin="0,0,8,4"
-                    IsEnabled="{Binding Exclusions.Count, Converter={StaticResource ToBool}}" />
+                    IsEnabled="{Binding HiddenItems.Count, Converter={StaticResource ToBool}}" />
             <Button Content="Close" Style="{StaticResource Button.Secondary}" Click="CloseWindow" IsCancel="True" Margin="0,0,0,4" />
         </WrapPanel>
     </Grid>

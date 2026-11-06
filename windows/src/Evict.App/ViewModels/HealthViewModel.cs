@@ -290,7 +290,12 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
             if (!WingetService.IsAvailable) { Tile("outdated").Set(0, "winget (App Installer) is not available – install it from the Microsoft Store.", unavailable: true); return false; }
             var (pkgs, err) = await _services.Winget.GetUpgradesAsync(false, CancellationToken.None);
             if (pkgs.Count == 0 && err != null) { Tile("outdated").Set(0, err, unavailable: true); return false; }
-            Tile("outdated").Set(pkgs.Count, pkgs.Count == 0 ? "Every program winget knows about is up to date." : string.Join(", ", pkgs.Take(4).Select(p => p.Name)) + (pkgs.Count > 4 ? $" and {pkgs.Count - 4} more" : ""));
+            // Same filter as Software Updater: exclusions, skipped versions and version-mismatch offers are not outdated (design VM1).
+            var settings = _services.Settings.Current;
+            var view = SoftwareUpdateFilter.Classify(pkgs, settings.SoftwareUpdateExclusions, settings.HiddenSoftwareUpdates, SoftwareUpdateHidingOptions.From(settings));
+            var visible = view.Visible;
+            string hiddenNote = view.Hidden.Count == 0 ? "" : view.Hidden.Count == 1 ? " (1 hidden update not counted)" : $" ({view.Hidden.Count} hidden updates not counted)";
+            Tile("outdated").Set(visible.Count, (visible.Count == 0 ? "Every program winget knows about is up to date." : string.Join(", ", visible.Take(4).Select(p => p.Name)) + (visible.Count > 4 ? $" and {visible.Count - 4} more" : "")) + hiddenNote);
             return true;
         });
 

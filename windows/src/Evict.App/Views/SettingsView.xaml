@@ -112,6 +112,16 @@
 
             <Border Style="{StaticResource Card}" Margin="0,0,0,14" Padding="20,18" Visibility="{Binding SelectedSection, Converter={StaticResource EqualsToVis}, ConverterParameter=Updates}">
                 <StackPanel>
+                    <TextBlock Text="Software Updater" Style="{StaticResource Text.Section}" Margin="0,0,0,12" />
+                    <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding HideUnchangedSoftwareUpdates}" Content="Hide updates that don't change the installed version" />
+                    <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap" Text="For any program: when an update finishes but the same versions are offered again, or both versions are the same number written differently (1.2 and 1.2.0.0). Listed again when winget offers a different version." />
+                    <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding HideRepackagedSoftwareUpdates}" Content="Treat repackaged builds as up to date (for example 6.43.18 → 6.43.18.1)" />
+                    <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap" Text="The extra number is winget's revision of an installer for the same build. Hidden updates can be reviewed and restored in Software Updater → Hidden updates." />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14" Padding="20,18" Visibility="{Binding SelectedSection, Converter={StaticResource EqualsToVis}, ConverterParameter=Updates}">
+                <StackPanel>
                     <TextBlock Text="Updates" Style="{StaticResource Text.Section}" Margin="0,0,0,12" />
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding CheckForUpdates}" Content="Check for a new version on GitHub when Evict starts" />
                     <CheckBox Style="{StaticResource SettingRow}" IsChecked="{Binding IncludeBetaUpdates}" Content="Include beta and other prerelease updates (optional)" IsEnabled="{Binding CanChangeUpdateChannel}" />

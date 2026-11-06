@@ -74,8 +74,8 @@
                     <TextBlock Text="{Binding HistoryCount}" FontSize="24" FontWeight="Bold" Margin="0,4,0,0" /></StackPanel>
             </Border>
             <Border Style="{StaticResource Card}" Padding="15,12">
-                <StackPanel><TextBlock Text="EXCLUSIONS" Style="{StaticResource Text.Label}" />
-                    <TextBlock Text="{Binding ExclusionsLabel}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,9,0,0" /></StackPanel>
+                <StackPanel><TextBlock Text="HIDDEN" Style="{StaticResource Text.Label}" />
+                    <TextBlock Text="{Binding HiddenLabel}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,9,0,0" /></StackPanel>
             </Border>
         </UniformGrid>
 
@@ -102,8 +102,9 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
+            <StackPanel Grid.Row="0">
             <!-- 7-day summary (SH1·2) -->
-            <Border Grid.Row="0" Style="{StaticResource Card}" Padding="14,9" Margin="0,12,0,0" Visibility="{Binding HasRecentSummary, Converter={StaticResource BoolToVis}}">
+            <Border Style="{StaticResource Card}" Padding="14,9" Margin="0,12,0,0" Visibility="{Binding HasRecentSummary, Converter={StaticResource BoolToVis}}">
                 <DockPanel LastChildFill="False">
                     <TextBlock DockPanel.Dock="Left" Text="&#xE81C;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Accent}" VerticalAlignment="Center" />
                     <TextBlock DockPanel.Dock="Left" Text="Last 7 days:" Style="{StaticResource Text.Body}" FontWeight="SemiBold" Margin="9,0,0,0" VerticalAlignment="Center" />
@@ -112,6 +113,28 @@
                     <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="See history" Command="{Binding ShowHistoryCommand}" />
                 </DockPanel>
             </Border>
+
+            <!-- An update that left the installed version unchanged (design VM1 rule 1) -->
+            <Border Background="{DynamicResource Brush.Info.Subtle}" CornerRadius="8" Padding="14,10" Margin="0,12,0,0" Visibility="{Binding HasUnchangedNotice, Converter={StaticResource BoolToVis}}">
+                <DockPanel LastChildFill="True">
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE73E;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Accent}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="Dismiss" Command="{Binding DismissUnchangedCommand}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="Undo" Command="{Binding UndoUnchangedCommand}" Margin="12,0,0,0" VerticalAlignment="Center"
+                            ToolTip="List this update again" />
+                    <TextBlock Text="{Binding UnchangedNotice}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                </DockPanel>
+            </Border>
+
+            <!-- Updates left out of the list (design VM1) -->
+            <Border Style="{StaticResource Card}" Padding="14,9" Margin="0,12,0,0" Visibility="{Binding HasHiddenSummary, Converter={StaticResource BoolToVis}}">
+                <DockPanel LastChildFill="True">
+                    <TextBlock DockPanel.Dock="Left" Text="&#xE946;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Accent}" VerticalAlignment="Center" />
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding HiddenLabel}" Style="{StaticResource Text.Body}" FontWeight="SemiBold" Margin="9,0,0,0" VerticalAlignment="Center" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="Show hidden updates" Command="{Binding ManageExclusionsCommand}" Margin="12,0,0,0" />
+                    <TextBlock Text="{Binding HiddenSummary}" Style="{StaticResource Text.Caption}" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+            </Border>
+            </StackPanel>
 
             <!-- winget missing -->
             <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,14,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource InvBoolToVis}}">
@@ -161,12 +184,17 @@
                             <DataGridTemplateColumn Header="Source" Width="90" SortMemberPath="Source">
                                 <DataGridTemplateColumn.CellTemplate><DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}"><TextBlock Text="{Binding Source}" Style="{StaticResource Cell.Secondary}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Status" Width="240">
+                            <DataGridTemplateColumn Header="Status" Width="320">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate DataType="{x:Type vm:UpgradeItemViewModel}">
                                         <StackPanel Orientation="Horizontal">
                                             <ProgressBar IsIndeterminate="True" Width="60" Margin="0,0,8,0" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
                                             <TextBlock Text="{Binding Status}" Style="{StaticResource Cell.Secondary}" ToolTip="{Binding Status}" />
+                                            <Button Style="{StaticResource Button.Link}" Content="Skip version" Margin="8,0,0,0"
+                                                    Command="{Binding DataContext.SkipVersionCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}"
+                                                    IsEnabled="{Binding DataContext.CanEditSelection, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    Visibility="{Binding IsUpdating, Converter={StaticResource InvBoolToVis}}"
+                                                    ToolTip="Hide this version only. A newer version is listed again." />
                                             <!-- Last try did not work (SH1·2): opens that entry in History -->
                                             <Button Style="{StaticResource Button.Link}" Content="{Binding LastResultNote}" Visibility="{Binding HasLastResultNote, Converter={StaticResource BoolToVis}}"
                                                     Command="{Binding DataContext.OpenHistoryEntryCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}"
@@ -197,9 +225,12 @@
                 <WrapPanel Grid.ColumnSpan="2" Margin="0,0,0,10">
                     <Button Style="{StaticResource Button.Secondary}" Content="Select All" Command="{Binding SelectAllCommand}" Margin="0,0,8,4" />
                     <Button Style="{StaticResource Button.Secondary}" Content="Select None" Command="{Binding SelectNoneCommand}" Margin="0,0,8,4" />
+                    <Button Style="{StaticResource Button.Secondary}" Content="Skip selected version" Command="{Binding SkipSelectedVersionsCommand}" Margin="0,0,8,4"
+                            ToolTip="Hide only the offered version of the selected packages. A newer version is listed again." />
                     <Button Style="{StaticResource Button.Secondary}" Content="Exclude selected" Command="{Binding ExcludeSelectedCommand}" Margin="0,0,8,4"
                             ToolTip="Hide selected packages from this and future checks until restored." />
-                    <Button Style="{StaticResource Button.Secondary}" Content="{Binding ExclusionsLabel}" Command="{Binding ManageExclusionsCommand}" Margin="0,0,0,4" />
+                    <Button Style="{StaticResource Button.Secondary}" Content="{Binding HiddenLabel}" Command="{Binding ManageExclusionsCommand}" Margin="0,0,0,4"
+                            ToolTip="Updates left out of the list: already up to date, skipped versions and excluded programs." />
                 </WrapPanel>
                 <StackPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="Run" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="0,0,6,0" />
