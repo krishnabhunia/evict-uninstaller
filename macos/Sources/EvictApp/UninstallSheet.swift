@@ -71,6 +71,12 @@ struct UninstallSheet: View {
 
     private var reviewList: some View {
         List {
+            if !state.runningAppNames.isEmpty {
+                Section {
+                    Label("This application is running. Save your work and quit it before removing its files.", systemImage: "app.badge.checkmark")
+                    Button("Quit \(plan.app.name)") { Task { await state.quitPlannedApplication() } }
+                }
+            }
             if let cask = plan.homebrewCask {
                 Section {
                     Label("Installed with Homebrew. Removing it here leaves Homebrew's record behind – run \"\(HomebrewService.uninstallCommand(cask: cask))\" in Terminal instead to keep Homebrew tidy.",
@@ -121,6 +127,11 @@ struct UninstallSheet: View {
                             .foregroundStyle(.orange)
                     }
                     if !result.failed.isEmpty {
+                        Button("Review failed items again") {
+                            state.planSelection = Set(result.failed.map(\.path)).intersection(Set(plan.allItems.map(\.id)))
+                            state.refreshRunningApplications(for: plan.app)
+                            step = .review
+                        }
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Not removed").font(.headline)
                             ForEach(result.failed.indices, id: \.self) { index in
@@ -182,10 +193,11 @@ struct UninstallSheet: View {
 
     private func startRemoval() {
         guard !state.isRemoving, !selectedItems.isEmpty else { return }
+        state.removalResult = nil
         step = .working
         Task {
             await state.performRemoval()
-            step = .done
+            step = state.removalResult == nil ? .review : .done
         }
     }
 }

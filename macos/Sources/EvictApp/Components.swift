@@ -4,6 +4,53 @@ import AppKit
 import EvictKit
 import UniformTypeIdentifiers
 
+enum EvictTheme {
+    static let accent = Color(red: 0.96, green: 0.36, blue: 0.23)
+    static let sidebar = Color(red: 0.075, green: 0.10, blue: 0.17)
+    static let panel = Color(nsColor: .controlBackgroundColor)
+}
+
+struct MetricCard: View {
+    let title: String
+    let value: String
+    let icon: String
+    var tint: Color = EvictTheme.accent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Image(systemName: icon).font(.title3).foregroundStyle(tint)
+            Text(value).font(.system(.title2, design: .rounded, weight: .semibold)).monospacedDigit()
+            Text(title).font(.callout).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(EvictTheme.panel, in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(.primary.opacity(0.07)))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct MaintenanceActionCard: View {
+    let title: String
+    let detail: String
+    let icon: String
+    let button: String
+    let action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: icon).font(.headline).foregroundStyle(EvictTheme.accent)
+            Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button(button, action: action).buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, minHeight: 125, alignment: .leading)
+        .padding(17)
+        .background(EvictTheme.panel, in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(.primary.opacity(0.07)))
+    }
+}
+
 /// Page title with an optional subtitle and trailing controls.
 struct PageHeader<Trailing: View>: View {
     let title: String
