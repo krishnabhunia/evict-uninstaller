@@ -150,10 +150,10 @@ def is_document_or_test(path: str) -> bool:
 
 
 def affects_platform(paths: list[str], platform: str) -> bool:
-    # Windows tags identify the delivery containing both native applications.
-    native_platforms = ("windows", "macos") if platform == "windows" else ("macos",)
-    workflows = ((".github/workflows/windows.yml", ".github/workflows/macos.yml")
-                 if platform == "windows" else (".github/workflows/macos.yml",))
+    # Native releases are independent. A Windows download may carry a previously
+    # verified Mac installer; this does not make a Mac source change a Windows release.
+    native_platforms = (platform,)
+    workflows = (f".github/workflows/{'windows' if platform == 'windows' else 'macos'}.yml",)
     for path in paths:
         path = path.replace("\\", "/")
         if is_document_or_test(path):
@@ -227,11 +227,8 @@ def release_intent(message: str, metadata: dict[str, Any] | None, platform: str)
 
 
 def bundle_intent(message: str, metadata: dict[str, Any] | None, paths: list[str], platform: str) -> Bump:
-    """The shared delivery must also carry eligible Mac release intent."""
-    intent = release_intent(message, metadata, platform)
-    if platform == "windows" and affects_platform(paths, "macos"):
-        intent = max(intent, release_intent(message, metadata, "macos"))
-    return intent
+    """Each native pipeline follows only its own release intent."""
+    return release_intent(message, metadata, platform)
 
 
 def release_test_request(event: dict[str, Any], repository: str, platform: str, mode: str) -> tuple[str, CoreVersion | None] | None:

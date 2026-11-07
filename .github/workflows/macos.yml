@@ -1,0 +1,362 @@
+name: Evict macOS Build & Release
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    paths: ['macos/**', 'scripts/versioning.py', 'scripts/release_notes_check.py', '.github/release-policy.json', '.github/workflows/macos.yml']
+  push:
+    branches: [main]
+    paths: ['macos/**', 'scripts/versioning.py', 'scripts/release_notes_check.py', '.github/release-policy.json', '.github/workflows/macos.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: evict-native-macos-release
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      core_version: ${{ steps.plan.outputs.core_version }}
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      publish: ${{ steps.plan.outputs.publish }}
+      trusted: ${{ steps.source.outputs.trusted }}
+      artifact: ${{ steps.artifact.outputs.name }}
+    steps:
+      - name: Select current platform source
+        id: source
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (pr) {
+              core.setOutput('sha', pr.head.sha);
+              core.setOutput('trusted', String(pr.head.repo.full_name === process.env.GITHUB_REPOSITORY && pr.user.type === 'User' && context.payload.sender?.type === 'User'));
+            } else {
+              if (context.ref !== 'refs/heads/main') throw new Error('Stable releases require main.');
+              const {data} = await github.rest.git.getRef({...context.repo, ref:'heads/main'});
+              core.setOutput('sha', data.object.sha);
+              core.setOutput('trusted', 'true');
+            }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Test native release policy
+        run: python -m unittest discover -s macos/Scripts/tests -p 'test_*.py' -v
+      - name: Plan native release and implementation notes
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: ${{ github.event_name == 'pull_request' && 'beta' || 'stable' }}
+        run: python macos/Scripts/prepare-release.py --mode "$RELEASE_MODE" --out NativePlan
+      - name: Record plan artifact identity
+        id: artifact
+        env:
+          PLAN_ARTIFACT_NAME: macos-plan-${{ github.run_id }}-${{ github.run_attempt }}
+        run: echo "name=$PLAN_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: NativePlan/manifest.json
+          retention-days: 1
+          if-no-files-found: error
+
+  # API-only version freezing: no PR code executes with repository write credentials.
+  freeze:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true' && needs.plan.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      source_sha: ${{ steps.freeze.outputs.source_sha }}
+      temp_ref: ${{ steps.freeze.outputs.temp_ref }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.plan.outputs.artifact }}
+          path: NativePlan
+      - name: Validate and freeze native metadata
+        id: freeze
+        uses: actions/github-script@v9
+        env:
+          EXPECTED_SOURCE: ${{ needs.plan.outputs.source_sha }}
+          EXPECTED_VERSION: ${{ needs.plan.outputs.version }}
+          EXPECTED_CORE: ${{ needs.plan.outputs.core_version }}
+        with:
+          script: |
+            const fs = require('fs');
+            const stat = fs.lstatSync('NativePlan/manifest.json');
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1000000) throw new Error('Unsafe version manifest.');
+            const m = JSON.parse(fs.readFileSync('NativePlan/manifest.json', 'utf8')), p = m.plan;
+            const pr = context.payload.pull_request, isBeta = Boolean(pr);
+            const coreVersion = process.env.EXPECTED_CORE, version = process.env.EXPECTED_VERSION, source = process.env.EXPECTED_SOURCE;
+            const allowed = ['macos/Sources/EvictKit/Version.swift', 'macos/CHANGELOG.md'];
+            if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(coreVersion) ||
+                version !== (isBeta ? coreVersion + version.slice(coreVersion.length) : coreVersion) ||
+                !new RegExp('^' + coreVersion.replaceAll('.', '\\.') + (isBeta ? '-beta(?!000)\\d{3}$' : '$')).test(version) ||
+                !/^[a-f0-9]{40}$/.test(source) || p.source_sha !== source || p.version !== version || p.core_version !== coreVersion ||
+                p.tag !== 'mac-v' + version || p.channel !== (isBeta ? 'beta' : 'stable') || p.prerelease !== isBeta ||
+                JSON.stringify(Object.keys(m.files).sort()) !== JSON.stringify([...allowed].sort()) ||
+                !Array.isArray(p.notes) || p.notes.some(n => typeof n !== 'string' || n.length > 2000) ||
+                !/^\d{4}-\d{2}-\d{2}$/.test(p.sync_date) || Math.abs(Date.now() - Date.parse(p.sync_date)) > 172800000) throw new Error('Invalid native release metadata.');
+            const {data: main} = await github.rest.git.getRef({...context.repo, ref:'heads/main'});
+            if (isBeta) {
+              const {data: current} = await github.rest.pulls.get({...context.repo, pull_number: pr.number});
+              if (current.state !== 'open' || current.head.sha !== source || current.base.ref !== 'main' ||
+                  pr.head.repo.full_name !== process.env.GITHUB_REPOSITORY || pr.user.type !== 'User' || context.payload.sender?.type !== 'User') throw new Error('PR changed or is not a trusted source.');
+            } else if (context.ref !== 'refs/heads/main' || main.object.sha !== source) throw new Error('Main advanced; rerun release planning.');
+            const {data: original} = await github.rest.git.getCommit({...context.repo, commit_sha: source});
+            const entries = [];
+            const normalize = s => s.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+            function changelog(text) {
+              const marker = '<!-- Evict automatic release; base: ' + (p.base_tag || 'initial') + ' -->';
+              const heading = /^## (.+)$/m.exec(text);
+              if (heading) {
+                const start = heading.index, he = start + heading[0].length, next = /^## /m.exec(text.slice(he));
+                const end = next ? he + next.index : text.length, first = text.slice(he, end);
+                if (heading[1].toLowerCase().includes('not published') || heading[1].toLowerCase() === 'unreleased' || first.includes(marker)) {
+                  let section = first.trim().replace(/^<!-- Evict automatic release; base: .* -->\n?/gm, '').trim();
+                  for (const note of p.notes) if (!section.includes('- ' + note)) section += (section ? '\n' : '') + '- ' + note;
+                  return text.slice(0, start) + '## ' + coreVersion + ' — ' + p.sync_date + '\n\n' + marker + '\n\n' + section + '\n\n' + text.slice(end).replace(/^\n+/, '');
+                }
+                if (heading[1] === coreVersion || heading[1].startsWith(coreVersion + ' ')) return text;
+              }
+              const section = '## ' + coreVersion + ' — ' + p.sync_date + '\n\n' + marker + '\n\n' + (p.notes.map(n => '- ' + n).join('\n') || '- Maintenance changes.') + '\n\n';
+              return heading ? text.slice(0, heading.index) + section + text.slice(heading.index) : text.trimEnd() + '\n\n' + section;
+            }
+            for (const path of allowed) {
+              const {data: file} = await github.rest.repos.getContent({...context.repo, path, ref: source});
+              const text = normalize(Buffer.from(file.content, 'base64').toString('utf8'));
+              let expected;
+              if (path.endsWith('Version.swift')) {
+                const old = text.match(/public static let current\s*=\s*"([^"]+)"/)?.[1];
+                const build = text.match(/public static let build\s*=\s*"([0-9]+)"/)?.[1];
+                if (!old || !build) throw new Error('Native version source is missing.');
+                // Use the exact same two scalar replacements as the reviewed version engine.
+                expected = text.replace(/(public static let current\s*=\s*")[^"]+(")/, '$1' + coreVersion + '$2');
+                if (old !== coreVersion) expected = expected.replace(/(public static let build\s*=\s*")[0-9]+(")/, '$1' + (Number(build) + 1) + '$2');
+              } else expected = changelog(text);
+              if (m.files[path] !== expected) throw new Error('Noncanonical generated file: ' + path);
+              entries.push({path, mode:'100644', type:'blob', content:expected});
+            }
+            if (isBeta) {
+              const {data: base} = await github.rest.git.getCommit({...context.repo, commit_sha: main.object.sha});
+              const {data: tree} = await github.rest.git.getTree({...context.repo, tree_sha: base.tree.sha, recursive:'true'});
+              if (tree.truncated) throw new Error('Incomplete main tree.');
+              const workflows = tree.tree.find(e => e.path === '.github/workflows' && e.type === 'tree');
+              if (!workflows) throw new Error('Missing reviewed workflow tree.');
+              entries.push({path:'.github/workflows', mode:'040000', type:'tree', sha:workflows.sha});
+            }
+            const {data: tree} = await github.rest.git.createTree({...context.repo, base_tree:original.tree.sha, tree:entries});
+            const {data: commit} = await github.rest.git.createCommit({...context.repo, tree:tree.sha,
+              parents:[isBeta ? main.object.sha : source],
+              message:(isBeta ? 'macOS beta ' + version + ' for PR #' + pr.number : 'chore(release): macos ' + coreVersion) + '\n\nOriginal source: ' + source});
+            if (isBeta) {
+              const ref = 'heads/beta-build/macos/pr-' + pr.number + '/run-' + context.runId + '-attempt-' + process.env.GITHUB_RUN_ATTEMPT;
+              await github.rest.git.createRef({...context.repo, ref:'refs/' + ref, sha:commit.sha});
+              core.setOutput('temp_ref', ref);
+            } else {
+              const {data: live} = await github.rest.git.getRef({...context.repo, ref:'heads/main'});
+              if (live.object.sha !== source) throw new Error('Main advanced before metadata commit.');
+              await github.rest.git.updateRef({...context.repo, ref:'heads/main', sha:commit.sha, force:false});
+            }
+            core.setOutput('source_sha', commit.sha);
+
+  build:
+    needs: [plan, freeze]
+    if: always() && needs.plan.result == 'success' && (needs.freeze.result == 'success' || needs.freeze.result == 'skipped')
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.artifact.outputs.name }}
+      source_sha: ${{ needs.freeze.outputs.source_sha || needs.plan.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.freeze.outputs.source_sha || needs.plan.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.plan.outputs.artifact }}
+          path: NativePlan
+      - name: Apply read-only build metadata and offline release notes
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          m = json.loads(pathlib.Path('NativePlan/manifest.json').read_text())
+          for path in ('macos/Sources/EvictKit/Version.swift', 'macos/CHANGELOG.md'):
+              pathlib.Path(path).write_text(m['files'][path])
+          pathlib.Path('macos/Resources/release-notes.md').write_text(m['notes'])
+          PY
+      - name: Test native application and policy
+        run: |
+          python -m unittest discover -s macos/Scripts/tests -p 'test_*.py' -v
+          swift test --package-path macos
+      - name: Build and verify Apple Silicon and Intel application
+        env:
+          EVICT_RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          bash macos/Scripts/make-app.sh --universal
+          lipo macos/build/Evict.app/Contents/MacOS/Evict -verify_arch arm64 x86_64
+          bash macos/Scripts/smoke-launch.sh macos/build/Evict.app
+          bash macos/Scripts/make-dmg.sh "$EVICT_RELEASE_VERSION"
+          python macos/Scripts/verify-release.py NativePlan/manifest.json "macos/build/Evict-$EVICT_RELEASE_VERSION.zip"
+      - name: Package native release assets
+        id: artifact
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          SOURCE_SHA: ${{ needs.freeze.outputs.source_sha || needs.plan.outputs.source_sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, shutil
+          version = os.environ['RELEASE_VERSION']
+          root = pathlib.Path('NativeRelease'); root.mkdir()
+          m = json.loads(pathlib.Path('NativePlan/manifest.json').read_text())
+          for ext, source in [('zip', f'macos/build/Evict-{version}.zip'), ('dmg', f'macos/build/Evict_{version}.dmg')]:
+              target = root / f'Evict-{version}-macOS-universal.{ext}'
+              shutil.copyfile(source, target)
+              (root / (target.name + '.sha256')).write_text(hashlib.sha256(target.read_bytes()).hexdigest() + '  ' + target.name + '\n')
+          (root / 'release-notes.md').write_text(m['notes'])
+          (root / 'release.json').write_text(json.dumps({'version':version, 'core':m['plan']['core_version'], 'source':os.environ['SOURCE_SHA'], 'original':m['plan']['source_sha']}))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out: out.write(f'name=Evict-macOS-{version}\n')
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: NativeRelease/
+          if-no-files-found: error
+          overwrite: true
+      - name: Record native validation
+        run: |
+          printf '%s\n' '### macOS validation' 'Swift tests, Apple Silicon and Intel build, signature verification, application launch and native ZIP/DMG validation passed.' >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: [plan, freeze, build]
+    if: always() && needs.build.result == 'success' && needs.freeze.result == 'success' && needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: NativeRelease
+      - name: Publish immutable macOS release
+        uses: actions/github-script@v9
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_SOURCE: ${{ needs.build.outputs.source_sha }}
+          ORIGINAL_SOURCE: ${{ needs.plan.outputs.source_sha }}
+        with:
+          script: |
+            const fs = require('fs'), crypto = require('crypto');
+            const version = process.env.RELEASE_VERSION, source = process.env.RELEASE_SOURCE, original = process.env.ORIGINAL_SOURCE;
+            const beta = Boolean(context.payload.pull_request), tag = 'mac-v' + version;
+            if (!/^\d+\.\d+\.\d+(?:-beta(?!000)\d{3})?$/.test(version) || version.includes('-beta') !== beta || !/^[a-f0-9]{40}$/.test(source)) throw new Error('Invalid macOS release identity.');
+            if (beta) {
+              const pr = context.payload.pull_request;
+              const {data: live} = await github.rest.pulls.get({...context.repo, pull_number:pr.number});
+              if (live.state !== 'open' || live.head.sha !== original || pr.head.repo.full_name !== process.env.GITHUB_REPOSITORY) throw new Error('PR advanced during build.');
+            } else {
+              if (context.ref !== 'refs/heads/main') throw new Error('Stable publication requires main.');
+              const {data: comparison} = await github.rest.repos.compareCommits({...context.repo, base:source, head:'main'});
+              if (!['ahead','identical'].includes(comparison.status)) throw new Error('Stable source is not on main.');
+            }
+            const names = ['zip','dmg'].flatMap(ext => ['Evict-' + version + '-macOS-universal.' + ext, 'Evict-' + version + '-macOS-universal.' + ext + '.sha256']);
+            const actual = fs.readdirSync('NativeRelease').sort();
+            if (JSON.stringify(actual) !== JSON.stringify([...names,'release-notes.md','release.json'].sort())) throw new Error('Unexpected release assets.');
+            for (const name of actual) {
+              const stat = fs.lstatSync('NativeRelease/' + name);
+              if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 134217728) throw new Error('Unsafe release asset.');
+            }
+            const metadata = JSON.parse(fs.readFileSync('NativeRelease/release.json', 'utf8'));
+            if (metadata.version !== version || metadata.source !== source || metadata.original !== original) throw new Error('Artifact provenance differs.');
+            for (const ext of ['zip','dmg']) {
+              const name = 'Evict-' + version + '-macOS-universal.' + ext;
+              const hash = crypto.createHash('sha256').update(fs.readFileSync('NativeRelease/' + name)).digest('hex');
+              if (fs.readFileSync('NativeRelease/' + name + '.sha256','utf8') !== hash + '  ' + name + '\n') throw new Error('Checksum mismatch.');
+            }
+            let target;
+            try { target = (await github.rest.git.getRef({...context.repo, ref:'tags/' + tag})).data.object; }
+            catch (e) { if (e.status !== 404) throw e; target = (await github.rest.git.createRef({...context.repo,ref:'refs/tags/' + tag,sha:source})).data.object; }
+            if (target.type !== 'commit' || target.sha !== source) throw new Error('An immutable macOS tag already belongs to another build.');
+            const body = fs.readFileSync('NativeRelease/release-notes.md','utf8') + '\nPlatform: macOS (Apple Silicon and Intel)\nNative version: ' + version + '\nBuilt and tested release source: ' + source + '\nOriginal source: ' + original + '\nVerification run: https://github.com/' + process.env.GITHUB_REPOSITORY + '/actions/runs/' + context.runId + '\n\n' +
+              'Installation: drag Evict.app into Applications. This build is ad-hoc signed; macOS may require explicit Open Anyway approval in Privacy & Security. Updates never remove quarantine or weaken Gatekeeper.';
+            let release;
+            try { release = (await github.rest.repos.getReleaseByTag({...context.repo,tag})).data; }
+            catch (e) { if (e.status !== 404) throw e; }
+            if (release && !release.draft) {
+              if (release.body !== body || release.prerelease !== beta) throw new Error('Published release metadata changed.');
+              const assets = await github.paginate(github.rest.repos.listReleaseAssets,{...context.repo,release_id:release.id,per_page:100});
+              if (JSON.stringify(assets.map(a => a.name).sort()) !== JSON.stringify([...names].sort())) throw new Error('Published release assets are incomplete.');
+              for (const asset of assets) {
+                const bytes = fs.readFileSync('NativeRelease/' + asset.name);
+                const digest = 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex');
+                if (asset.state !== 'uploaded' || asset.size !== bytes.length || asset.digest !== digest) throw new Error('Published bytes differ from the verified artifact.');
+              }
+              core.info('This exact native release is already published.'); return;
+            }
+            if (!release) release = (await github.rest.repos.createRelease({...context.repo,tag_name:tag,target_commitish:source,name:'Evict ' + version + ' — macOS',body,draft:true,prerelease:beta,make_latest:'false'})).data;
+            const existing = await github.paginate(github.rest.repos.listReleaseAssets,{...context.repo,release_id:release.id,per_page:100});
+            if (existing.some(a => !names.includes(a.name))) throw new Error('Draft contains unexpected assets.');
+            for (const name of names) {
+              const bytes = fs.readFileSync('NativeRelease/' + name), old = existing.find(a => a.name === name);
+              if (old) {
+                const digest = 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex');
+                if (old.size !== bytes.length || old.digest !== digest) throw new Error('Refusing to overwrite different asset bytes.');
+                continue;
+              }
+              await github.rest.repos.uploadReleaseAsset({...context.repo,release_id:release.id,name,data:bytes,headers:{'content-type':'application/octet-stream','content-length':bytes.length}});
+            }
+            const finalAssets = await github.paginate(github.rest.repos.listReleaseAssets,{...context.repo,release_id:release.id,per_page:100});
+            if (JSON.stringify(finalAssets.map(a => a.name).sort()) !== JSON.stringify([...names].sort()) || finalAssets.some(a => a.state !== 'uploaded')) throw new Error('Native asset upload is incomplete.');
+            const {data: published} = await github.rest.repos.updateRelease({...context.repo,release_id:release.id,body,draft:false,prerelease:beta,make_latest:'false'});
+            await core.summary.addLink('Download Evict ' + version + ' for macOS', published.html_url).write();
+
+  cleanup-source:
+    needs: [freeze, build, publish]
+    # Failed builds/publications retain their exact source for "Re-run failed jobs".
+    if: always() && needs.freeze.outputs.temp_ref != '' && needs.build.result == 'success' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/github-script@v9
+        env:
+          TEMP_REF: ${{ needs.freeze.outputs.temp_ref }}
+          SOURCE_SHA: ${{ needs.freeze.outputs.source_sha }}
+        with:
+          script: |
+            const ref = process.env.TEMP_REF, pr = context.payload.pull_request;
+            const match = /^heads\/beta-build\/macos\/pr-([1-9]\d*)\/run-([1-9]\d*)-attempt-([1-9]\d*)$/.exec(ref);
+            if (!pr || !match || match[1] !== String(pr.number) || match[2] !== String(context.runId) ||
+                Number(match[3]) > Number(process.env.GITHUB_RUN_ATTEMPT) ||
+                !/^[a-f0-9]{40}$/.test(process.env.SOURCE_SHA || '')) throw new Error('Unexpected temporary source ref.');
+            let data;
+            try { data = (await github.rest.git.getRef({...context.repo,ref})).data; }
+            catch (error) {
+              if (error.status !== 404) throw error;
+              core.info('This verified temporary source ref was already removed.'); return;
+            }
+            if (data.object.sha !== process.env.SOURCE_SHA) throw new Error('Temporary source ref advanced.');
+            try { await github.rest.git.deleteRef({...context.repo,ref}); }
+            catch (error) { if (error.status !== 404) throw error; }
