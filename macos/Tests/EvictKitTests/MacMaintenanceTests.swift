@@ -151,12 +151,26 @@ final class MacMaintenanceTests: XCTestCase {
             try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("Apps/link"),
                                                        withDestinationURL: directory.appendingPathComponent("Outside"))
             let snapshot = MacInstallMonitor.capture(roots: [directory.appendingPathComponent("Apps").path])
+            XCTAssertEqual(Set(snapshot.entries.map { URL(fileURLWithPath: $0.path).lastPathComponent }), ["direct", "vendor", "deep"])
             XCTAssertFalse(snapshot.entries.contains { $0.path.contains("/link") })
             XCTAssertFalse(snapshot.entries.contains { $0.path.hasSuffix("deep/file") })
             XCTAssertFalse(snapshot.incomplete)
             let bounded = MacInstallMonitor.capture(roots: [directory.appendingPathComponent("Apps").path], maximumEntries: 1)
             XCTAssertEqual(bounded.entries.count, 1)
             XCTAssertTrue(bounded.incomplete)
+        }
+    }
+
+    func testInstallMonitorRejectsLinkedRootWithoutFollowingItsContents() throws {
+        try fixture { directory in
+            let target = directory.appendingPathComponent("Outside")
+            try write("private", to: target.appendingPathComponent("private"))
+            let linkedRoot = directory.appendingPathComponent("LinkedApps")
+            try FileManager.default.createSymbolicLink(at: linkedRoot, withDestinationURL: target)
+            let snapshot = MacInstallMonitor.capture(roots: [linkedRoot.path])
+            XCTAssertTrue(snapshot.entries.isEmpty)
+            XCTAssertTrue(snapshot.incomplete)
+            XCTAssertEqual(snapshot.warnings.count, 1)
         }
     }
 

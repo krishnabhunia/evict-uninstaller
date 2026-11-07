@@ -117,7 +117,9 @@ public struct StartupAgentControl: Sendable {
             throw StartupAgentError.query("macOS returned an unrecognized startup override list.")
         }
         let body = trimmed[trimmed.index(after: opening)..<trimmed.index(before: trimmed.endIndex)]
-        let expression = try NSRegularExpression(pattern: #"^\s*"([^"\r\n]+)"\s*=>\s*(true|false)\s*[,;]?\s*$"#)
+        // Ventura and later print enabled/disabled; older launchctl versions use
+        // false/true for the same disabled override. Unknown tokens still fail closed.
+        let expression = try NSRegularExpression(pattern: #"^\s*"([^"\r\n]+)"\s*=>\s*(true|false|enabled|disabled)\s*[,;]?\s*$"#)
         var result: [String: Bool] = [:]
         for raw in body.split(separator: "\n") {
             let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -129,7 +131,8 @@ public struct StartupAgentControl: Sendable {
             }
             let label = ns.substring(with: match.range(at: 1))
             guard result[label] == nil else { throw StartupAgentError.query("macOS returned duplicate startup overrides.") }
-            result[label] = ns.substring(with: match.range(at: 2)) == "true"
+            let value = ns.substring(with: match.range(at: 2))
+            result[label] = value == "true" || value == "disabled"
         }
         return result
     }

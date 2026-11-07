@@ -87,7 +87,9 @@ public enum MacInstallMonitor {
             }
             for case let url as URL in walker {
                 if entries.count >= maximumEntries { incomplete = true; break }
-                let depth = url.path.dropFirst(root.count).split(separator: "/").count
+                // Foundation may canonicalize /var and /private/var differently for
+                // returned URLs. Traversal depth must not depend on path-string lengths.
+                let depth = walker.level
                 if depth >= 2 { walker.skipDescendants() }
                 if depth > 2 { continue }
                 guard seen.insert(url.path).inserted,

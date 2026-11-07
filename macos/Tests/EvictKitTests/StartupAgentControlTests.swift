@@ -34,7 +34,7 @@ final class StartupAgentControlTests: XCTestCase {
             case "print-disabled":
                 if queryFailure { return .init(status: 13, stdout: "", stderr: "Permission denied") }
                 if malformedOverrides { return .init(status: 0, stdout: "unrecognized output", stderr: "") }
-                let row = disabled.map { "\"\(label)\" => \($0 ? "true" : "false")\n" } ?? ""
+                let row = disabled.map { "\"\(label)\" => \($0 ? "disabled" : "enabled")\n" } ?? ""
                 return .init(status: 0, stdout: "disabled services = {\n" + row + "}\n", stderr: "")
             case "print":
                 if queryFailure || serviceQueryFailure { return .init(status: 124, stdout: "", stderr: "Timed out") }
@@ -274,12 +274,32 @@ final class StartupAgentControlTests: XCTestCase {
         XCTAssertFalse(StartupAgentControl.validLabel("org.fixture/other"))
     }
 
+    func testDisabledParserAcceptsExactModernAndLegacyStates() throws {
+        let output = """
+        disabled services = {
+            "org.fixture.enabled" => enabled
+            "org.fixture.disabled" => disabled
+            "org.fixture.legacy.enabled" => false
+            "org.fixture.legacy.disabled" => true
+        }
+        """
+        XCTAssertEqual(try StartupAgentControl.parseDisabledServices(output), [
+            "org.fixture.enabled": false, "org.fixture.disabled": true,
+            "org.fixture.legacy.enabled": false, "org.fixture.legacy.disabled": true
+        ])
+        for value in ["enable", "disable", "disabled-extra", "enabled false", "1", "0"] {
+            XCTAssertThrowsError(try StartupAgentControl.parseDisabledServices("disabled services = {\n \"org.fixture\" => \(value)\n}"))
+        }
+        XCTAssertThrowsError(try StartupAgentControl.parseDisabledServices("disabled services = {\n \"org.fixture\" => enabled\n \"org.fixture\" => disabled\n}"))
+    }
+
     #if os(macOS)
     func testNativeLaunchctlCanInspectAnAbsentFixtureWithoutChangingJobs() throws {
         let domain = "gui/\(getuid())"
         let output = Shell.run("/bin/launchctl", ["print-disabled", domain], timeout: 10)
         guard output.ok else { throw XCTSkip("No readable GUI launchd domain is available on this runner.") }
-        XCTAssertNoThrow(try StartupAgentControl.parseDisabledServices(output.stdout))
+        XCTAssertNoThrow(try StartupAgentControl.parseDisabledServices(output.stdout),
+                         "launchctl print-disabled returned: \(String(output.stdout.prefix(2_048)))")
         try fixture { directory in
             let item = try job(directory, label: "org.evict.fixture." + UUID().uuidString)
             let control = StartupAgentControl(root: (item.path as NSString).deletingLastPathComponent,
@@ -287,6 +307,42 @@ final class StartupAgentControlTests: XCTestCase {
             let inspected = try control.inspect(item)
             XCTAssertFalse(inspected.isLoaded)
             XCTAssertFalse(inspected.isDisabled)
+        }
+    }
+
+    func testNativeLaunchctlVerifiesLoadedFixtureAndBootoutWithoutOverrides() throws {
+        let domain = "gui/\(getuid())"
+        let available = Shell.run("/bin/launchctl", ["print-disabled", domain], timeout: 10)
+        guard available.ok else { throw XCTSkip("No readable GUI launchd domain is available on this runner.") }
+        try fixture { directory in
+            let item = try job(directory, label: "org.evict.fixture." + UUID().uuidString, program: "/usr/bin/true")
+            let control = StartupAgentControl(root: (item.path as NSString).deletingLastPathComponent,
+                runner: { Shell.run($0, $1, timeout: 10) })
+            let target = domain + "/" + item.label
+            let initialOverrides = try StartupAgentControl.parseDisabledServices(available.stdout)
+            XCTAssertNil(initialOverrides[item.label])
+            XCTAssertFalse(try control.inspect(item).isLoaded)
+            // The fixture exits immediately. It has no KeepAlive, writes nothing and
+            // is never enabled/disabled, so no persistent override is created.
+            defer {
+                _ = Shell.run("/bin/launchctl", ["bootout", target], timeout: 10)
+                do { XCTAssertFalse(try control.inspect(item).isLoaded, "Fixture cleanup left a loaded job.") }
+                catch { XCTFail("Could not verify fixture cleanup: \(error.localizedDescription)") }
+            }
+            let bootstrap = Shell.run("/bin/launchctl", ["bootstrap", domain, item.path], timeout: 10)
+            XCTAssertTrue(bootstrap.ok, "Fixture bootstrap: \(String(bootstrap.stderr.prefix(2_048)))")
+            guard bootstrap.ok else { return }
+            let loadedOutput = Shell.run("/bin/launchctl", ["print", target], timeout: 10)
+            XCTAssertNoThrow(try control.inspect(item), "Fixture print output: \(String(loadedOutput.stdout.prefix(2_048)))")
+            let loaded = try control.inspect(item)
+            XCTAssertTrue(loaded.isLoaded, "Fixture print output: \(String(loadedOutput.stdout.prefix(2_048)))")
+            XCTAssertFalse(loaded.isDisabled)
+            let bootout = Shell.run("/bin/launchctl", ["bootout", target], timeout: 10)
+            XCTAssertTrue(bootout.ok, "Fixture bootout: \(String(bootout.stderr.prefix(2_048)))")
+            XCTAssertFalse(try control.inspect(item).isLoaded)
+            let finalOutput = Shell.run("/bin/launchctl", ["print-disabled", domain], timeout: 10)
+            XCTAssertTrue(finalOutput.ok)
+            XCTAssertNil(try StartupAgentControl.parseDisabledServices(finalOutput.stdout)[item.label])
         }
     }
     #endif
