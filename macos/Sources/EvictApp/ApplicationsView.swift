@@ -16,6 +16,7 @@ struct ApplicationsView: View {
     @AppStorage("applications.sortColumn") private var storedSortColumn = AppColumn.name.rawValue
     @AppStorage("applications.sortAscending") private var storedSortAscending = true
     @State private var restoredSort = false
+    @State private var filter: MacApplicationFilter = .all
 
     // ── sorting ──
 
@@ -47,7 +48,7 @@ struct ApplicationsView: View {
     private var sortAscending: Bool { (sortOrder.first?.order ?? .forward) == .forward }
 
     private var rows: [InstalledApp] {
-        ApplicationsTable.sorted(state.visibleApps, by: sortColumn, ascending: sortAscending)
+        ApplicationsTable.sorted(state.visibleApps.filter { filter.includes($0) }, by: sortColumn, ascending: sortAscending)
     }
 
     private var selectedApps: [InstalledApp] { rows.filter { state.selection.contains($0.id) } }
@@ -66,6 +67,33 @@ struct ApplicationsView: View {
                 }
                 .disabled(state.isScanning)
             }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140))], spacing: 10) {
+                MetricCard(title: "All applications", value: "\(state.apps.count)", icon: "square.grid.2x2")
+                MetricCard(title: "Installed in 30 days", value: "\(state.apps.filter { MacApplicationFilter.recent.includes($0) }.count)", icon: "calendar")
+                MetricCard(title: "At least 1 GB", value: "\(state.apps.filter { MacApplicationFilter.large.includes($0) }.count)", icon: "internaldrive")
+                MetricCard(title: "Application storage", value: ByteFormat.string(state.totalSize), icon: "chart.bar")
+            }
+            .padding(.horizontal, 20).padding(.bottom, 12)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(MacApplicationFilter.allCases) { option in
+                        Button {
+                            filter = option
+                            state.selection.formIntersection(rows.map(\.id))
+                        } label: {
+                            Text(option.rawValue).font(.callout)
+                                .padding(.horizontal, 11).padding(.vertical, 6)
+                                .foregroundStyle(filter == option ? EvictTheme.accent : Color.secondary)
+                                .background(filter == option ? EvictTheme.accent.opacity(0.12) : Color.secondary.opacity(0.07),
+                                            in: Capsule())
+                        }.buttonStyle(.plain).accessibilityAddTraits(filter == option ? .isSelected : [])
+                    }
+                }
+            }
+            .padding(.horizontal, 20).padding(.bottom, 10)
+            .help("Recently installed: last 30 days. Large: at least 1 GB. Rarely used: a known last-use date more than 90 days ago; unknown dates are excluded.")
 
             if state.isScanning && state.apps.isEmpty {
                 ProgressView().controlSize(.large).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -96,6 +124,11 @@ struct ApplicationsView: View {
             // Apps that were removed or are no longer listed can't stay selected.
             let ids = Set(apps.map(\.id))
             state.selection = state.selection.intersection(ids)
+        }
+        .onChange(of: state.selection) { _, ids in
+            if ids.count == 1, let app = state.apps.first(where: { ids.contains($0.id) }), !filter.includes(app) {
+                filter = .all
+            }
         }
     }
 
@@ -189,6 +222,9 @@ struct ApplicationsView: View {
     private var selectionBar: some View {
         let picked = selectedApps
         return HStack(spacing: 10) {
+            Button("All") { state.selection = Set(rows.filter { $0.source.isRemovable }.map(\.id)) }
+                .disabled(state.isPlanning || state.isRemoving).help("Select all removable applications shown")
+            Button("None") { state.selection = [] }.disabled(state.isRemoving)
             Text(ApplicationsTable.selectionSummary(rows, selected: state.selection))
                 .font(.callout)
                 .foregroundStyle(picked.isEmpty ? Color.secondary : Color.primary)
