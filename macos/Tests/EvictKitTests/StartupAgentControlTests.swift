@@ -18,6 +18,7 @@ final class StartupAgentControlTests: XCTestCase {
         var queryFailure = false
         var serviceQueryFailure = false
         var foreignPath = false
+        var reportedPath: String?
         var malformedOverrides = false
         var ignoreDisable = false
         var ignoreBootout = false
@@ -39,7 +40,7 @@ final class StartupAgentControlTests: XCTestCase {
             case "print":
                 if queryFailure || serviceQueryFailure { return .init(status: 124, stdout: "", stderr: "Timed out") }
                 if !loaded { return .init(status: 113, stdout: "", stderr: "Could not find service \"\(label)\"") }
-                return .init(status: 0, stdout: args[1] + " = {\n path = \(foreignPath ? "/somewhere/else.plist" : path)\n}", stderr: "")
+                return .init(status: 0, stdout: args[1] + " = {\n path = \(reportedPath ?? (foreignPath ? "/somewhere/else.plist" : path))\n}", stderr: "")
             case "enable": disabled = false
             case "disable": if !ignoreDisable { disabled = true }
             case "bootstrap":
@@ -274,6 +275,19 @@ final class StartupAgentControlTests: XCTestCase {
         XCTAssertFalse(StartupAgentControl.validLabel("org.fixture/other"))
     }
 
+    func testLoadedJobCannotUseASymlinkAliasToTheReviewedPlist() throws {
+        try fixture { directory in
+            let item = try job(directory)
+            let alias = directory.appendingPathComponent("alias.plist")
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: URL(fileURLWithPath: item.path))
+            let backend = Launchd(path: item.path)
+            backend.reportedPath = alias.path
+            let control = controller(item, backend: backend)
+            XCTAssertThrowsError(try control.inspect(item))
+            XCTAssertTrue(backend.mutations.isEmpty)
+        }
+    }
+
     func testDisabledParserAcceptsExactModernAndLegacyStates() throws {
         let output = """
         disabled services = {
@@ -326,14 +340,13 @@ final class StartupAgentControlTests: XCTestCase {
             // is never enabled/disabled, so no persistent override is created.
             defer {
                 _ = Shell.run("/bin/launchctl", ["bootout", target], timeout: 10)
-                do { XCTAssertFalse(try control.inspect(item).isLoaded, "Fixture cleanup left a loaded job.") }
-                catch { XCTFail("Could not verify fixture cleanup: \(error.localizedDescription)") }
+                XCTAssertFalse(try control.inspect(item).isLoaded, "Fixture cleanup left a loaded job.")
             }
             let bootstrap = Shell.run("/bin/launchctl", ["bootstrap", domain, item.path], timeout: 10)
             XCTAssertTrue(bootstrap.ok, "Fixture bootstrap: \(String(bootstrap.stderr.prefix(2_048)))")
             guard bootstrap.ok else { return }
             let loadedOutput = Shell.run("/bin/launchctl", ["print", target], timeout: 10)
-            XCTAssertNoThrow(try control.inspect(item), "Fixture print output: \(String(loadedOutput.stdout.prefix(2_048)))")
+            XCTAssertNoThrow(try control.inspect(item), "Reviewed path: \(item.path). Fixture print output: \(String(loadedOutput.stdout.prefix(2_048)))")
             let loaded = try control.inspect(item)
             XCTAssertTrue(loaded.isLoaded, "Fixture print output: \(String(loadedOutput.stdout.prefix(2_048)))")
             XCTAssertFalse(loaded.isDisabled)

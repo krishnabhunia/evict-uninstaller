@@ -77,39 +77,54 @@ public enum MacInstallMonitor {
                 warnings.append("Linked folder skipped: \(root)")
                 continue
             }
-            var rootUnreadable = false
-            guard let walker = fm.enumerator(at: URL(fileURLWithPath: root), includingPropertiesForKeys: nil,
-                                             options: [.skipsHiddenFiles, .skipsPackageDescendants],
-                                             errorHandler: { _, _ in rootUnreadable = true; return true }) else {
-                incomplete = true
-                warnings.append("Could not read \(root)")
-                continue
-            }
-            for case let url as URL in walker {
-                if entries.count >= maximumEntries { incomplete = true; break }
-                // Foundation may canonicalize /var and /private/var differently for
-                // returned URLs. Traversal depth must not depend on path-string lengths.
-                let depth = walker.level
-                if depth >= 2 { walker.skipDescendants() }
-                if depth > 2 { continue }
-                guard seen.insert(url.path).inserted,
-                      let info = try? fm.attributesOfItem(atPath: url.path) else { continue }
-                let type = info[.type] as? FileAttributeType
-                if type == .typeSymbolicLink { walker.skipDescendants(); continue }
-                guard type == .typeDirectory || type == .typeRegular else { continue }
-                if SafePaths.isInside(url.path, root: ownData) { walker.skipDescendants(); continue }
-                var bundleVersion: String?
-                if url.pathExtension.lowercased() == "app" {
-                    walker.skipDescendants()
-                    let plist = Plist.read(atPath: url.path + "/Contents/Info.plist") ?? [:]
-                    bundleVersion = Plist.string(plist, "CFBundleShortVersionString") ?? Plist.string(plist, "CFBundleVersion")
+            // Explicit levels avoid platform differences in URL enumeration, path
+            // canonicalization and skipDescendants on a file or symbolic link.
+            var folders: [(path: String, depth: Int)] = [(root, 0)]
+            var folderIndex = 0
+            var reachedLimit = false
+            while folderIndex < folders.count && !reachedLimit {
+                let folder = folders[folderIndex]
+                folderIndex += 1
+                guard MacMaintenancePaths.isUnaliased(folder.path),
+                      let folderInfo = try? fm.attributesOfItem(atPath: folder.path),
+                      folderInfo[.type] as? FileAttributeType == .typeDirectory else {
+                    incomplete = true
+                    warnings.append("Folder changed or could not be read: \(folder.path)")
+                    continue
                 }
-                entries.append(MacInstallFileStamp(path: url.path, modified: info[.modificationDate] as? Date,
-                    bytes: type == .typeRegular ? (info[.size] as? NSNumber)?.int64Value ?? 0 : 0,
-                    bundleVersion: bundleVersion, isDirectory: type == .typeDirectory))
+                let names: [String]
+                do { names = try fm.contentsOfDirectory(atPath: folder.path).filter { !$0.hasPrefix(".") }.sorted() }
+                catch {
+                    incomplete = true
+                    warnings.append("Could not read \(folder.path)")
+                    continue
+                }
+                for name in names {
+                    if entries.count >= maximumEntries { incomplete = true; reachedLimit = true; break }
+                    let path = folder.path + "/" + name
+                    guard seen.insert(path).inserted,
+                          let info = try? fm.attributesOfItem(atPath: path) else { continue }
+                    let type = info[.type] as? FileAttributeType
+                    guard type == .typeDirectory || type == .typeRegular,
+                          MacMaintenancePaths.isUnaliased(path),
+                          !SafePaths.isInside(path, root: ownData) else { continue }
+                    let url = URL(fileURLWithPath: path)
+                    let isApp = url.pathExtension.lowercased() == "app"
+                    var bundleVersion: String?
+                    if isApp {
+                        let plist = Plist.read(atPath: path + "/Contents/Info.plist") ?? [:]
+                        bundleVersion = Plist.string(plist, "CFBundleShortVersionString") ?? Plist.string(plist, "CFBundleVersion")
+                    }
+                    entries.append(MacInstallFileStamp(path: path, modified: info[.modificationDate] as? Date,
+                        bytes: type == .typeRegular ? (info[.size] as? NSNumber)?.int64Value ?? 0 : 0,
+                        bundleVersion: bundleVersion, isDirectory: type == .typeDirectory))
+                    if type == .typeDirectory, folder.depth + 1 < 2, !isApp,
+                       (try? url.resourceValues(forKeys: [.isPackageKey]).isPackage) != true {
+                        folders.append((path, folder.depth + 1))
+                    }
+                }
             }
-            if rootUnreadable { incomplete = true; warnings.append("Some folders under \(root) could not be read.") }
-            if entries.count >= maximumEntries {
+            if reachedLimit {
                 warnings.append("The recording reached its \(maximumEntries)-entry limit.")
                 break
             }

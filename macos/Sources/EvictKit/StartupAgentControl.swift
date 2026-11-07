@@ -159,10 +159,23 @@ public struct StartupAgentControl: Sendable {
         }
         var path = String(pathLine.dropFirst("path = ".count))
         if path.hasPrefix("\""), path.hasSuffix("\"") { path = String(path.dropFirst().dropLast()) }
-        guard path == descriptor.item.path else {
+        // launchd reports /private/var where Foundation can present /var. Compare
+        // actual canonical locations, but reject user-created aliases before resolving.
+        guard let reportedPath = Self.canonicalUnaliasedPath(path),
+              let reviewedPath = Self.canonicalUnaliasedPath(descriptor.item.path),
+              reportedPath == reviewedPath else {
             throw StartupAgentError.refused("A different job uses this label. It was not changed.")
         }
         return true
+    }
+
+    private static func canonicalUnaliasedPath(_ path: String) -> String? {
+        guard MacMaintenancePaths.isUnaliased(path) else { return nil }
+        return path.withCString { value in
+            guard let resolved = realpath(value, nil) else { return nil }
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
     }
 
     private func inspection(_ descriptor: Descriptor, overrides: [String: Bool]) throws -> StartupAgentInspection {
