@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0 — 2026-11-07
+
+<!-- Evict automatic release; base: mac-v1.0.1 -->
+
+- ChatGPT-Evict-macOS-Windows-Feature-Parity
+- Add the native dashboard, grouped navigation, full release version, contextual update button, embedded What's New notes, startup splash with real progress, Command-K search and menu-bar actions.
+- Extend application discovery with recent, large, rarely-used and source filters, Select All/None and reviewed batch removal; require the exact application and its helper processes to quit gracefully before uninstalling.
+- Add a Homebrew cask Software Updater with verified package identity, installed-versus-provider version evidence, explicit selected upgrades, persistent exclusions and post-install verification.
+- Persist seven-day software-update history with before/target/after versions, command errors, interrupted-state recovery, details, CSV export and stop-after-current queue control.
+- Add Evict Version Manager for native mac-v releases, exact version selection, stable/beta channels, optional older builds, pin/skip preferences and detailed implementation notes.
+- Verify Evict update archives, checksums, universal architectures, bundle identity, exact version and code signature; prepare verified recovery copies and record installation only after matching relaunch evidence.
+- Add explicit Apply/Cancel scheduling through an owned per-user LaunchAgent, verify registration before saving preferences, roll back failed changes and run authorized read-only background inventory scans.
+- Add reviewed cache/log cleanup with protected-path, symlink and identity checks; move selected files to Trash and report actual moved bytes.
+- Add browser profile/extension/permission inspection, bounded before/after install-monitor snapshots with persistent recovery and JSON export, and observed native security status.
+- Add verified Enable/Disable/Remove controls for user LaunchAgents with confirmations and reversible registration changes; protect Apple/system jobs and Evict's scheduled scan.
+- Migrate existing settings using backward-compatible decoding, serialize atomic persistence, surface failures and preserve corrupted preferences until explicit reset.
+- Isolate native macOS releases from Windows version changes, generate three-digit Mac betas with implementation notes, validate universal app/ZIP/DMG packages and require a native launch test before publication.
+- Keep the existing Windows download layout by reusing a provenance-verified Mac installer on Ubuntu instead of rebuilding macOS or publishing an unrelated Mac release.
+
 ## 1.0.1 — 2026-11-05
 
 <!-- Evict automatic release; base: mac-v1.0.0 -->

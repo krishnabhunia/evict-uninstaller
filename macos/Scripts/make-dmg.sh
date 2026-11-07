@@ -142,11 +142,8 @@ Evict isn't notarized by Apple yet, so the first time you open it macOS says it 
    "Evict was blocked to protect your Mac" and click Open Anyway.
    Enter your Mac password and click Open.
 
-Or, in Terminal:
-   xattr -dr com.apple.quarantine /Applications/Evict.app
-   open /Applications/Evict.app
-
-You only do this once. Later updates open normally.
+Only approve a build you trust. A later downloaded update can require approval again.
+Evict does not remove quarantine attributes or disable Gatekeeper.
 NOTE
 fi
 echo "==> Creating Evict $RELEASE_VERSION installer (Mac component $MAC_VERSION, build $MAC_BUILD)"

@@ -10,41 +10,95 @@ public struct Settings: Codable, Sendable, Equatable {
     public var scanSystemLocations: Bool = true
     public var showMenuBarIcon: Bool = true
     public var checkForUpdates: Bool = true
-    public var settingsVersion: Int = 1
+    public var scanSchedule: ScanSchedule = ScanSchedule()
+    public var settingsVersion: Int = 2
 
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case appearance, includeSystemApps, showLowConfidenceItems, preselectLowConfidence,
+             confirmBeforeRemoving, scanSystemLocations, showMenuBarIcon, checkForUpdates,
+             scanSchedule, settingsVersion
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? "System"
+        includeSystemApps = try c.decodeIfPresent(Bool.self, forKey: .includeSystemApps) ?? false
+        showLowConfidenceItems = try c.decodeIfPresent(Bool.self, forKey: .showLowConfidenceItems) ?? true
+        preselectLowConfidence = try c.decodeIfPresent(Bool.self, forKey: .preselectLowConfidence) ?? false
+        confirmBeforeRemoving = try c.decodeIfPresent(Bool.self, forKey: .confirmBeforeRemoving) ?? true
+        scanSystemLocations = try c.decodeIfPresent(Bool.self, forKey: .scanSystemLocations) ?? true
+        showMenuBarIcon = try c.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? true
+        checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? true
+        scanSchedule = try c.decodeIfPresent(ScanSchedule.self, forKey: .scanSchedule) ?? ScanSchedule()
+        settingsVersion = 2
+    }
 }
 
 /// Loads and saves `Settings`; every change is written straight away.
 public final class SettingsStore: @unchecked Sendable {
     private let path: String
     private let lock = NSLock()
-    public private(set) var current: Settings
+    private var savedSettings: Settings
+    public var current: Settings { lock.lock(); defer { lock.unlock() }; return savedSettings }
+    private var savedError: String?
+    public var lastError: String? { lock.lock(); defer { lock.unlock() }; return savedError }
+    private var loadBlocked = false
 
     public init(path: String = AppPaths.settingsFile) {
         self.path = path
-        if let data = FileManager.default.contents(atPath: path),
-           let decoded = try? JSONDecoder().decode(Settings.self, from: data) {
-            current = decoded
-        } else {
-            current = Settings()
+        savedSettings = Settings()
+        if let data = FileManager.default.contents(atPath: path) {
+            do { savedSettings = try JSONDecoder().decode(Settings.self, from: data) }
+            catch {
+                loadBlocked = true
+                savedError = "Saved preferences could not be read. They are preserved; restore the file or explicitly reset settings. \(error.localizedDescription)"
+            }
+        } else if FileManager.default.fileExists(atPath: path) {
+            loadBlocked = true
+            savedError = "Saved preferences are unreadable and were preserved. Check file permissions before making changes."
         }
     }
 
-    public func update(_ change: (inout Settings) -> Void) {
+    @discardableResult
+    public func update(_ change: (inout Settings) -> Void) -> Bool {
         lock.lock()
-        change(&current)
-        let snapshot = current
-        lock.unlock()
-        save(snapshot)
+        defer { lock.unlock() }
+        guard !loadBlocked else { return false }
+        var snapshot = savedSettings
+        change(&snapshot)
+        do {
+            try save(snapshot)
+            savedSettings = snapshot
+            savedError = nil
+            return true
+        } catch {
+            savedError = error.localizedDescription
+            return false
+        }
     }
 
-    public func reset() { update { $0 = Settings() } }
+    @discardableResult
+    public func reset() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            let defaults = Settings()
+            try save(defaults)
+            savedSettings = defaults
+            loadBlocked = false
+            savedError = nil
+            return true
+        } catch { savedError = error.localizedDescription; return false }
+    }
 
-    private func save(_ settings: Settings) {
+    private func save(_ settings: Settings) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(settings) else { return }
-        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        let data = try encoder.encode(settings)
+        let url = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
     }
 }
