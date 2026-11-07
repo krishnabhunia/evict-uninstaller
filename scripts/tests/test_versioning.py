@@ -196,24 +196,28 @@ class IntentTests(unittest.TestCase):
         self.assertIsNone(generated_release_commit("feat: versions", ["windows/Directory.Build.props"], "windows"))
 
 
-    def test_shared_delivery_recognizes_mac_runtime_without_releasing_mac_docs_or_tests(self):
-        self.assertTrue(affects_platform(["macos/Sources/App.swift"], "windows"))
-        self.assertTrue(affects_platform(["macos/Scripts/make-app.sh"], "windows"))
-        self.assertTrue(affects_platform([".github/workflows/macos.yml"], "windows"))
-        self.assertFalse(affects_platform(["macos/README.md", "macos/Tests/EvictKitTests/New.swift"], "windows"))
+    def test_native_pipelines_are_independent_but_shared_engine_affects_both(self):
+        for path in ["macos/Sources/App.swift", "macos/Scripts/make-app.sh", ".github/workflows/macos.yml"]:
+            self.assertFalse(affects_platform([path], "windows"))
+            self.assertTrue(affects_platform([path], "macos"))
+        self.assertFalse(affects_platform(["windows/src/app.cs"], "macos"))
+        self.assertFalse(affects_platform([".github/workflows/windows.yml"], "macos"))
+        for platform in ("windows", "macos"):
+            self.assertTrue(affects_platform(["scripts/versioning.py"], platform))
+            self.assertFalse(affects_platform(["macos/README.md", "macos/Tests/EvictKitTests/New.swift"], platform))
 
-    def test_shared_delivery_uses_highest_applicable_platform_intent(self):
+    def test_each_pipeline_respects_its_own_release_intent(self):
         metadata = pull("fix: application", body="Release-Type-Windows: none\nRelease-Type-Macos: minor")
-        self.assertEqual(bundle_intent("merge", metadata, ["macos/Sources/App.swift"], "windows"), Bump.MINOR)
+        self.assertEqual(bundle_intent("merge", metadata, ["macos/Sources/App.swift"], "windows"), Bump.NONE)
+        self.assertEqual(bundle_intent("merge", metadata, ["macos/Sources/App.swift"], "macos"), Bump.MINOR)
         metadata["body"] = "Release-Type-Windows: patch\nRelease-Type-Macos: major"
-        self.assertEqual(bundle_intent("merge", metadata, ["macos/Sources/App.swift"], "windows"), Bump.MAJOR)
-        self.assertEqual(bundle_intent("merge", metadata, ["windows/src/app.cs"], "windows"), Bump.PATCH)
-        self.assertEqual(bundle_intent("merge", metadata, ["scripts/build.py"], "windows"), Bump.MAJOR)
+        self.assertEqual(bundle_intent("merge", metadata, ["scripts/build.py"], "windows"), Bump.PATCH)
+        self.assertEqual(bundle_intent("merge", metadata, ["scripts/build.py"], "macos"), Bump.MAJOR)
 
-    def test_mac_scoped_breaking_change_cannot_be_suppressed_in_shared_delivery(self):
+    def test_mac_scoped_breaking_change_does_not_bump_windows(self):
         metadata = pull("feat(macos)!: replace API", body="Release-Type-Windows: none\nRelease-Type-Macos: patch")
-        self.assertEqual(bundle_intent("merge", metadata, ["macos/Sources/App.swift"], "windows"), Bump.MAJOR)
-        self.assertEqual(release_intent("merge", metadata, "windows"), Bump.NONE)
+        self.assertEqual(bundle_intent("merge", metadata, ["macos/Sources/App.swift"], "windows"), Bump.NONE)
+        self.assertEqual(release_intent("merge", metadata, "macos"), Bump.MAJOR)
 
 
 class RepositoryPlanTests(unittest.TestCase):
@@ -246,31 +250,32 @@ class RepositoryPlanTests(unittest.TestCase):
         self.fixture.commit("fix: test expectation")
         self.assertFalse(self.fixture.plan()["publish"])
 
-    def test_mac_fix_advances_shared_delivery_and_independent_native_version(self):
+    def test_mac_fix_advances_only_native_version(self):
         self.fixture.write("macos/Sources/App.swift", "fixed Mac behavior\n")
         self.fixture.commit("fix(macos): history")
         plan = self.fixture.plan()
-        self.assertTrue(plan["publish"])
-        self.assertEqual(plan["core_version"], "1.8.1")
+        self.assertFalse(plan["publish"])
+        self.assertEqual(plan["core_version"], "1.8.0")
         self.assertEqual(self.fixture.plan("macos")["core_version"], "0.1.1")
 
-
-    def test_mac_only_feature_with_windows_none_publishes_shared_minor(self):
+    def test_mac_only_feature_with_windows_none_publishes_native_minor(self):
         self.fixture.write("macos/Sources/App.swift", "new Mac option\n")
         changed = self.fixture.commit("Merge Mac feature")
         metadata = pull("feat(macos): new preference",
                         body="Release-Type-Windows: none\nRelease-Type-Macos: minor")
         api = FakeApi({changed: [metadata]})
         delivery = self.fixture.plan(api=api)
-        self.assertTrue(delivery["publish"])
-        self.assertEqual(delivery["version"], "1.9.0")
-        self.assertEqual(delivery["bump"], "minor")
+        self.assertFalse(delivery["publish"])
+        self.assertEqual(delivery["version"], "1.8.0")
+        self.assertEqual(delivery["bump"], "none")
         self.assertEqual(self.fixture.plan("macos", api=api)["version"], "0.2.0")
 
-    def test_mac_scoped_breaking_commit_publishes_shared_major(self):
+    def test_mac_scoped_breaking_commit_publishes_only_native_major(self):
         self.fixture.write("macos/Sources/App.swift", "incompatible Mac API\n")
         self.fixture.commit("feat(macos)!: replace API")
-        self.assertEqual(self.fixture.plan()["version"], "2.0.0")
+        self.assertFalse(self.fixture.plan()["publish"])
+        self.assertEqual(self.fixture.plan()["version"], "1.8.0")
+        self.assertEqual(self.fixture.plan("macos")["version"], "1.0.0")
 
     def test_generated_mac_sync_alone_does_not_create_shared_release(self):
         sync_sources(self.fixture.root, "macos", CoreVersion(0, 1, 1),
@@ -285,15 +290,17 @@ class RepositoryPlanTests(unittest.TestCase):
     def test_mixed_mac_release_marker_and_runtime_change_is_not_skipped(self):
         self.fixture.write("macos/Sources/App.swift", "fixed application\n")
         self.fixture.commit("chore(release): macos 0.1.1\n\nRelease-Type-Macos: patch")
-        self.assertTrue(self.fixture.plan()["publish"])
-        self.assertEqual(self.fixture.plan()["version"], "1.8.1")
+        self.assertFalse(self.fixture.plan()["publish"])
+        self.assertTrue(self.fixture.plan("macos")["publish"])
+        self.assertEqual(self.fixture.plan("macos")["version"], "0.1.1")
 
-    def test_legacy_mac_only_intent_contributes_to_shared_delivery(self):
+    def test_legacy_mac_only_intent_contributes_to_native_release(self):
         self.fixture.write("macos/Sources/App.swift", "new native Mac feature\n")
         changed = self.fixture.commit("Merge historical Mac change")
         policy = {"legacy_pull_requests": {"20": {
             "merge_commit_sha": changed, "windows": "none", "macos": "minor"}}}
-        self.assertEqual(self.fixture.plan(policy=policy)["version"], "1.9.0")
+        self.assertEqual(self.fixture.plan(policy=policy)["version"], "1.8.0")
+        self.assertEqual(self.fixture.plan("macos", policy=policy)["version"], "0.2.0")
 
     def test_mac_only_beta_calculates_the_same_next_core_as_stable(self):
         self.fixture.git.run("checkout", "-b", "mac-preview")
@@ -303,13 +310,13 @@ class RepositoryPlanTests(unittest.TestCase):
                         body="Release-Type-Windows: none\nRelease-Type-Macos: minor")
         event = {"number": 12, "pull_request": dict(metadata,
                  base={"sha": self.fixture.base}, head={"sha": changed})}
-        beta = self.fixture.plan(mode="beta", event=event, beta_sequence="42.1")
+        beta = self.fixture.plan("macos", mode="beta", event=event, beta_sequence="42.1")
         self.assertTrue(beta["publish"])
-        self.assertEqual(beta["version"], "1.9.0-beta001")
+        self.assertEqual(beta["version"], "0.2.0-beta001")
         self.fixture.git.run("checkout", "main")
         self.fixture.git.run("merge", "--ff-only", "mac-preview")
         self.fixture.git.run("update-ref", "refs/remotes/origin/main", changed)
-        stable = self.fixture.plan(api=FakeApi({changed: [metadata]}))
+        stable = self.fixture.plan("macos", api=FakeApi({changed: [metadata]}))
         self.assertEqual(stable["core_version"], beta["core_version"])
 
     def test_tagged_native_mac_version_allows_the_next_native_bump(self):
@@ -387,7 +394,7 @@ class RepositoryPlanTests(unittest.TestCase):
         self.assertEqual(retry["core_version"], "1.9.0")
         self.assertEqual(retry["bump"], "minor")
 
-    def test_mac_fix_after_published_delivery_advances_shared_version(self):
+    def test_mac_fix_after_windows_release_keeps_windows_version(self):
         self.fixture.write("windows/src/app.cs", "fixed\n")
         self.fixture.commit("fix: recovery")
         plan = self.fixture.plan()
@@ -397,8 +404,8 @@ class RepositoryPlanTests(unittest.TestCase):
         self.fixture.write("macos/Sources/App.swift", "fixed Mac behavior\n")
         self.fixture.commit("fix(macos): history")
         retry = self.fixture.plan()
-        self.assertTrue(retry["publish"])
-        self.assertEqual(retry["version"], "1.8.2")
+        self.assertFalse(retry["publish"])
+        self.assertEqual(retry["version"], "1.8.1")
         self.assertEqual(retry["tag_source_sha"], released)
         self.assertNotEqual(retry["source_sha"], released)
 

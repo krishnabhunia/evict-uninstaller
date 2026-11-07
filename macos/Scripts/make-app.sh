@@ -9,6 +9,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION="$(grep -m1 'public static let current' Sources/EvictKit/Version.swift | sed 's/.*"\(.*\)".*/\1/')"
 BUILD_NUMBER="$(grep -m1 'public static let build' Sources/EvictKit/Version.swift | sed 's/.*"\(.*\)".*/\1/')"
+RELEASE_VERSION="${EVICT_RELEASE_VERSION:-$VERSION}"
+python3 - "$VERSION" "$RELEASE_VERSION" <<'PY'
+import re, sys
+core, release = sys.argv[1:]
+if not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', core):
+    raise SystemExit('Invalid native core version')
+if not re.fullmatch(re.escape(core) + r'(?:-beta(?!000)\d{3})?', release):
+    raise SystemExit('Release identity must use the native core and an optional three-digit beta')
+PY
 APP="build/Evict.app"
 ARCH_FLAGS=""
 if [[ "${1:-}" == "--universal" ]]; then
@@ -31,7 +40,8 @@ else
   echo "    (iconutil not available – the app will use the default icon)"
 fi
 
-sed -e "s/@VERSION@/$VERSION/g" -e "s/@BUILD@/$BUILD_NUMBER/g" Resources/Info.plist > "$APP/Contents/Info.plist"
+sed -e "s/@VERSION@/$VERSION/g" -e "s/@BUILD@/$BUILD_NUMBER/g" -e "s/@RELEASE_VERSION@/$RELEASE_VERSION/g" Resources/Info.plist > "$APP/Contents/Info.plist"
+cp Resources/release-notes.md "$APP/Contents/Resources/release-notes.md"
 
 # Ad-hoc signature. With a Developer ID in the keychain, set SIGN_IDENTITY to use it instead.
 IDENTITY="${SIGN_IDENTITY:--}"
@@ -45,6 +55,6 @@ fi
 # A bundle whose signature doesn't verify is refused by macOS ("damaged"), so this must not be skipped.
 codesign --verify --deep --strict --verbose=2 "$APP"
 
-(cd build && rm -f "Evict-$VERSION.zip" && ditto -c -k --sequesterRsrc --keepParent Evict.app "Evict-$VERSION.zip")
-shasum -a 256 "build/Evict-$VERSION.zip" | tee "build/Evict-$VERSION.zip.sha256"
+(cd build && rm -f "Evict-$RELEASE_VERSION.zip" && ditto -c -k --sequesterRsrc --keepParent Evict.app "Evict-$RELEASE_VERSION.zip")
+(cd build && shasum -a 256 "Evict-$RELEASE_VERSION.zip" > "Evict-$RELEASE_VERSION.zip.sha256")
 echo "==> Done: $APP"

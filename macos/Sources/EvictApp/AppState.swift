@@ -1,12 +1,17 @@
 #if os(macOS)
 import SwiftUI
+import AppKit
 import EvictKit
 
 /// Everything the windows share: the application list, the current uninstall plan and the settings.
 @MainActor
 final class AppState: ObservableObject {
     enum Page: String, CaseIterable, Identifiable {
+        case dashboard = "Home"
         case applications = "Applications"
+        case softwareUpdater = "Software Updater"
+        case versionManager = "Evict Versions"
+        case tools = "Cleanup & Tools"
         case forceUninstall = "Force Uninstall"
         case startupItems = "Startup Items"
         case history = "History"
@@ -16,7 +21,11 @@ final class AppState: ObservableObject {
 
         var icon: String {
             switch self {
+            case .dashboard: return "house"
             case .applications: return "square.grid.2x2"
+            case .softwareUpdater: return "arrow.down.circle"
+            case .versionManager: return "clock.arrow.2.circlepath"
+            case .tools: return "sparkles"
             case .forceUninstall: return "hammer"
             case .startupItems: return "bolt.badge.clock"
             case .history: return "clock.arrow.circlepath"
@@ -26,7 +35,17 @@ final class AppState: ObservableObject {
     }
 
     // ── navigation ──
-    @Published var page: Page = .applications
+    @Published var page: Page = .dashboard
+    @Published var showSearch = false
+    @Published private(set) var startupComplete = false
+    @Published private(set) var startupProgress = 0.05
+    @Published private(set) var startupMessage = "Preparing Evict…"
+    @Published private(set) var startupSlow = false
+    @Published var operationError: String?
+    @Published private(set) var isApplyingSchedule = false
+    @Published private(set) var scheduleMessage: String?
+    @Published private(set) var runningAppNames: [String] = []
+    private var startupStarted = false
 
     // ── applications ──
     @Published private(set) var apps: [InstalledApp] = []
@@ -58,6 +77,7 @@ final class AppState: ObservableObject {
         let store = SettingsStore()
         settingsStore = store
         settings = store.current
+        operationError = store.lastError
     }
 
     var colorScheme: ColorScheme? {
@@ -79,9 +99,70 @@ final class AppState: ObservableObject {
 
     var totalSize: Int64 { apps.reduce(0) { $0 + $1.sizeBytes } }
 
-    func updateSettings(_ change: (inout EvictKit.Settings) -> Void) {
-        settingsStore.update(change)
+    @discardableResult
+    func updateSettings(_ change: (inout EvictKit.Settings) -> Void) -> Bool {
+        let saved = settingsStore.update(change)
         settings = settingsStore.current
+        if !saved { operationError = settingsStore.lastError ?? "Settings could not be saved." }
+        return saved
+    }
+
+    func start() async {
+        guard !startupStarted else { return }
+        startupStarted = true
+        let slowNotice = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            if !Task.isCancelled && !startupComplete { startupSlow = true }
+        }
+        defer { slowNotice.cancel() }
+        startupMessage = "Loading your preferences and history"
+        startupProgress = 0.15
+        await Task.yield()
+        startupMessage = "Finding installed applications"
+        startupProgress = 0.35
+        await refreshApplications()
+        startupMessage = "Checking permissions and update recovery"
+        startupProgress = 0.9
+        await ReleaseManager.shared.reconcilePendingInstallation()
+        fullDiskAccess = FullDiskAccess.isGranted
+        startupProgress = 1
+        startupMessage = "Ready"
+        startupComplete = true
+        if settings.checkForUpdates {
+            Task { await ReleaseManager.shared.checkForUpdates() }
+        }
+    }
+
+    func openWhileScanning() { startupComplete = true }
+
+    func applySchedule(_ schedule: ScanSchedule, resetPreferences: Bool = false) async {
+        guard !isApplyingSchedule else { return }
+        guard !isRemoving, !isPlanning, !SoftwareUpdaterModel.shared.isUpdating, !ReleaseManager.shared.isBusy else {
+            operationError = "Finish the current operation before changing the scan schedule."
+            return
+        }
+        isApplyingSchedule = true
+        defer { isApplyingSchedule = false }
+        let executable = Bundle.main.executableURL?.path ?? ""
+        let store = settingsStore
+        let error: String? = await Task.detached(priority: .userInitiated) {
+            do {
+                try ScanScheduler().apply(schedule, executable: executable) { applied in
+                    let saved = resetPreferences ? store.reset() : store.update({ $0.scanSchedule = applied })
+                    guard saved else {
+                        throw ScanScheduleError.registration(store.lastError ?? "Could not save the schedule.")
+                    }
+                }
+                return nil
+            } catch { return error.localizedDescription }
+        }.value
+        settings = store.current
+        scheduleMessage = error ?? (schedule.frequency == .never ? "Scheduled scans are disabled." : "Schedule applied and confirmed by macOS.")
+        if let error { operationError = error }
+    }
+
+    func resetSettings() async {
+        await applySchedule(ScanSchedule(), resetPreferences: true)
     }
 
     // ── scanning ──
@@ -113,6 +194,10 @@ final class AppState: ObservableObject {
 
     func preparePlan(for app: InstalledApp) async {
         guard !isPlanning, !isRemoving else { return }
+        guard !SoftwareUpdaterModel.shared.isUpdating, !ReleaseManager.shared.isBusy, !isApplyingSchedule else {
+            operationError = "Finish the current update or schedule change before starting an uninstall."
+            return
+        }
         isPlanning = true
         plan = nil
         removalResult = nil
@@ -122,11 +207,16 @@ final class AppState: ObservableObject {
         let built = await Task.detached(priority: .userInitiated) { planner.plan(for: app, casks: casks, settings: options) }.value
         plan = built
         planSelection = built.initialSelection(settings: options)
+        refreshRunningApplications(for: built.app)
         isPlanning = false
     }
 
     func prepareForcePlan(name: String, bundlePath: String?) async {
         guard !isPlanning, !isRemoving else { return }
+        guard !SoftwareUpdaterModel.shared.isUpdating, !ReleaseManager.shared.isBusy, !isApplyingSchedule else {
+            operationError = "Finish the current update or schedule change before starting an uninstall."
+            return
+        }
         isPlanning = true
         plan = nil
         removalResult = nil
@@ -135,6 +225,7 @@ final class AppState: ObservableObject {
         let built = await Task.detached(priority: .userInitiated) { planner.plan(forLeftoverName: name, bundlePath: bundlePath, settings: options) }.value
         plan = built
         planSelection = built.initialSelection(settings: options)
+        refreshRunningApplications(for: built.app)
         isPlanning = false
     }
 
@@ -153,6 +244,15 @@ final class AppState: ObservableObject {
 
     func performRemoval() async {
         guard !isRemoving, !isPlanning, let plan else { return }
+        guard !SoftwareUpdaterModel.shared.isUpdating, !ReleaseManager.shared.isBusy, !isApplyingSchedule else {
+            operationError = "Finish the current update or schedule change before removing files."
+            return
+        }
+        refreshRunningApplications(for: plan.app)
+        guard runningAppNames.isEmpty else {
+            operationError = "Quit \(plan.app.name) before removing its application or data."
+            return
+        }
         isRemoving = true
         let planner = self.planner
         let selection = planSelection
@@ -165,6 +265,37 @@ final class AppState: ObservableObject {
         await refreshApplications()
     }
 
+    private func runningApplications(for app: InstalledApp) -> [NSRunningApplication] {
+        guard !app.bundlePath.isEmpty else { return [] }
+        let path = URL(fileURLWithPath: app.bundlePath).resolvingSymlinksInPath().path
+        return NSWorkspace.shared.runningApplications.filter {
+            guard !$0.isTerminated else { return false }
+            let bundle = $0.bundleURL?.resolvingSymlinksInPath().path ?? ""
+            let executable = $0.executableURL?.resolvingSymlinksInPath().path ?? ""
+            return bundle == path || bundle.hasPrefix(path + "/") || executable.hasPrefix(path + "/")
+        }
+    }
+
+    func refreshRunningApplications(for app: InstalledApp) {
+        runningAppNames = Array(Set(runningApplications(for: app).map { $0.localizedName ?? app.name })).sorted()
+    }
+
+    func quitPlannedApplication() async {
+        guard let app = plan?.app else { return }
+        let running = runningApplications(for: app)
+        guard !running.contains(where: { $0.processIdentifier == ProcessInfo.processInfo.processIdentifier }) else {
+            operationError = "Quit Evict and move it to Trash from Finder to uninstall Evict itself."
+            return
+        }
+        for process in running { _ = process.terminate() }
+        for _ in 0..<20 {
+            refreshRunningApplications(for: app)
+            if runningAppNames.isEmpty { return }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        operationError = "The application is still running. Save your work and quit it before continuing."
+    }
+
     func dismissPlan() {
         guard !isRemoving else { return }
         // The sheet can report its dismissal more than once; only a real close moves the queue on.
@@ -172,6 +303,7 @@ final class AppState: ObservableObject {
         plan = nil
         planSelection = []
         removalResult = nil
+        runningAppNames = []
         guard hadPlan, !queue.isEmpty else { queue.clear(); return }
         guard let next = queue.advance() else { queue.clear(); return }
         Task { @MainActor in
