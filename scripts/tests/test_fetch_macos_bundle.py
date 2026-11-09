@@ -348,6 +348,27 @@ class PreservedBytesTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     bundle.verify_published(self.api, corrupt, "4.2.0", WINDOWS_SOURCE, EXPECTED, "stable", self.root / ("changed-" + key))
 
+    def test_published_beta_is_checked_against_its_reserved_tag_source(self):
+        image, digest = bundle.download_verified(self.selection, self.root / "download", self.download)
+        manifest = bundle.package_component(self.selection, image, digest, self.root / "package", "4.2.0-beta003", WINDOWS_SOURCE)
+        published, blobs = release("win-v4.2.0-beta003", source=WINDOWS_SOURCE, native=False)
+        published["prerelease"] = True
+        reserved = "d" * 40
+        self.blobs.update(blobs)
+        self.api.routes.update({
+            "/releases/tags/win-v4.2.0-beta003": published,
+            "/git/ref/tags/win-v4.2.0-beta003": {"object": {"type": "commit", "sha": reserved}},
+            "/contents/macos/Sources/EvictKit/Version.swift?ref=" + WINDOWS_SOURCE: source_file(),
+        })
+        original = bundle.download_verified
+        with patch.object(bundle, "download_verified", side_effect=lambda selected, folder: original(selected, folder, self.download)):
+            bundle.verify_published(self.api, manifest, "4.2.0-beta003", WINDOWS_SOURCE, EXPECTED, "beta",
+                                    self.root / "published", tag_source=reserved)
+            for tag_source in (None, WINDOWS_SOURCE, "invalid"):
+                with self.subTest(tag_source=tag_source), self.assertRaises(RuntimeError):
+                    bundle.verify_published(self.api, manifest, "4.2.0-beta003", WINDOWS_SOURCE, EXPECTED, "beta",
+                                            self.root / ("other-" + str(tag_source)), tag_source=tag_source)
+
 
 if __name__ == "__main__":
     unittest.main()

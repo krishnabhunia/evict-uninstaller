@@ -1537,9 +1537,10 @@ jobs:
           RELEASE_VERSION: ${{ needs.package.outputs.version }}
           RELEASE_SOURCE: ${{ needs.package.outputs.source_sha }}
           RELEASE_CHANNEL: ${{ needs.package.outputs.channel }}
+          BETA_TAG_SOURCE: ${{ needs.package.outputs.beta_tag_source }}
         run: |
           python scripts/fetch_macos_bundle.py --verify-published --windows-version "$RELEASE_VERSION" \
-            --source-sha "$RELEASE_SOURCE" --channel "$RELEASE_CHANNEL" \
+            --source-sha "$RELEASE_SOURCE" --channel "$RELEASE_CHANNEL" --tag-source "$BETA_TAG_SOURCE" \
             --provenance MacProvenance/mac-provenance.json --out PublishedMac
 
   cleanup-beta-source:
