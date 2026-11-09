@@ -759,8 +759,12 @@ jobs:
             if (JSON.stringify(unchanged(sourceTree)) !== JSON.stringify(unchanged(finalTree))) {
               throw new Error('Version freezing changed a file outside the exact metadata allowlist.');
             }
+            // Deterministic like the prepared snapshot: a re-run of the same reserved beta rebuilds the same
+            // frozen commit, so it re-verifies the release that an earlier attempt already published (BT2).
             const {data: commit} = await github.rest.git.createCommit({
               ...context.repo, tree: tree.sha, parents: [source.sha],
+              author: {name: source.author.name, email: source.author.email, date: source.author.date},
+              committer: {name: source.committer.name, email: source.committer.email, date: source.committer.date},
               message: 'Windows beta version ' + expectedVersion + ' for PR #' + pr.number +
                 '\n\nOriginal PR head: ' + pr.head.sha + '\nGenerated core metadata only; all other prepared source entries preserved.'
             });
