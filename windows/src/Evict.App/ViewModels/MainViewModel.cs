@@ -129,6 +129,42 @@ public sealed partial class MainViewModel : ObservableObject
     public string WindowTitle => $"{AppPaths.ProductName} {_services.Updater.CurrentVersionLabel}" + (IsElevated ? "  (Administrator)" : "");
     /// <summary>Same source as the update check, so the number shown is the one compared with GitHub Releases.</summary>
     public string VersionText => "v" + _services.Updater.CurrentVersionLabel;
+    /// <summary>A PR test build (x.y.z-betaNNN) shows a small "Beta" chip beside the version.</summary>
+    public bool IsBetaBuild => UpdateVersion.Parse(_services.Updater.CurrentVersionLabel)?.IsPrerelease == true;
+
+    private InfoWindow? _infoWindow;
+
+    /// <summary>The Info window (IN1): the ⓘ beside the version, F1, Settings → About → Info and the "What's new" link.</summary>
+    [RelayCommand]
+    private void OpenInfo(string? tab)
+    {
+        int index = tab switch
+        {
+            "features" => InfoViewModel.FeaturesTab,
+            "whatsnew" => InfoViewModel.WhatsNewTab,
+            "hood" => InfoViewModel.UnderTheHoodTab,
+            _ => InfoViewModel.ThisBuildTab,
+        };
+        if (_infoWindow is { IsLoaded: true } open && open.DataContext is InfoViewModel current)
+        {
+            current.SelectedTab = index;
+            if (open.WindowState == WindowState.Minimized) open.WindowState = WindowState.Normal;
+            open.Activate();
+            return;
+        }
+        try
+        {
+            _infoWindow = new InfoWindow { DataContext = InfoViewModel.ForThisCopy(index), Owner = Application.Current.MainWindow };
+            _infoWindow.Closed += (_, _) => _infoWindow = null;
+            _infoWindow.Show();
+        }
+        catch (Exception ex)
+        {
+            _infoWindow = null;
+            Log.Error("Info window failed to open", ex);
+            Dialogs.Error("The Info window could not be opened: " + ex.Message);
+        }
+    }
 
     public bool IncludeBetaUpdates
     {

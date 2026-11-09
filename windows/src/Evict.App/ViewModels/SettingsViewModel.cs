@@ -394,6 +394,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void Save() => _services.Settings.Save();
 
     [RelayCommand] private void OpenDataFolder() => Dialogs.OpenFolder(AppPaths.DataRoot);
+    /// <summary>Settings → About → Info opens the same Info window as the ⓘ beside the version.</summary>
+    [RelayCommand] private void OpenInfo() => _main.OpenInfoCommand.Execute("build");
 
     /// <summary>
     /// Installed copies are removed by their uninstaller (which asks about leftovers). A portable copy closes and
