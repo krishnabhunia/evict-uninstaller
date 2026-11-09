@@ -224,7 +224,9 @@
                         <Run Text="Data folder: " /><Run Text="{Binding DataFolder, Mode=OneWay}" />
                     </TextBlock>
                     <StackPanel Orientation="Horizontal">
-                        <Button Style="{StaticResource Button.Secondary}" Content="Open data folder" Command="{Binding OpenDataFolderCommand}" />
+                        <Button Style="{StaticResource Button.Secondary}" Content="Info" Command="{Binding OpenInfoCommand}"
+                                ToolTip="This build, what is implemented, what is new and what Evict is made of (F1)" AutomationProperties.Name="Info" />
+                        <Button Style="{StaticResource Button.Secondary}" Content="Open data folder" Command="{Binding OpenDataFolderCommand}" Margin="8,0,0,0" />
                         <Button Style="{StaticResource Button.Secondary}" Content="Open log file" Command="{Binding OpenLogFileCommand}" Margin="8,0,0,0" />
                         <Button Style="{StaticResource Button.Ghost}" Content="Reset to defaults" Command="{Binding ResetDefaultsCommand}" Margin="8,0,0,0" />
                         <Button Style="{StaticResource Button.Ghost}" Content="Remove Evict from this PC…" Command="{Binding RemoveEvictCommand}" Margin="8,0,0,0"

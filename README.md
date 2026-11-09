@@ -38,7 +38,9 @@ Use the PR title, a `release:major` / `release:minor` / `release:patch` label, o
 
 After a merge to `main`, the workflow calculates the versions, commits the managed version files and changelogs, tests that exact source commit, and publishes one stable suite release with both native builds. Published releases stay unchanged; failed publication can be retried from Actions on `main`.
 
-Trusted Windows PRs publish optional beta previews such as `1.9.0-beta.23.11.1` before merge. Enable **Settings → Updates → Include beta releases** in a beta-aware Evict installation to receive these through the app.
+Trusted Windows PRs publish optional beta previews such as `4.2.0-beta007` (tag `win-v4.2.0-beta007`) before merge. The three-digit number counts every PR test build of that version, starting at 001. Enable **Settings → Updates → Include beta releases** in a beta-aware Evict installation to receive these through the app.
+
+The **ⓘ** beside the version in the app (or **F1**, or *Settings → About → Info*) opens the Info window: this build's details, what is implemented ([docs/FEATURES.md](docs/FEATURES.md)), what is new and what the app is made of.
 
 See [automatic versioning](docs/versioning.md) for intent rules, scoped platform overrides, retry behavior and source provenance, and [beta updates](docs/beta-updates.md) for preview installation.
 

@@ -310,7 +310,7 @@ class RepositoryPlanTests(unittest.TestCase):
                         body="Release-Type-Windows: none\nRelease-Type-Macos: minor")
         event = {"number": 12, "pull_request": dict(metadata,
                  base={"sha": self.fixture.base}, head={"sha": changed})}
-        beta = self.fixture.plan("macos", mode="beta", event=event, beta_sequence="42.1")
+        beta = self.fixture.plan("macos", mode="beta", event=event)
         self.assertTrue(beta["publish"])
         self.assertEqual(beta["version"], "0.2.0-beta001")
         self.fixture.git.run("checkout", "main")
@@ -485,7 +485,7 @@ class RepositoryPlanTests(unittest.TestCase):
         pr_head = self.fixture.commit("neutral source snapshot")
         event = {"number": 12, "pull_request": {"title": "feat: new setting", "body": "",
                  "base": {"sha": main_head}, "head": {"sha": pr_head}}}
-        beta = self.fixture.plan(mode="beta", event=event, beta_sequence="42.1")
+        beta = self.fixture.plan(mode="beta", event=event)
         self.assertEqual(beta["core_version"], "1.9.0")
         self.assertEqual(beta["version"], "1.9.0-beta001")
         self.assertEqual(beta["bump"], "minor")
@@ -508,7 +508,7 @@ class RepositoryPlanTests(unittest.TestCase):
         self.fixture.git.run("checkout", "docs-preview")
         event = {"number": 12, "pull_request": {"title": "documentation", "body": "",
                  "base": {"sha": main_head}, "head": {"sha": pr_head}}}
-        beta = self.fixture.plan(mode="beta", event=event, beta_sequence="42.1")
+        beta = self.fixture.plan(mode="beta", event=event)
         self.assertFalse(beta["publish"])
         self.assertEqual(beta["core_version"], "1.8.1")
         self.assertEqual(beta["version"], "1.8.1-beta001")
@@ -526,7 +526,7 @@ class RepositoryPlanTests(unittest.TestCase):
         self.fixture.git.run("checkout", "docs-preview")
         event = {"number": 12, "pull_request": {"title": "feat: describe new option", "body": "",
                  "base": {"sha": main_head}, "head": {"sha": pr_head}}}
-        beta = self.fixture.plan(mode="beta", event=event, beta_sequence="42.1")
+        beta = self.fixture.plan(mode="beta", event=event)
         self.assertFalse(beta["publish"])
         self.assertFalse(beta["release"])
         self.assertEqual(beta["core_version"], "1.9.0")
@@ -542,16 +542,31 @@ class RepositoryPlanTests(unittest.TestCase):
         pr_head = self.fixture.commit("docs: help")
         event = {"number": 12, "pull_request": {"title": "docs: help", "body": "",
                  "base": {"sha": self.fixture.base}, "head": {"sha": pr_head}}}
-        beta = self.fixture.plan(mode="beta", event=event, beta_sequence="42.1")
+        beta = self.fixture.plan(mode="beta", event=event)
         self.assertFalse(beta["publish"])
         self.assertEqual(beta["version"], "1.8.0-beta001")
         self.assertEqual(beta["tag"], "win-v1.8.0-beta001")
         self.assertTrue(beta["prerelease"])
 
-    def test_beta_requires_valid_sequence(self):
-        for sequence in ("", "42", "42.0", "42.x", "042.1", "42.01", "42.1.2"):
-            with self.subTest(sequence=sequence), self.assertRaises(VersionError):
-                self.fixture.plan(mode="beta", event={"number": 12, "pull_request": {"title": "feat: option", "base": {"sha": self.fixture.base}, "head": {"sha": self.fixture.base}}}, beta_sequence=sequence)
+    def test_reserved_beta_number_must_be_three_digits_001_to_999(self):
+        event = {"number": 12, "pull_request": {"title": "feat: option", "base": {"sha": self.fixture.base}, "head": {"sha": self.fixture.base}}}
+        for number in ("", "42", "0042", "42.1", "4a2", " 042", "042 ", "-01", "000"):
+            with self.subTest(number=number), self.assertRaises(VersionError):
+                self.fixture.plan(mode="beta", event=event, beta_number=number)
+
+    def test_reserved_number_is_used_verbatim_and_unreserved_builds_preview_the_next(self):
+        event = {"number": 12, "pull_request": {"number": 12, "title": "feat: option", "body": "",
+                                                "base": {"sha": self.fixture.base}, "head": {"sha": self.fixture.base}}}
+        api = FakeApi(releases=[published("1.8.0")])
+        preview = self.fixture.plan(mode="beta", event=event, api=api)
+        self.assertTrue(preview["version"].endswith("-beta001"))
+        self.assertFalse(preview["beta_reserved"])
+        plan = self.fixture.plan(mode="beta", event=event, beta_number="007", api=api)
+        self.assertRegex(plan["version"], r"^\d+\.\d+\.\d+-beta007$")
+        self.assertEqual(plan["beta_number"], "007")
+        self.assertTrue(plan["beta_reserved"])
+        self.assertEqual(plan["tag"], "win-v" + plan["version"])
+
 
 
 
@@ -580,7 +595,7 @@ class ReleaseTestPlanTests(unittest.TestCase):
 
     def test_pr_release_is_beta_with_an_automatically_calculated_core(self):
         event, sha = self.request()
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
+        plan = self.fixture.plan(mode="beta", event=event,
                                  api=FakeApi(releases=[published("1.9.0")]))
         self.assertEqual(plan["version"], "1.10.0-beta001")
         self.assertEqual(plan["tag"], "win-v1.10.0-beta001")
@@ -595,7 +610,7 @@ class ReleaseTestPlanTests(unittest.TestCase):
     def test_stable_directive_can_never_publish_a_stable_pr_release(self):
         event, _ = self.request("stable 1.10.0", source="1.10.0")
         with self.assertRaisesRegex(VersionError, "stable releases are published only from main"):
-            self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
+            self.fixture.plan(mode="beta", event=event,
                               api=FakeApi(releases=[published("1.9.0")]))
 
     def test_legacy_stable_test_provenance_cannot_reenable_stable_pr_delivery(self):
@@ -603,24 +618,24 @@ class ReleaseTestPlanTests(unittest.TestCase):
         self.fixture.git.run("tag", "win-v1.10.0")
         api = FakeApi(releases=[published("1.10.0", body=f"Original PR head: {head}\n")])
         with self.assertRaisesRegex(VersionError, "stable releases are published only from main"):
-            self.fixture.plan(mode="beta", event=event, beta_sequence="29.2", api=api)
+            self.fixture.plan(mode="beta", event=event, api=api)
 
     def test_requested_beta_core_is_an_assertion_not_an_override(self):
         event, _ = self.request("beta 2.0.0")
         with self.assertRaisesRegex(VersionError, "automatically calculated"):
-            self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
+            self.fixture.plan(mode="beta", event=event,
                               api=FakeApi(releases=[published("1.9.0")]))
 
     def test_beta_assertion_does_not_require_a_manually_committed_matching_core(self):
         event, _ = self.request("beta 1.10.0")
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
+        plan = self.fixture.plan(mode="beta", event=event,
                                  api=FakeApi(releases=[published("1.9.0")]))
         self.assertEqual(plan["core_version"], "1.10.0")
         self.assertEqual(plan["source_version"], "1.8.0")
 
     def test_old_manual_pr_core_does_not_override_the_automatic_beta_core(self):
         event, _ = self.request(source="9.99.0")
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="29.1",
+        plan = self.fixture.plan(mode="beta", event=event,
                                  api=FakeApi(releases=[published("1.9.0")]))
         self.assertEqual(plan["core_version"], "1.10.0")
         self.assertEqual(plan["source_version"], "9.99.0")
@@ -635,7 +650,7 @@ class ReleaseTestPlanTests(unittest.TestCase):
         with patch("versioning.GitHub", return_value=FakeApi(releases=[published("1.9.0")])), redirect_stdout(output):
             status = main(["plan", "--platform", "windows", "--mode", "beta",
                            "--repo-root", str(self.fixture.root), "--event-file", str(event_path),
-                           "--beta-sequence", "29.1", "--sync"])
+                           "--sync"])
         self.assertEqual(status, 0)
         plan = json.loads(output.getvalue())
         self.assertEqual(plan["version"], "1.10.0-beta001")
@@ -656,7 +671,7 @@ class ReleaseTestPlanTests(unittest.TestCase):
                      "Release-Test-Windows: beta\nRelease-Test-Windows: beta 1.10.0"):
             event["pull_request"]["body"] = body
             with self.subTest(body=body), self.assertRaises(VersionError):
-                self.fixture.plan(mode="beta", event=event, beta_sequence="29.1")
+                self.fixture.plan(mode="beta", event=event)
 
     def test_foreign_or_missing_repository_identity_is_rejected(self):
         event, _ = self.request()
@@ -667,7 +682,7 @@ class ReleaseTestPlanTests(unittest.TestCase):
             else:
                 changed["pull_request"][location]["repo"]["full_name"] = "foreign/repository"
             with self.subTest(location=location), self.assertRaisesRegex(VersionError, "same-repository"):
-                self.fixture.plan(mode="beta", event=changed, beta_sequence="29.1")
+                self.fixture.plan(mode="beta", event=changed)
 
     def test_bot_author_or_sender_is_rejected(self):
         event, _ = self.request()
@@ -677,13 +692,13 @@ class ReleaseTestPlanTests(unittest.TestCase):
             identity = event["pull_request"]["user"] if role == "author" else event["sender"]
             identity.update(login="dependabot[bot]", type="Bot")
             with self.subTest(role=role), self.assertRaisesRegex(VersionError, "non-bot"):
-                self.fixture.plan(mode="beta", event=event, beta_sequence="29.1")
+                self.fixture.plan(mode="beta", event=event)
             event["pull_request"]["user"] = old_author
             event["sender"] = old_sender
 
     def test_ordinary_pr_remains_beta_after_published_floor(self):
         event, _ = self.request(directive="")
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="30.1",
+        plan = self.fixture.plan(mode="beta", event=event,
                                  api=FakeApi(releases=[published("1.10.0")]))
         self.assertEqual(plan["version"], "1.11.0-beta001")
         self.assertFalse(plan["release_test"])
@@ -692,11 +707,11 @@ class ReleaseTestPlanTests(unittest.TestCase):
     def test_two_unmerged_minor_prs_share_next_core_but_have_unique_beta_identity(self):
         event, _ = self.request()
         api = FakeApi(releases=[published("1.9.0"), published("1.11.0-beta.13.32.1", prerelease=True)])
-        first = self.fixture.plan(mode="beta", event=event, beta_sequence="33.1", api=api)
+        first = self.fixture.plan(mode="beta", event=event, api=api)
         event["number"] = event["pull_request"]["number"] = 13
         # A second CI run sees the published beta from the first serialized run.
         api.releases.append(published(first["version"], prerelease=True))
-        second = self.fixture.plan(mode="beta", event=event, beta_sequence="34.1", api=api)
+        second = self.fixture.plan(mode="beta", event=event, api=api)
         self.assertEqual(first["core_version"], "1.10.0")
         self.assertEqual(second["core_version"], first["core_version"])
         self.assertNotEqual(first["version"], second["version"])
@@ -704,7 +719,7 @@ class ReleaseTestPlanTests(unittest.TestCase):
 
     def test_new_run_first_beta_orders_above_legacy_pr_first_published_beta(self):
         event, _ = self.request(directive="")
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="40.1",
+        plan = self.fixture.plan(mode="beta", event=event,
                                  api=FakeApi(releases=[published("1.10.0")]))
         self.assertEqual(plan["version"], "1.11.0-beta001")
         self.assertTrue(plan["version"].endswith("beta001"))
@@ -712,19 +727,35 @@ class ReleaseTestPlanTests(unittest.TestCase):
     def test_newer_build_of_older_pr_orders_above_previous_newer_pr_and_retry(self):
         event, _ = self.request(directive="", number=13)
         api = FakeApi(releases=[published("1.10.0")])
-        previous = self.fixture.plan(mode="beta", event=event, beta_sequence="40.1", api=api)
+        previous = self.fixture.plan(mode="beta", event=event, api=api)
         api.releases.append(published(previous["version"], prerelease=True))
-        retry = self.fixture.plan(mode="beta", event=event, beta_sequence="40.2", api=api)
+        retry = self.fixture.plan(mode="beta", event=event, api=api)
         api.releases.append(published(retry["version"], prerelease=True))
         event["number"] = event["pull_request"]["number"] = 12
-        newer = self.fixture.plan(mode="beta", event=event, beta_sequence="41.1", api=api)
+        newer = self.fixture.plan(mode="beta", event=event, api=api)
         self.assertEqual(previous["version"], "1.11.0-beta001")
         self.assertEqual(retry["version"], "1.11.0-beta002")
         self.assertEqual(newer["version"], "1.11.0-beta003")
 
+    def test_pr_bump_reports_only_the_pull_requests_own_increment(self):
+        event, _ = self.request(directive="")
+        plan = self.fixture.plan(mode="beta", event=event, beta_number="001", api=FakeApi(releases=[published("1.10.0")]))
+        self.assertEqual(plan["pr_bump"], "minor")
+        event["pull_request"]["title"] = "fix: tidy the option"
+        self.assertEqual(self.fixture.plan(mode="beta", event=event, beta_number="001",
+                                           api=FakeApi(releases=[published("1.10.0")]))["pr_bump"], "patch")
+
+    def test_rerun_with_the_reserved_number_plans_the_same_version(self):
+        event, _ = self.request(directive="", number=13)
+        api = FakeApi(releases=[published("1.10.0"), published("1.11.0-beta040", prerelease=True)])
+        first = self.fixture.plan(mode="beta", event=event, beta_number="040", api=api)
+        rerun = self.fixture.plan(mode="beta", event=event, beta_number="040", api=api)
+        self.assertEqual(first["version"], rerun["version"])
+        self.assertEqual(first["tag"], "win-v1.11.0-beta040")
+
     def test_retired_pr_stable_is_excluded_from_the_published_stable_floor(self):
         event, _ = self.request()
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="33.1",
+        plan = self.fixture.plan(mode="beta", event=event,
                                  api=FakeApi(releases=[published("1.9.0"), published("1.10.0", draft=True)]))
         self.assertEqual(plan["core_version"], "1.10.0")
         self.assertEqual(plan["published_floor"], "1.9.0")
@@ -819,7 +850,7 @@ class RetiredReservationTests(unittest.TestCase):
 
     def test_pinned_retired_release_reserves_next_beta_core_without_becoming_stable(self):
         event = self.preview()
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="40.1", api=self.api)
+        plan = self.fixture.plan(mode="beta", event=event, api=self.api)
         self.assertEqual(plan["core_version"], "1.11.0")
         self.assertEqual(plan["version"], "1.11.0-beta001")
         self.assertEqual(plan["published_floor"], "1.9.0")
@@ -831,7 +862,7 @@ class RetiredReservationTests(unittest.TestCase):
 
     def test_read_only_hidden_draft_still_reserves_exact_pinned_shipped_core(self):
         event = self.preview()
-        plan = self.fixture.plan(mode="beta", event=event, beta_sequence="40.1",
+        plan = self.fixture.plan(mode="beta", event=event,
                                  api=FakeApi(releases=[published("1.9.0")]))
         self.assertEqual(plan["core_version"], "1.11.0")
         self.assertEqual(plan["published_floor"], "1.9.0")

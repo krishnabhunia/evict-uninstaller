@@ -35,15 +35,27 @@
         <!-- ═══ Menu (RD1 N1): Home · Apps · Updates · Clean · History, Settings at the bottom ═══ -->
         <Border Grid.Column="0" Background="{DynamicResource Brush.Sidebar.Background}" BorderBrush="{DynamicResource Brush.Sidebar.Border}" BorderThickness="0,0,1,0">
             <DockPanel>
-                <!-- Logo, name and version (the version is always visible in the main window). -->
-                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="22,18,12,0" Height="30">
-                    <Image Source="pack://application:,,,/Assets/app-256.png" Width="24" Height="24" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
-                    <TextBlock Text="Evict" FontSize="17" FontWeight="Bold" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Sidebar.BrandText}" />
-                    <Border Background="{DynamicResource Brush.Surface.Sunken}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1" CornerRadius="7" Padding="6,0" Margin="8,1,0,0" VerticalAlignment="Center"
-                            ToolTip="Installed version – Settings → Updates checks for newer releases">
-                        <TextBlock Text="{Binding VersionText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Secondary}" />
-                    </Border>
-                </StackPanel>
+                <!-- Logo, name and version (the version is always visible in the main window), a "Beta" chip on test
+                     builds and the ⓘ Info button (IN1). A long beta version moves with its chip and ⓘ to a second line. -->
+                <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="22,18,12,0" MinHeight="30">
+                    <StackPanel Orientation="Horizontal" Height="30">
+                        <Image Source="pack://application:,,,/Assets/app-256.png" Width="24" Height="24" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                        <TextBlock Text="Evict" FontSize="17" FontWeight="Bold" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Sidebar.BrandText}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Height="30" Margin="8,0,0,0">
+                        <Border Background="{DynamicResource Brush.Surface.Sunken}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1" CornerRadius="7" Padding="6,0" Margin="0,1,0,0" VerticalAlignment="Center"
+                                ToolTip="Installed version – Settings → Updates checks for newer releases">
+                            <TextBlock Text="{Binding VersionText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                        </Border>
+                        <Border Style="{StaticResource Tag}" Background="{DynamicResource Brush.Warning.Subtle}" Margin="4,1,0,0"
+                                Visibility="{Binding IsBetaBuild, Converter={StaticResource BoolToVis}}" ToolTip="A test build made from a pull request">
+                            <TextBlock Text="Beta" Style="{StaticResource Tag.Text}" Foreground="{DynamicResource Brush.Text.Primary}" />
+                        </Border>
+                        <Button Style="{StaticResource Button.Ghost}" Content="&#xE946;" FontFamily="{StaticResource Font.Icons}" FontSize="13" Padding="4,2" Margin="2,1,0,0"
+                                VerticalAlignment="Center" MinHeight="0" Command="{Binding OpenInfoCommand}" CommandParameter="build"
+                                ToolTip="Info (F1)" AutomationProperties.Name="Info" WindowChrome.IsHitTestVisibleInChrome="True" />
+                    </StackPanel>
+                </WrapPanel>
 
                 <Button DockPanel.Dock="Top" Style="{StaticResource Button.RailSearch}" Command="{Binding OpenSearchCommand}" Margin="14,18,14,12"
                         ToolTip="Search programs, tools, pages and settings (Ctrl+K)" AutomationProperties.Name="Search (Ctrl+K)" />
@@ -188,7 +200,7 @@
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource Button.Ghost}" Content="&#xE8BB;" FontFamily="{StaticResource Font.Icons}" FontSize="10" Padding="8,4"
                             Command="{Binding DismissUpdatedNoticeCommand}" ToolTip="Dismiss" />
-                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="What's new" Command="{Binding OpenReleasesCommand}" Margin="12,0" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Button.Link}" Content="What's new" Command="{Binding OpenInfoCommand}" CommandParameter="whatsnew" Margin="12,0" />
                     <TextBlock Text="&#xE73E;" Style="{StaticResource Icon}" Foreground="{DynamicResource Brush.Success}" DockPanel.Dock="Left" Margin="0,0,10,0" />
                     <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text.Primary}" Text="{Binding UpdatedNoticeText}" />
                 </DockPanel>

@@ -11,7 +11,9 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PageHeader(title: "Settings", subtitle: "Evict \(ReleaseManager.shared.runningVersion) · macOS")
+            PageHeader(title: "Settings", subtitle: "Evict \(ReleaseManager.shared.runningVersion) · macOS") {
+                InfoButton().buttonStyle(.borderless)
+            }
 
             Form {
                 Section("Appearance") {
@@ -99,6 +101,7 @@ struct SettingsView: View {
                         }
                         .disabled(state.isApplyingSchedule)
                         Spacer()
+                        InfoButton(label: "Info")
                         Button("Open Evict's log") {
                             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: AppPaths.logFile)])
                         }

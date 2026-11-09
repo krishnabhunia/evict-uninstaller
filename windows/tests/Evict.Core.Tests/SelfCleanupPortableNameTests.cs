@@ -11,6 +11,8 @@ public sealed class SelfCleanupPortableNameTests
     [InlineData("Evict.old.1234.exe", true)]
     [InlineData(@"C:\Tools\Evict_1.12.2.exe", true)]
     [InlineData(@"C:\Tools\Evict_1.12.2-beta.44.16.1.exe", true)]
+    [InlineData(@"C:\Tools\Evict_4.2.0-beta007.exe", true)]
+    [InlineData("Evict_4.2.0-beta000.exe", true)]
     [InlineData("EVICT_0.0.0.EXE", true)]
     [InlineData("Evict_1.12.exe", false)]
     [InlineData("Evict_01.12.2.exe", false)]
@@ -19,6 +21,10 @@ public sealed class SelfCleanupPortableNameTests
     [InlineData("Evict_1.12.2-beta.44.0.1.exe", false)]
     [InlineData("Evict_1.12.2-beta.44.16.0.exe", false)]
     [InlineData("Evict_1.12.2-beta.1.exe", false)]
+    [InlineData("Evict_4.2.0-beta07.exe", false)]
+    [InlineData("Evict_4.2.0-beta0007.exe", false)]
+    [InlineData("Evict_4.2.0-beta.007.exe", false)]
+    [InlineData("Evict_4.2.0-betaABC.exe", false)]
     [InlineData("Evict_1.12.2-rc.44.16.1.exe", false)]
     [InlineData("Evict_1.12.2+build.exe", false)]
     [InlineData("Evict_1.12.2.exe.backup", false)]
@@ -32,6 +38,7 @@ public sealed class SelfCleanupPortableNameTests
     [Theory]
     [InlineData("Evict_1.12.2.exe.1234.dmp", true)]
     [InlineData("Evict_1.12.2-beta.44.16.1.exe.1234.dmp", true)]
+    [InlineData("Evict_4.2.0-beta007.exe.1234.dmp", true)]
     [InlineData("Evict.exe.1234.dmp", true)]
     [InlineData("Evict.old.1234.exe.5678.dmp", true)]
     [InlineData("Evict_1.12.exe.1234.dmp", false)]
@@ -45,6 +52,7 @@ public sealed class SelfCleanupPortableNameTests
     [Theory]
     [InlineData("EVICT_1.12.2.EXE-A1B2C3D4.pf", true)]
     [InlineData("EVICT_1.12.2-BETA.44.16.1.EXE-A1B2C3D4.pf", true)]
+    [InlineData("EVICT_4.2.0-BETA007.EXE-A1B2C3D4.pf", true)]
     [InlineData("EVICT.EXE-A1B2C3D4.pf", true)]
     [InlineData("EVICT_1.12.EXE-A1B2C3D4.pf", false)]
     [InlineData("EVICT_1.12.2.EXE-ABCDEFGH.pf", false)]
@@ -68,6 +76,7 @@ public sealed class SelfCleanupPortableNameTests
     [InlineData("Evict", true)]
     [InlineData("Evict_1.12.2", true)]
     [InlineData("Evict_1.12.2-beta.44.16.1", true)]
+    [InlineData("Evict_4.2.0-beta007", true)]
     [InlineData("Evict_1.12", false)]
     [InlineData("Evict_1.12.2.exe", false)]
     [InlineData("Evict_1.12.2-beta.44.16.1.backup", false)]
@@ -82,8 +91,8 @@ public sealed class SelfCleanupPortableNameTests
     {
         var workspace = Path.Combine(Path.GetTempPath(), "EvictPortableCacheTests-" + Guid.NewGuid().ToString("N"));
         var cacheBase = Path.Combine(workspace, "custom-base");
-        var expected = new[] { "Evict", "Evict_1.12.2", "Evict_1.12.2-beta.44.16.1" };
-        var decoys = new[] { "OtherApp", "Evict_1.12", "Evict_1.12.2.exe", "Evict_1.12.2-beta.44.16.1.backup" };
+        var expected = new[] { "Evict", "Evict_1.12.2", "Evict_1.12.2-beta.44.16.1", "Evict_4.2.0-beta007" };
+        var decoys = new[] { "OtherApp", "Evict_1.12", "Evict_1.12.2.exe", "Evict_1.12.2-beta.44.16.1.backup", "Evict_4.2.0-beta007.backup" };
         try
         {
             foreach (var name in expected.Concat(decoys))

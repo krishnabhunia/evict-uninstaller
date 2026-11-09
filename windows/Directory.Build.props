@@ -15,4 +15,12 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
+  <!-- Build details for the Info window (This build). CI passes them with -p:SourcePr=… -p:SourceCommit=…
+       -p:BuildTimeUtc=… -p:ReleaseTag=…; a local build leaves them empty and the window says "Local build". -->
+  <ItemGroup>
+    <AssemblyMetadata Include="SourcePr" Value="$(SourcePr)" />
+    <AssemblyMetadata Include="SourceCommit" Value="$(SourceCommit)" />
+    <AssemblyMetadata Include="BuildTimeUtc" Value="$(BuildTimeUtc)" />
+    <AssemblyMetadata Include="ReleaseTag" Value="$(ReleaseTag)" />
+  </ItemGroup>
 </Project>
