@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.2.0 — 2026-11-09
+
+<!-- Evict automatic release; base: mac-v1.1.0 -->
+
+- Claude : Feature: short beta names and Info window (BT1 A, IN1, #41) — 4.2.0
+- PR test builds are now named `x.y.z-betaNNN` (for example `4.2.0-beta007`) with the tag `win-vx.y.z-betaNNN`; stable releases are unchanged.
+- The beta number is reserved in CI by `scripts/beta_reservation.py`: it reuses the tag that already points at the PR source (a re-run keeps its number), otherwise creates the next number from 001 to 999 and stops at 1000 with a request to bump the version.
+- The beta prerelease is published on that reserved tag; the build adds only the managed version files on top of the reviewed PR source, and the publish, freeze and post-publication checks verify that.
+- New Info window: the ⓘ button beside the version (tooltip "Info (F1)"), F1 and Settings → About → Info open "Evict · Info" with This build, What's implemented, What's new and Under the hood, plus Copy build info.
+- The main window shows a small "Beta" chip beside the version on test builds, and the "What's new" link after an update opens the Info window.
+- This build lists version, channel, pull request, commit, build time, GitHub tag, download name and install type; CI passes these as build metadata, and a local build says "Local build".
+- The Mac app gets the same Info window beside its version, in the Evict menu (F1) and in Settings, using its own `mac-v` version line.
+- New `docs/FEATURES.md` feature table (40 rows, Windows and Mac columns) embedded in both apps and checked by `scripts/features_check.py`; a PR planned as a minor or major release must update it.
+- Updater tests prove `4.2.0-beta001` ranks above an old long beta of the same version, `beta009` below `beta010`, and every beta below its stable release.
+- Reservation — `scripts/beta_reservation.py`, `scripts/tests/test_beta_reservation.py`, `reserve-beta` job in `.github/workflows/windows.yml`
+- Planner — `scripts/versioning.py` (`--beta-number`, `beta_reserved`, `pr_bump`)
+- Feature list — `docs/FEATURES.md`, `scripts/features_check.py`, `scripts/tests/test_features_check.py`
+- Windows — `Evict.Core/Services/BuildInfo.cs`, `InfoContent.cs`, `Evict.App/Views/InfoWindow.xaml`, `ViewModels/InfoViewModel.cs`, `MainWindow.xaml`, `Directory.Build.props` (AssemblyMetadata)
+- Mac — `EvictKit/InfoContent.swift`, `EvictApp/InfoView.swift`, `RootView.swift`, `SettingsView.swift`, `EvictApp.swift`, `Scripts/make-app.sh`, `.github/workflows/macos.yml`
+
 ## 1.1.0 — 2026-11-07
 
 <!-- Evict automatic release; base: mac-v1.0.1 -->

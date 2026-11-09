@@ -23,7 +23,20 @@ Per-platform declarations such as `Release-Type-Windows: minor` and `Release-Typ
 
 ## PR beta delivery
 
-Every PR package uses the automatically calculated next core plus `-beta.<run>.<PR>.<attempt>`. The globally increasing unified workflow run is first, so a later build of an older PR remains newer than earlier builds from other PRs. Historical PR-first beta tags still parse correctly and remain immutable.
+Every PR package uses the automatically calculated next core plus a short beta number: `x.y.z-betaNNN`, for example `4.2.0-beta007` with tag `win-v4.2.0-beta007`. NNN has three digits (001–999) and is one SemVer identifier (`beta.007` would be invalid, because numeric identifiers may not start with 0); at a fixed width it sorts correctly.
+
+| SrNo. | Rule | Detail |
+| --- | --- | --- |
+| 1 | One counter per core | All PRs share it: the first beta of 4.2.0 is 001, the next head commit of any PR gets 002. A new x.y.z starts again at 001. |
+| 2 | New head commit, new number | Re-running the same commit keeps its number. The native macOS app has its own version line and `mac-v` beta tags (`macos/Scripts/prepare-release.py`). |
+| 3 | Reserved in CI | The `reserve-beta` job lists the `win-v<core>-beta` tags, reuses a tag that already points at the PR source, or creates the next one (`POST /git/refs`, retried if another build took it first). It holds the write token, so it runs only the workflow's own inline script and never pull-request code; `plan-beta` previews the number read-only with `scripts/beta_reservation.py`, and the tests run both implementations on the same cases. |
+| 4 | Gaps are normal | A number whose build fails later is simply skipped. |
+| 5 | Limit | Number 1000 fails with a message asking for a version bump. |
+| 6 | Unreserved builds | Fork PRs and builds that publish nothing only preview the next free number and are never published. |
+
+The beta tag points at the reviewed PR head (or, when the PR changes workflows, its snapshot with the default-branch workflows, which the normal token may tag). The build adds only the managed version files on top of it, and the prerelease is published on that reserved tag. Tags created with `GITHUB_TOKEN` start no workflow, and the stable tag trigger ignores `win-v*-beta*`. Old long tags such as `win-v1.9.0-beta.23.11.1` still parse, stay immutable and rank below a short beta of the same core.
+
+A PR that adds a feature (a minor or major release) must also update [docs/FEATURES.md](FEATURES.md); `scripts/features_check.py` checks the table and that rule in CI.
 
 GitHub Actions synchronizes the managed Windows version, installer metadata and changelog into the frozen beta source before building. The only allowed generated differences from the reviewed app source are those managed version files. The final tested source SHA and original PR head are recorded in the release notes. The workflow subtree matches the default branch so publication works with the normal GitHub token.
 

@@ -43,6 +43,29 @@ public sealed class InstalledUpdateScenarioTests : IDisposable
         AssertNoDownload();
     }
 
+    // BT1 A: short betas (x.y.z-betaNNN) replace the long form; both must keep updating in the right order.
+    private const string ShortBeta = "1.11.0-beta001";
+
+    [Fact]
+    public async Task InstalledLongBetaUpgradesToAShortBetaOfTheSameCore()
+    {
+        await AssertInstalledHandoff(Beta, true, ShortBeta, ReleaseJson(Beta), ReleaseJson(ShortBeta));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InstalledShortBetaUpgradesToItsStableRelease(bool includeBeta)
+    {
+        await AssertInstalledHandoff(ShortBeta, includeBeta, "1.11.0", ReleaseJson(ShortBeta), ReleaseJson(Beta), ReleaseJson("1.11.0"));
+    }
+
+    [Fact]
+    public async Task InstalledShortBetaUpgradesToTheNextShortBeta()
+    {
+        await AssertInstalledHandoff("1.11.0-beta009", true, "1.11.0-beta010", ReleaseJson("1.11.0-beta009"), ReleaseJson("1.11.0-beta010"));
+    }
+
     [Fact]
     public async Task InstalledStableOptInSelectsAndDownloadsTheFullBetaInstallerIdentity()
     {
