@@ -11,7 +11,7 @@ public sealed class UpdateCheckCoordinatorTests
 
     [Theory]
     [InlineData(false, "1.10.0")]
-    [InlineData(true, "1.11.0-beta.13.32.1")]
+    [InlineData(true, "1.11.0-beta002")]
     public async Task EachRestartQueriesGitHubEvenWhenSettingsRememberARecentCheck(bool includeBeta, string expectedVersion)
     {
         var saved = JsonSerializer.Serialize(new AppSettings
@@ -300,7 +300,9 @@ public sealed class UpdateCheckCoordinatorTests
                 Content = new StringContent("""
                     [
                       { "tag_name": "win-v1.10.0", "draft": false, "prerelease": false, "assets": [] },
-                      { "tag_name": "win-v1.11.0-beta.13.32.1", "draft": false, "prerelease": true, "assets": [] }
+                      { "tag_name": "win-v1.11.0-beta.13.32.1", "draft": false, "prerelease": true, "assets": [] },
+                      { "tag_name": "win-v1.11.0-beta002", "draft": false, "prerelease": true, "assets": [] },
+                      { "tag_name": "win-v1.11.0-beta001", "draft": false, "prerelease": true, "assets": [] }
                     ]
                     """),
             });

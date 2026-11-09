@@ -12,6 +12,8 @@ import json
 import os
 import re
 import subprocess
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -144,31 +146,47 @@ def expected_assets(version: str, release: dict) -> dict[str, dict]:
     return selected
 
 
-def download_asset(asset: dict, folder: Path, opener=None) -> Path:
+# GitHub's release download CDN sometimes answers 502/503/504 or stalls; retry those a few times.
+DOWNLOAD_ATTEMPTS = 5
+RETRY_DELAYS = (5, 10, 20, 30)
+
+
+def transient_download_error(error: BaseException) -> bool:
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in (429, 500, 502, 503, 504)
+    return isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
+def download_asset(asset: dict, folder: Path, opener=None, sleep: Callable[[float], None] = time.sleep) -> Path:
     destination = folder / asset["name"]
     temporary = destination.with_name(destination.name + ".download")
     if destination.exists() or temporary.exists():
         raise RuntimeError(f"Refusing to overwrite an existing component: {destination.name}")
     opener = opener or urllib.request.build_opener(ReleaseAssetRedirect())
-    request = urllib.request.Request(
-        asset["browser_download_url"], headers={"User-Agent": "Evict-release-bundle"}
-    )
-    written = 0
-    try:
-        with opener.open(request, timeout=60) as response, temporary.open("xb") as output:
-            while chunk := response.read(1024 * 1024):
-                written += len(chunk)
-                if written > asset["size"]:
-                    raise RuntimeError(f"Downloaded {asset['name']} exceeded its published size")
-                output.write(chunk)
-        if written != asset["size"]:
-            raise RuntimeError(f"Downloaded {asset['name']} differs from its published size")
-        temporary.rename(destination)
-        return destination
-    except Exception:
-        if temporary.exists():
-            temporary.unlink()
-        raise
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        request = urllib.request.Request(
+            asset["browser_download_url"], headers={"User-Agent": "Evict-release-bundle"}
+        )
+        written = 0
+        try:
+            with opener.open(request, timeout=60) as response, temporary.open("xb") as output:
+                while chunk := response.read(1024 * 1024):
+                    written += len(chunk)
+                    if written > asset["size"]:
+                        raise RuntimeError(f"Downloaded {asset['name']} exceeded its published size")
+                    output.write(chunk)
+            if written != asset["size"]:
+                raise RuntimeError(f"Downloaded {asset['name']} differs from its published size")
+            temporary.rename(destination)
+            return destination
+        except Exception as error:
+            if temporary.exists():
+                temporary.unlink()
+            if attempt == DOWNLOAD_ATTEMPTS or not transient_download_error(error):
+                raise
+            print(f"Download of {asset['name']} failed ({error}); retrying ({attempt + 1} of {DOWNLOAD_ATTEMPTS})", flush=True)
+            sleep(RETRY_DELAYS[attempt - 1])
+    raise AssertionError("unreachable")
 
 
 def read_checksum(sidecar: Path, expected_name: str) -> str:
