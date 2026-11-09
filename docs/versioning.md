@@ -29,7 +29,7 @@ Every PR package uses the automatically calculated next core plus a short beta n
 | --- | --- | --- |
 | 1 | One counter per core | All PRs share it: the first beta of 4.2.0 is 001, the next head commit of any PR gets 002. A new x.y.z starts again at 001. |
 | 2 | New head commit, new number | Re-running the same commit keeps its number. The native macOS app has its own version line and `mac-v` beta tags (`macos/Scripts/prepare-release.py`). |
-| 3 | Reserved in CI | `reserve-beta` runs `scripts/beta_reservation.py`, which lists the `win-v<core>-beta` tags, reuses a tag that already points at the PR source, or creates the next one (`POST /git/refs`, retried if another build took it first). |
+| 3 | Reserved in CI | The `reserve-beta` job lists the `win-v<core>-beta` tags, reuses a tag that already points at the PR source, or creates the next one (`POST /git/refs`, retried if another build took it first). It holds the write token, so it runs only the workflow's own inline script and never pull-request code; `plan-beta` previews the number read-only with `scripts/beta_reservation.py`, and the tests run both implementations on the same cases. |
 | 4 | Gaps are normal | A number whose build fails later is simply skipped. |
 | 5 | Limit | Number 1000 fails with a message asking for a version bump. |
 | 6 | Unreserved builds | Fork PRs and builds that publish nothing only preview the next free number and are never published. |

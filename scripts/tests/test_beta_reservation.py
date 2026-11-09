@@ -4,6 +4,9 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -183,6 +186,119 @@ class ReservationTests(unittest.TestCase):
         self.assertEqual(values["version"], "4.2.0-beta002")
         self.assertEqual(values["tag"], "win-v4.2.0-beta002")
         self.assertEqual(values["reused"], "false")
+
+
+WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "windows.yml"
+
+# Runs the inline reservation step of the reserve-beta job (trusted workflow code, no checkout) with
+# a fake GitHub, so the write-token implementation and the Python one are tested on the same cases.
+NODE_HARNESS = """
+const state = JSON.parse(process.env.RESERVATION_FAKE_STATE);
+const outputs = {};
+function httpError(status) { const e = new Error('HTTP ' + status); e.status = status; return e; }
+const git = {
+  async listMatchingRefs({ref}) {
+    const prefix = ref.replace(/^tags\\//, '');
+    const data = Object.keys(state.tags).sort().filter(n => n.startsWith(prefix)).map(n => state.annotated[n]
+      ? {ref: 'refs/tags/' + n, object: {type: 'tag', sha: state.annotated[n]}}
+      : {ref: 'refs/tags/' + n, object: {type: 'commit', sha: state.tags[n]}});
+    return {data};
+  },
+  async getTag({tag_sha}) {
+    const name = Object.keys(state.annotated).find(n => state.annotated[n] === tag_sha);
+    return {data: {object: {type: 'commit', sha: state.tags[name]}}};
+  },
+  async createRef({ref, sha}) {
+    const name = ref.replace(/^refs\\/tags\\//, '');
+    if (state.createStatus) throw httpError(state.createStatus);
+    if (state.races.length) { const [raced, target] = state.races.shift(); state.tags[raced] = target; }
+    if (name in state.tags) throw httpError(422);
+    state.tags[name] = sha;
+    return {data: {}};
+  },
+};
+const github = {rest: {git}, paginate: async (fn, params) => (await fn(params)).data};
+const summary = {addHeading() { return summary; }, addRaw() { return summary; }, async write() {}};
+const core = {setOutput: (k, v) => { outputs[k] = v; }, notice() {}, summary};
+const context = {repo: {owner: 'owner', repo: 'repo'}};
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+new AsyncFunction('github', 'context', 'core', 'process', state.script)(github, context, core, process)
+  .then(() => console.log(JSON.stringify({outputs, tags: state.tags})))
+  .catch(e => console.log(JSON.stringify({error: e.message})));
+"""
+
+
+def inline_reservation_script():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    job = text[text.index("\n  reserve-beta:"):text.index("\n  freeze-beta:")]
+    steps = job.split("\n    steps:\n", 1)[1]
+    assert "actions/checkout" not in steps and not re.search(r"^\s+run:", steps, re.M), \
+        "reserve-beta must not check out or run pull-request code"
+    lines = []
+    for line in job.split("script: |\n", 1)[1].splitlines():
+        if line.strip() and not line.startswith(" " * 12):
+            break
+        lines.append(line[12:])
+    return "\n".join(lines)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is needed to run the workflow's inline script")
+class InlineReservationTests(unittest.TestCase):
+    """The reserve-beta job's inline script gives the same answer as scripts/beta_reservation.py."""
+
+    def run_inline(self, fake, core="4.2.0", sha=HEAD):
+        state = {"tags": dict(fake.tags), "annotated": dict(fake.annotated), "races": [list(r) for r in fake.races],
+                 "createStatus": fake.create_status, "script": inline_reservation_script()}
+        env = {"CORE_VERSION": core, "PREPARED_SOURCE": sha, "RESERVATION_FAKE_STATE": json.dumps(state)}
+        result = subprocess.run([shutil.which("node"), "-e", NODE_HARNESS],
+                                capture_output=True, text=True, env=env, timeout=60, check=True)
+        return json.loads(result.stdout.strip().splitlines()[-1])
+
+    def assert_same(self, make_fake, core="4.2.0", sha=HEAD):
+        inline = self.run_inline(make_fake(), core, sha)
+        try:
+            expected = reserve(make_fake(), core=core, sha=sha)
+        except reservation.ReservationError as error:
+            self.assertIn("error", inline)
+            return error, inline
+        self.assertNotIn("error", inline, inline)
+        self.assertEqual({key: str(value).lower() if isinstance(value, bool) else str(value)
+                          for key, value in expected.items()}, inline["outputs"])
+        return expected, inline
+
+    def test_same_results_as_the_python_implementation(self):
+        cases = {
+            "first": lambda: FakeGitHub(),
+            "next across PRs": lambda: FakeGitHub({"win-v4.2.0-beta001": OTHER, "win-v4.2.0-beta002": THIRD}),
+            "re-run reuses": lambda: FakeGitHub({"win-v4.2.0-beta001": OTHER, "win-v4.2.0-beta002": HEAD}),
+            "annotated": lambda: FakeGitHub({"win-v4.2.0-beta001": HEAD}, annotated={"win-v4.2.0-beta001": "d" * 40}),
+            "old long and other tags ignored": lambda: FakeGitHub({
+                "win-v4.2.0-beta.18.29.1": OTHER, "win-v4.2.0-beta000": OTHER, "win-v4.2.0-beta1": OTHER,
+                "win-v4.2.0-beta0001": OTHER, "win-v4.2.1-beta007": OTHER, "win-v4.2.0": OTHER}),
+            "gap": lambda: FakeGitHub({"win-v4.2.0-beta001": OTHER, "win-v4.2.0-beta009": THIRD}),
+            "lost race": lambda: FakeGitHub({"win-v4.2.0-beta001": OTHER}, races=[("win-v4.2.0-beta002", THIRD)]),
+            "race won by same commit": lambda: FakeGitHub(races=[("win-v4.2.0-beta001", HEAD)]),
+        }
+        for name, make_fake in cases.items():
+            with self.subTest(name):
+                self.assert_same(make_fake)
+
+    def test_same_failures(self):
+        self.assertIn("Bump the version", self.run_inline(FakeGitHub({"win-v4.2.0-beta999": OTHER}))["error"])
+        races = [(f"win-v4.2.0-beta{n:03d}", OTHER) for n in range(1, 30)]
+        self.assertIn("after 10 attempts", self.run_inline(FakeGitHub(races=races))["error"])
+        self.assertIn("HTTP 403", self.run_inline(FakeGitHub(create_status=403))["error"])
+        for core, sha in (("4.2", HEAD), ("04.2.0", HEAD), ("4.2.0", "abc"), ("4.2.0", HEAD.upper())):
+            with self.subTest(core=core, sha=sha):
+                self.assertIn("error", self.run_inline(FakeGitHub(), core, sha))
+
+    def test_dry_run_previews_without_creating_a_tag(self):
+        fake = FakeGitHub({"win-v4.2.0-beta001": OTHER})
+        result = reservation.reserve(reservation.GitHubRefs("owner/repo", "token", opener=fake), "4.2.0", "win-v", HEAD,
+                                     dry_run=True)
+        self.assertEqual(result["beta_number"], "002")
+        self.assertNotIn("win-v4.2.0-beta002", fake.tags)
+        self.assertFalse(any(method == "POST" for method, _ in fake.requests))
 
 
 if __name__ == "__main__":

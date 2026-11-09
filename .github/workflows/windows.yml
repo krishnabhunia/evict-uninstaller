@@ -524,6 +524,7 @@ jobs:
       core_version: ${{ steps.plan.outputs.core_version }}
       publish: ${{ steps.plan.outputs.publish }}
       pr_bump: ${{ steps.plan.outputs.pr_bump }}
+      reservation_preview: ${{ steps.preview.outputs.beta_number }}
       manifest_artifact: ${{ steps.plan.outputs.manifest_artifact }}
     steps:
       - uses: actions/checkout@v7
@@ -566,6 +567,16 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"manifest_artifact=generated-windows-version-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}\n")
           PY
+      - name: Preview the beta number (read-only)
+        id: preview
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CORE_VERSION: ${{ steps.plan.outputs.core_version }}
+          PREPARED_SOURCE: ${{ needs.prepare-beta.outputs.source_sha }}
+        run: |
+          python scripts/beta_reservation.py --dry-run --repository "$GITHUB_REPOSITORY" --core "$CORE_VERSION" \
+            --prefix win-v --sha "$PREPARED_SOURCE" --github-output "$GITHUB_OUTPUT"
       - name: A feature PR updates docs/FEATURES.md
         env:
           PYTHONUTF8: "1"
@@ -587,7 +598,10 @@ jobs:
 
   # BT2: reserve the next short beta number for this core by creating its tag on the reviewed PR source.
   # Re-runs of the same source reuse their number; a number whose build fails later is skipped (gaps are fine).
-  # Only scripts/beta_reservation.py (standard library, unit tested first) runs here; the token is not persisted.
+  # Like freeze-beta and publish, this write-token job runs only this workflow's inline code: no checkout, no
+  # PR scripts. The PR source SHA and planned core arrive as data and are validated. plan-beta previews the
+  # same result read-only with scripts/beta_reservation.py; scripts/tests/test_beta_reservation.py runs this
+  # inline script and that Python implementation against one fake GitHub so they cannot drift apart.
   reserve-beta:
     needs: [prepare-beta, plan-beta]
     if: always() && needs.prepare-beta.result == 'success' && needs.plan-beta.result == 'success' && needs.plan-beta.outputs.publish == 'true'
@@ -600,33 +614,62 @@ jobs:
       tag: ${{ steps.reserve.outputs.tag }}
       source_sha: ${{ steps.reserve.outputs.source_sha }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.prepare-beta.outputs.source_sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - name: Test the reservation algorithm
-        run: python -m unittest scripts/tests/test_beta_reservation.py -v
       - name: Reserve the beta number
         id: reserve
+        uses: actions/github-script@v9
         env:
-          GH_TOKEN: ${{ github.token }}
           CORE_VERSION: ${{ needs.plan-beta.outputs.core_version }}
           PREPARED_SOURCE: ${{ needs.prepare-beta.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$PREPARED_SOURCE"
-          python scripts/beta_reservation.py --repository "$GITHUB_REPOSITORY" --core "$CORE_VERSION" \
-            --prefix win-v --sha "$PREPARED_SOURCE" --github-output "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/reservation.json"
-          python - "$RUNNER_TEMP/reservation.json" <<'PY'
-          import json, os, sys
-          result = json.load(open(sys.argv[1]))
-          line = f"Beta {result['version']} · tag {result['tag']} · {'reused' if result['reused'] else 'new'} · source {result['source_sha']}"
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              summary.write("### Reserved beta number\n\n" + line + "\n")
-          PY
+          PREVIEW_NUMBER: ${{ needs.plan-beta.outputs.reservation_preview }}
+        with:
+          script: |
+            // BEGIN beta reservation (kept in step with scripts/beta_reservation.py)
+            const coreVersion = process.env.CORE_VERSION, sha = process.env.PREPARED_SOURCE, prefix = 'win-v';
+            if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(coreVersion || '')) throw new Error('The core version must be x.y.z.');
+            if (!/^[0-9a-f]{40}$/.test(sha || '')) throw new Error('The source must be a full 40-character commit SHA.');
+            const exact = new RegExp('^' + (prefix + coreVersion).replace(/\./g, '\\.') + '-beta([0-9]{3})$');
+            async function peel(object) {
+              for (let depth = 0; depth < 5; depth++) {
+                if (object.type === 'commit') return /^[0-9a-f]{40}$/.test(object.sha) ? object.sha : null;
+                if (object.type !== 'tag') return null;
+                object = (await github.rest.git.getTag({...context.repo, tag_sha: object.sha})).data.object;
+              }
+              return null;
+            }
+            async function existing() {
+              const refs = await github.paginate(github.rest.git.listMatchingRefs,
+                {...context.repo, ref: 'tags/' + prefix + coreVersion + '-beta', per_page: 100});
+              const found = new Map();
+              for (const ref of refs) {
+                const match = exact.exec(String(ref.ref || '').replace(/^refs\/tags\//, ''));
+                if (!match || match[1] === '000' || !ref.object) continue;
+                const commit = await peel(ref.object);
+                if (commit) found.set(Number(match[1]), commit);
+              }
+              return found;
+            }
+            let result = null;
+            for (let attempt = 0; attempt < 10 && !result; attempt++) {
+              const found = await existing();
+              const reused = [...found].filter(([, target]) => target === sha).map(([n]) => n).sort((a, b) => a - b);
+              const number = reused.length ? reused[0] : Math.max(0, ...found.keys()) + 1;
+              if (number > 999) throw new Error('All 999 beta numbers of this version are used. Bump the version (a new x.y.z starts again at 001).');
+              const tag = prefix + coreVersion + '-beta' + String(number).padStart(3, '0');
+              if (!reused.length) {
+                try { await github.rest.git.createRef({...context.repo, ref: 'refs/tags/' + tag, sha}); }
+                catch (error) { if (error.status === 422) continue; throw error; }  // another build took it: read again
+              }
+              result = {beta_number: String(number).padStart(3, '0'), version: coreVersion + '-beta' + String(number).padStart(3, '0'),
+                        tag, source_sha: sha, reused: reused.length > 0};
+            }
+            if (!result) throw new Error('Could not reserve a beta number for ' + coreVersion + ' after 10 attempts; try the run again.');
+            // END beta reservation
+            for (const [key, value] of Object.entries(result)) core.setOutput(key, String(value));
+            if (process.env.PREVIEW_NUMBER && process.env.PREVIEW_NUMBER !== result.beta_number) {
+              core.notice('The read-only preview expected beta ' + process.env.PREVIEW_NUMBER + '; another build reserved it first.');
+            }
+            await core.summary.addHeading('Reserved beta number').addRaw('Beta ' + result.version + ' · tag ' + result.tag +
+              ' · ' + (result.reused ? 'reused' : 'new') + ' · source ' + result.source_sha).write();
 
   # This job reads a data manifest; it never checks out or executes PR code with a write token.
   freeze-beta:

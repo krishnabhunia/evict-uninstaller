@@ -13,6 +13,11 @@ The counter is per core version x.y.z and shared by every PR of the repository:
 
 A number reserved by a build that later fails is simply skipped; gaps in the sequence are normal.
 This script creates exactly one tag ref and nothing else. Only the Python standard library is used.
+
+CI runs it only with ``--dry-run`` and a read-only token (it is pull-request code): the tag itself is created
+by the trusted workflow-side twin of this algorithm in the ``reserve-beta`` job of .github/workflows/windows.yml,
+which never checks out or executes pull-request code. scripts/tests/test_beta_reservation.py runs both against
+the same fake GitHub so they cannot drift apart.
 """
 from __future__ import annotations
 
@@ -146,7 +151,8 @@ def existing_numbers(refs: GitHubRefs, prefix: str, core: str) -> dict[int, str]
     return found
 
 
-def reserve(refs: GitHubRefs, core: str, prefix: str, sha: str, attempts: int = MAX_ATTEMPTS) -> dict[str, Any]:
+def reserve(refs: GitHubRefs, core: str, prefix: str, sha: str, attempts: int = MAX_ATTEMPTS,
+            dry_run: bool = False) -> dict[str, Any]:
     if not CORE.fullmatch(core):
         raise ReservationError("The core version must be x.y.z.")
     if not PREFIX.fullmatch(prefix):
@@ -156,7 +162,7 @@ def reserve(refs: GitHubRefs, core: str, prefix: str, sha: str, attempts: int = 
     for _ in range(attempts):
         number, reused = choose(existing_numbers(refs, prefix, core), sha)
         tag = short_tag(prefix, core, number)
-        if not reused:
+        if not reused and not dry_run:
             status = refs.create_tag(tag, sha)
             if status == 422:
                 continue  # another build took this number first: read the list again
@@ -174,11 +180,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prefix", required=True, help="tag prefix, e.g. win-v")
     parser.add_argument("--sha", required=True, help="the PR source commit (never the synthetic merge commit)")
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--dry-run", action="store_true", help="only report the number that would be reserved")
     arguments = parser.parse_args(argv)
     try:
         token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         api = os.environ.get("GITHUB_API_URL") or "https://api.github.com"
-        result = reserve(GitHubRefs(arguments.repository, token, api=api), arguments.core, arguments.prefix, arguments.sha)
+        result = reserve(GitHubRefs(arguments.repository, token, api=api), arguments.core, arguments.prefix, arguments.sha,
+                         dry_run=arguments.dry_run)
         if arguments.github_output:
             with arguments.github_output.open("a", encoding="utf-8") as stream:
                 for key, value in result.items():
