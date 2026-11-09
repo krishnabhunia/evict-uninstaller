@@ -1436,7 +1436,7 @@ jobs:
             }
             $out = Join-Path PublishedAssets $asset.name
             # Public asset downloads receive no repository token, including on redirects.
-            Invoke-WebRequest -Uri $uri -OutFile $out -TimeoutSec 120 -MaximumRetryCount 3 -RetryIntervalSec 3
+            Invoke-WebRequest -Uri $uri -OutFile $out -TimeoutSec 120 -MaximumRetryCount 5 -RetryIntervalSec 15
             if ((Get-Item -LiteralPath $out).Length -ne $asset.size) { throw "Downloaded asset size mismatch: $($asset.name)" }
           }
           foreach ($name in @("Evict.exe", "Evict-Setup-$v.exe", "Evict_$v.dmg", "Evict_$v.zip")) {
