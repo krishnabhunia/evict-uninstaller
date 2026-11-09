@@ -80,6 +80,7 @@ class WindowsBundleSourceTests(unittest.TestCase):
             release("4.0.0", draft=True), release("5.0.0", prerelease=True),
             release("6.0.0", tag="mac-v6.0.0"),
             release("7.0.0", tag="win-v7.0"), release("8.0.0", tag="win-v8.0.0-beta.1.2.1"),
+            release("8.1.0", tag="win-v8.1.0-beta007"),
             release("1.9.0"), {"tag_name": "win-v9.0.0"},
         ]
         self.assertEqual("1.9.0", bundle.choose_release(candidates, lambda tag: True)[0])
