@@ -10,9 +10,9 @@ For manual testing, download the unified `Evict_<fullversion>.zip` Actions artif
 
 ## Version and channel rules
 
-- PR packages use the automatically calculated next major, minor or patch version with a suffix, for example `1.9.0-beta.<run>.<PR>.<attempt>`. See [automatic versioning](versioning.md).
+- PR packages use the automatically calculated next major, minor or patch version with a short beta number, for example `4.2.0-beta007`. Each new PR head commit gets the next number for that version (001–999); re-running a commit keeps it. See [automatic versioning](versioning.md).
 - The running application's informational version includes the suffix; installers and update dialogs display it.
-- Beta identifiers are compared numerically, so beta.10 is newer than beta.9.
+- Short betas compare by their three-digit number, so beta010 is newer than beta009. A short beta is newer than an old long beta of the same version (`4.2.0-beta001` > `4.2.0-beta.18.29.1`); old long tags still appear in the version history.
 - A final release is newer than its beta at the same numeric version.
 - Opting out removes pending beta offers. It does not automatically downgrade a beta that is already installed.
 - Release selection ignores drafts and macOS tags, follows the complete supported release-list pagination, and stops if it cannot verify that list.

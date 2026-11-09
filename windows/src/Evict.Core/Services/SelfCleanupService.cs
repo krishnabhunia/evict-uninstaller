@@ -85,8 +85,9 @@ public static class SelfCleanupService
     // A prefix match would also claim unrelated applications and temporary files.
     private const string CoreNumber = @"(?:0|[1-9][0-9]*)";
     private const string PositiveNumber = @"[1-9][0-9]*";
+    // Short PR betas (x.y.z-betaNNN) and the old long x.y.z-beta.RUN.PR.ATTEMPT names of earlier downloads.
     private const string PortableVersion = CoreNumber + @"\." + CoreNumber + @"\." + CoreNumber
-        + @"(?:-beta\." + PositiveNumber + @"\." + PositiveNumber + @"\." + PositiveNumber + @")?";
+        + @"(?:-beta[0-9]{3}|-beta\." + PositiveNumber + @"\." + PositiveNumber + @"\." + PositiveNumber + @")?";
     private const RegexOptions NameOptions = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
 
     /// <summary>The installed name, canonical versioned portable names, and exact update backup names.</summary>

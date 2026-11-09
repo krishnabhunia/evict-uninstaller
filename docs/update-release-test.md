@@ -5,9 +5,9 @@ The open Windows PRs publish beta builds. A normal stable release is published o
 | Build | Application label | Windows numeric resources |
 | --- | --- | --- |
 | Main stable | x.y.z | x.y.z.0 |
-| PR beta | x.y.z-beta.<run>.<PR>.<attempt> | x.y.z.0 |
+| PR beta | x.y.z-betaNNN (e.g. 4.2.0-beta007) | x.y.z.0 |
 
-GitHub calculates the core from the change type and synchronizes source, installer and changelog metadata. The workflow run is first in the beta suffix so newer builds sort above older builds across PRs. A final stable version sorts above its beta at the same core.
+GitHub calculates the core from the change type and synchronizes source, installer and changelog metadata. The three-digit beta number is reserved per core across all PRs, so a newer build always has a higher number. A final stable version sorts above its beta at the same core.
 
 ## PR metadata
 
