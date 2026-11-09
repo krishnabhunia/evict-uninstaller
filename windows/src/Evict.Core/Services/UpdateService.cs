@@ -500,6 +500,21 @@ public sealed class UpdateService
     /// <summary>True when this exe runs from the folder the installer wrote → updates go through Setup.</summary>
     public static bool IsInstalledMode() => UpdateChecker.SameDirectory(InstalledDir(), ExeDirectory);
 
+    /// <summary>"installer, per-user", "installer, all users" or "portable" (Info window, Copy build info).</summary>
+    public static string InstallKindText()
+    {
+        static string? Read(RegistryKey root)
+        {
+            try
+            {
+                using var k = root.OpenSubKey(@"Software\Evict");
+                return k?.GetValue("InstallDir") as string;
+            }
+            catch { return null; }
+        }
+        return BuildInfo.DescribeInstall(Read(Registry.CurrentUser), Read(Registry.LocalMachine), ExeDirectory);
+    }
+
     /// <summary>
     /// Installed: start the new Setup silently (it closes Evict, replaces the files and relaunches).
     /// Portable: rename the running Evict.exe to Evict.old.exe, move the new file in, start it.
