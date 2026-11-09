@@ -213,6 +213,10 @@ jobs:
       - name: Build and verify Apple Silicon and Intel application
         env:
           EVICT_RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          # Shown in the Info window (This build); empty values mean "Local build".
+          EVICT_SOURCE_PR: ${{ github.event.pull_request.number }}
+          EVICT_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || needs.plan.outputs.source_sha }}
+          EVICT_RELEASE_TAG: ${{ needs.plan.outputs.publish == 'true' && needs.freeze.result == 'success' && format('mac-v{0}', needs.plan.outputs.version) || '' }}
         run: |
           bash macos/Scripts/make-app.sh --universal
           lipo macos/build/Evict.app/Contents/MacOS/Evict -verify_arch arm64 x86_64

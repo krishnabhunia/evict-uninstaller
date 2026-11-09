@@ -38,6 +38,7 @@ jobs:
       publish: ${{ steps.ver.outputs.publish }}
       channel: ${{ steps.ver.outputs.channel }}
       prerelease: ${{ steps.ver.outputs.prerelease }}
+      beta_tag_source: ${{ steps.ver.outputs.beta_tag_source }}
     defaults:
       run:
         working-directory: windows
@@ -137,7 +138,8 @@ jobs:
             $planArguments = @("$repoRoot/scripts/versioning.py", "plan", "--platform", "windows", "--mode", $mode,
               "--event-file", $env:GITHUB_EVENT_PATH, "--ref", $ref, "--repo-root", $repoRoot,
               "--main-ref", "origin/main", "--github-output", $output)
-            if ($mode -eq "beta") { $planArguments += @("--beta-sequence", "$env:GITHUB_RUN_NUMBER.$env:GITHUB_RUN_ATTEMPT") }
+            # BT2: a publishing beta uses the number reserve-beta reserved as its tag; other PR builds preview the next one.
+            if ($mode -eq "beta" -and '${{ needs.reserve-beta.outputs.beta_number }}' -ne '') { $planArguments += @("--beta-number", '${{ needs.reserve-beta.outputs.beta_number }}') }
             if ($mode -eq "tag") { $planArguments += @("--tag", $ref.Substring("refs/tags/".Length)) }
             if ($sync) { $planArguments += "--sync" }
             & python @planArguments | ForEach-Object { Write-Host $_ }
@@ -197,6 +199,13 @@ jobs:
             }
           }
           else { $plan = Read-Plan $false }
+          if ($null -ne $plan) {
+            # A beta is published only on its reserved tag; a PR build without a reservation is validation only.
+            $plan.beta_tag_source = if ($mode -eq 'beta') { '${{ needs.reserve-beta.outputs.source_sha }}' } else { '' }
+            if ($mode -eq 'beta' -and ($plan.beta_reserved -ne 'true' -or $plan.beta_tag_source -notmatch '^[a-f0-9]{40}$')) {
+              $plan.publish = 'false'; $plan.beta_tag_source = ''
+            }
+          }
 
           function Read-Release([string] $tag) {
             $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json"; "X-GitHub-Api-Version" = "2022-11-28" }
@@ -219,7 +228,9 @@ jobs:
           $release = if ($eligible) { Read-Release $plan.tag } else { $null }
           if ($tagExists) {
             $tagSource = $tagSource.Trim()
-            if ($plan.publish -eq "true" -and $tagSource -ne $source) { throw "Version tag already points to different source; refusing to change it" }
+            # A reserved beta tag identifies the reviewed PR source; the build adds only managed version metadata on top.
+            $expectedTagSource = if ($mode -eq 'beta') { $plan.beta_tag_source } else { $source }
+            if ($plan.publish -eq "true" -and $tagSource -ne $expectedTagSource) { throw "Version tag already points to different source; refusing to change it" }
             if ($eligible -and ($null -eq $release -or $release.draft)) {
               # Resume a reserved tag from its frozen source, even if newer documentation/Mac changes exist on main.
               git -C $repoRoot checkout --detach $tagSource
@@ -237,12 +248,18 @@ jobs:
           }
           $plan.source_sha = $source
           if ($mode -eq 'beta' -and '${{ needs.freeze-beta.outputs.source_sha }}' -ne '' -and
-              ($source -ne '${{ needs.freeze-beta.outputs.source_sha }}' -or $plan.version -ne '${{ needs.plan-beta.outputs.version }}')) {
+              ($source -ne '${{ needs.freeze-beta.outputs.source_sha }}' -or $plan.version -ne '${{ needs.reserve-beta.outputs.version }}')) {
             throw 'The frozen beta source or planned version changed before the build'
           }
           $plan.artifact = "Evict-$($plan.version)-$source"
           foreach ($key in $plan.Keys) { "$key=$($plan[$key])" >> $env:GITHUB_OUTPUT }
           Write-Host "Version $($plan.version), source $source, publish $($plan.publish)"
+
+      - name: Feature list check
+        working-directory: .
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/features_check.py --version "${{ steps.ver.outputs.core_version }}"
 
       - name: Release plan
         id: rel
@@ -277,7 +294,19 @@ jobs:
         run: python build/xaml_check.py
 
       - name: Publish single-file EXE
-        run: dotnet publish src/Evict.App/Evict.App.csproj -c Release -o Portable -p:Version=${{ steps.ver.outputs.version }} -p:InformationalVersion=${{ steps.ver.outputs.version }}
+        shell: pwsh
+        env:
+          # Shown in the app's Info window (This build). Local builds leave these empty ("Local build").
+          BUILD_SOURCE_PR: ${{ github.event.pull_request.number }}
+          BUILD_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || steps.ver.outputs.source_sha }}
+          BUILD_RELEASE_TAG: ${{ steps.ver.outputs.publish == 'true' && steps.ver.outputs.tag || '' }}
+        run: |
+          $builtUtc = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", [Globalization.CultureInfo]::InvariantCulture)
+          if ($env:BUILD_SOURCE_PR -notmatch '^\d*$' -or $env:BUILD_SOURCE_COMMIT -notmatch '^[a-f0-9]{40}$' -or
+              $env:BUILD_RELEASE_TAG -notmatch '^(win-v[0-9A-Za-z.-]+)?$') { throw 'Invalid build metadata' }
+          dotnet publish src/Evict.App/Evict.App.csproj -c Release -o Portable -p:Version=${{ steps.ver.outputs.version }} -p:InformationalVersion=${{ steps.ver.outputs.version }} `
+            "-p:SourcePr=$env:BUILD_SOURCE_PR" "-p:SourceCommit=$env:BUILD_SOURCE_COMMIT" "-p:BuildTimeUtc=$builtUtc" "-p:ReleaseTag=$env:BUILD_RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
       - name: Sign Evict.exe (optional)
         if: env.SIGN_PFX_BASE64 != ''
@@ -465,8 +494,12 @@ jobs:
                 await workflows(tree.sha) !== defaultWorkflows) {
               throw new Error('Beta snapshot changed files outside the workflow subtree.');
             }
+            // Same PR head + same main = the same snapshot SHA (author/committer copied from the PR head), so a
+            // re-run finds the beta tag it reserved before and keeps its number (BT2).
             const {data: snapshot} = await github.rest.git.createCommit({
               ...repo, tree: tree.sha, parents: [base.sha],
+              author: {name: head.author.name, email: head.author.email, date: head.author.date},
+              committer: {name: head.committer.name, email: head.committer.email, date: head.committer.date},
               message: 'Windows beta source for PR #' + pr.number + '\n\nOriginal PR head: ' + head.sha +
                        '\nApplication, tests and documentation match the PR exactly. Workflows match default branch ' + base.sha + '.'
             });
@@ -490,6 +523,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       core_version: ${{ steps.plan.outputs.core_version }}
       publish: ${{ steps.plan.outputs.publish }}
+      pr_bump: ${{ steps.plan.outputs.pr_bump }}
       manifest_artifact: ${{ steps.plan.outputs.manifest_artifact }}
     steps:
       - uses: actions/checkout@v7
@@ -512,9 +546,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir GeneratedVersion
+          # The core is planned here; reserve-beta then reserves the real three-digit number as a tag (BT2).
           python scripts/versioning.py plan --platform windows --mode beta --sync \
             --event-file "$GITHUB_EVENT_PATH" --ref "$GITHUB_REF" --main-ref origin/main \
-            --beta-sequence "$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT" \
             --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/beta-plan.json"
           python - <<'PY'
           import json, os, pathlib, subprocess
@@ -532,6 +566,17 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"manifest_artifact=generated-windows-version-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}\n")
           PY
+      - name: A feature PR updates docs/FEATURES.md
+        env:
+          PYTHONUTF8: "1"
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BUMP: ${{ steps.plan.outputs.pr_bump }}
+          CORE_VERSION: ${{ steps.plan.outputs.core_version }}
+        run: |
+          set -euo pipefail
+          git diff --name-only --no-renames "$(git merge-base "$PR_BASE" "$PR_HEAD")" "$PR_HEAD" -- > "$RUNNER_TEMP/pr-files.txt"
+          python scripts/features_check.py --version "$CORE_VERSION" --bump "$PR_BUMP" --changed-files "$RUNNER_TEMP/pr-files.txt"
       - uses: actions/upload-artifact@v7
         id: version_manifest
         with:
@@ -540,10 +585,53 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # This job reads a data manifest; it never checks out or executes PR code with a write token.
-  freeze-beta:
+  # BT2: reserve the next short beta number for this core by creating its tag on the reviewed PR source.
+  # Re-runs of the same source reuse their number; a number whose build fails later is skipped (gaps are fine).
+  # Only scripts/beta_reservation.py (standard library, unit tested first) runs here; the token is not persisted.
+  reserve-beta:
     needs: [prepare-beta, plan-beta]
     if: always() && needs.prepare-beta.result == 'success' && needs.plan-beta.result == 'success' && needs.plan-beta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      beta_number: ${{ steps.reserve.outputs.beta_number }}
+      version: ${{ steps.reserve.outputs.version }}
+      tag: ${{ steps.reserve.outputs.tag }}
+      source_sha: ${{ steps.reserve.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-beta.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Test the reservation algorithm
+        run: python -m unittest scripts/tests/test_beta_reservation.py -v
+      - name: Reserve the beta number
+        id: reserve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CORE_VERSION: ${{ needs.plan-beta.outputs.core_version }}
+          PREPARED_SOURCE: ${{ needs.prepare-beta.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PREPARED_SOURCE"
+          python scripts/beta_reservation.py --repository "$GITHUB_REPOSITORY" --core "$CORE_VERSION" \
+            --prefix win-v --sha "$PREPARED_SOURCE" --github-output "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/reservation.json"
+          python - "$RUNNER_TEMP/reservation.json" <<'PY'
+          import json, os, sys
+          result = json.load(open(sys.argv[1]))
+          line = f"Beta {result['version']} · tag {result['tag']} · {'reused' if result['reused'] else 'new'} · source {result['source_sha']}"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("### Reserved beta number\n\n" + line + "\n")
+          PY
+
+  # This job reads a data manifest; it never checks out or executes PR code with a write token.
+  freeze-beta:
+    needs: [prepare-beta, plan-beta, reserve-beta]
+    if: always() && needs.prepare-beta.result == 'success' && needs.plan-beta.result == 'success' && needs.plan-beta.outputs.publish == 'true' && needs.reserve-beta.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -560,8 +648,12 @@ jobs:
         uses: actions/github-script@v9
         env:
           PREPARED_SOURCE: ${{ needs.prepare-beta.outputs.source_sha }}
-          BETA_VERSION: ${{ needs.plan-beta.outputs.version }}
+          PLANNED_VERSION: ${{ needs.plan-beta.outputs.version }}
           BETA_CORE: ${{ needs.plan-beta.outputs.core_version }}
+          BETA_NUMBER: ${{ needs.reserve-beta.outputs.beta_number }}
+          BETA_VERSION: ${{ needs.reserve-beta.outputs.version }}
+          BETA_TAG: ${{ needs.reserve-beta.outputs.tag }}
+          RESERVED_SOURCE: ${{ needs.reserve-beta.outputs.source_sha }}
         with:
           script: |
             const fs = require('fs');
@@ -580,17 +672,28 @@ jobs:
               throw new Error('Unexpected generated metadata artifact.');
             }
             const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
-            const p = manifest.plan, coreVersion = process.env.BETA_CORE;
-            const expectedVersion = process.env.BETA_VERSION;
+            const p = manifest.plan, coreVersion = process.env.BETA_CORE, number = process.env.BETA_NUMBER;
+            // The plan only previewed a number; the number reserved as a tag by reserve-beta replaces it (BT1 A / BT2).
+            const expectedVersion = coreVersion + '-beta' + number;
             const allowed = ['windows/Directory.Build.props', 'windows/installer/Evict.iss', 'windows/CHANGELOG.md'];
+            if (!/^(?!000)\d{3}$/.test(number || '') || process.env.BETA_VERSION !== expectedVersion ||
+                process.env.BETA_TAG !== 'win-v' + expectedVersion || process.env.RESERVED_SOURCE !== process.env.PREPARED_SOURCE) {
+              throw new Error('The reserved beta number does not belong to this core and prepared source.');
+            }
+            let reserved = (await github.rest.git.getRef({...context.repo, ref: 'tags/' + process.env.BETA_TAG})).data.object;
+            while (reserved.type === 'tag') reserved = (await github.rest.git.getTag({...context.repo, tag_sha: reserved.sha})).data.object;
+            if (reserved.type !== 'commit' || reserved.sha !== process.env.PREPARED_SOURCE) {
+              throw new Error('The reserved beta tag does not identify the prepared PR source.');
+            }
             if (manifest.source_sha !== process.env.PREPARED_SOURCE || p.source_sha !== manifest.source_sha ||
-                p.version !== process.env.BETA_VERSION ||
+                p.version !== process.env.PLANNED_VERSION || p.beta_reserved !== false ||
+                !/^\d+\.\d+\.\d+-beta(?!000)\d{3}$/.test(p.version || '') ||
                 !/^\d+\.\d+\.\d+-beta(?!000)\d{3}$/.test(expectedVersion) ||
                 !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(coreVersion) ||
                 coreVersion.split('.').some(n => Number(n) > 65535) ||
                 p.core_version !== coreVersion || p.source_version !== coreVersion ||
                 p.numeric_version !== coreVersion + '.0' || p.channel !== 'beta' || p.prerelease !== true ||
-                p.tag !== 'win-v' + expectedVersion || !Array.isArray(p.sync_files) ||
+                p.tag !== 'win-v' + p.version || !Array.isArray(p.sync_files) ||
                 p.sync_files.some(path => !allowed.includes(path)) ||
                 JSON.stringify(Object.keys(manifest.files).sort()) !== JSON.stringify([...allowed].sort()) ||
                 !Array.isArray(p.notes) || p.notes.some(n => typeof n !== 'string' || n.length > 2000) ||
@@ -667,7 +770,7 @@ jobs:
             await core.summary.addHeading('Frozen beta ' + expectedVersion).addRaw('Exact source: ' + commit.sha).write();
 
   pr-build:
-    needs: [freeze-beta, plan-beta]
+    needs: [freeze-beta, plan-beta, reserve-beta]
     if: always() && github.event_name == 'pull_request' && (needs.freeze-beta.result == 'success' || (needs.plan-beta.result == 'success' && needs.plan-beta.outputs.publish == 'false') || github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.type != 'User' || github.event.sender.type != 'User')
     runs-on: windows-latest
     permissions:
@@ -688,6 +791,7 @@ jobs:
       source_sha: ${{ steps.ver.outputs.source_sha }}
       artifact: ${{ steps.ver.outputs.artifact }}
       publish: ${{ steps.ver.outputs.publish }}
+      beta_tag_source: ${{ steps.ver.outputs.beta_tag_source }}
     steps: *windows_build_steps
 
   # Reuse a completed native release at the version in the frozen Windows source.
@@ -750,6 +854,7 @@ jobs:
       publish: ${{ needs.pr-build.outputs.publish || needs.build.outputs.publish }}
       channel: ${{ needs.pr-build.outputs.channel || needs.build.outputs.channel }}
       prerelease: ${{ needs.pr-build.outputs.prerelease || needs.build.outputs.prerelease }}
+      beta_tag_source: ${{ needs.pr-build.outputs.beta_tag_source || needs.build.outputs.beta_tag_source }}
       mac_version: ${{ needs.mac-package.outputs.version }}
       mac_artifact: ${{ needs.mac-package.outputs.artifact }}
       mac_release_tag: ${{ needs.mac-package.outputs.release_tag }}
@@ -970,6 +1075,7 @@ jobs:
           RELEASE_SOURCE: ${{ needs.package.outputs.source_sha }}
           RELEASE_CHANNEL: ${{ needs.package.outputs.channel }}
           RELEASE_PRERELEASE: ${{ needs.package.outputs.prerelease }}
+          BETA_TAG_SOURCE: ${{ needs.package.outputs.beta_tag_source }}
           MAC_VERSION: ${{ needs.package.outputs.mac_version }}
           MAC_RELEASE_TAG: ${{ needs.package.outputs.mac_release_tag }}
           MAC_RELEASE_SOURCE: ${{ needs.package.outputs.mac_release_source }}
@@ -980,6 +1086,7 @@ jobs:
           script: |
             const version = process.env.RELEASE_VERSION;
             const source = process.env.RELEASE_SOURCE;
+            const tagSource = process.env.BETA_TAG_SOURCE;
             const isPr = context.eventName === 'pull_request';
             const prerelease = isPr;
             const pr = context.payload.pull_request;
@@ -993,8 +1100,22 @@ jobs:
                   pr.user.type !== 'User' || context.payload.sender?.type !== 'User' ||
                   /\[bot\]$/.test(pr.user.login) || /\[bot\]$/.test(context.payload.sender.login) ||
                   current.state !== 'open' || current.head.sha !== pr.head.sha ||
-                  !/^\d+\.\d+\.\d+-beta(?!000)\d{3}$/.test(version)) {
-                throw new Error('Every PR release must be a beta of the current trusted reviewed head.');
+                  !/^\d+\.\d+\.\d+-beta(?!000)\d{3}$/.test(version) || !/^[a-f0-9]{40}$/.test(tagSource || '')) {
+                throw new Error('Every PR release must be a reserved beta of the current trusted reviewed head.');
+              }
+              // BT2: the reserved tag source is the PR head, or its snapshot with default-branch workflows.
+              const {data: reservedCommit} = await github.rest.git.getCommit({...context.repo, commit_sha: tagSource});
+              if (tagSource !== pr.head.sha &&
+                  !reservedCommit.message.split(/\r?\n/).includes('Original PR head: ' + pr.head.sha)) {
+                throw new Error('The reserved beta tag source is not this PR head.');
+              }
+              // The tested source is that commit plus only the three managed version files.
+              const {data: frozen} = await github.rest.git.getCommit({...context.repo, commit_sha: source});
+              const {data: delta} = await github.rest.repos.compareCommits({...context.repo, base: tagSource, head: source});
+              const managed = ['windows/Directory.Build.props', 'windows/installer/Evict.iss', 'windows/CHANGELOG.md'];
+              if (frozen.parents.length !== 1 || frozen.parents[0].sha !== tagSource || delta.status !== 'ahead' ||
+                  delta.ahead_by !== 1 || (delta.files || []).some(f => !managed.includes(f.filename) || f.status !== 'modified')) {
+                throw new Error('The tested beta source differs from its reserved PR source beyond managed version metadata.');
               }
             } else {
               if (!/^\d+\.\d+\.\d+$/.test(version) ||
@@ -1124,10 +1245,14 @@ jobs:
             catch (error) {
               if (error.status !== 404) throw error;
               if (release) throw new Error('A release exists without its immutable source tag.');
+              // A beta is published only on the tag reserve-beta created; never create another one here.
+              if (isPr) throw new Error('The beta tag ' + tag + ' was not reserved; rerun the workflow.');
               target = (await github.rest.git.createRef({...context.repo, ref: 'refs/tags/' + tag, sha: source})).data.object;
             }
             while (target.type === 'tag') target = (await github.rest.git.getTag({...context.repo, tag_sha: target.sha})).data.object;
-            if (target.type !== 'commit' || target.sha !== source) throw new Error('Release tag already points to another source; refusing to overwrite it.');
+            const expectedTarget = isPr ? tagSource : source;
+            if (target.type !== 'commit' || target.sha !== expectedTarget) throw new Error('Release tag already points to another source; refusing to overwrite it.');
+            core.setOutput('tag_source', expectedTarget);
             core.setOutput('publish', String(!release || release.draft));
             core.setOutput('prerelease', String(prerelease));
             core.setOutput('name', 'Evict ' + version + ' for Windows (includes macOS ' + frozenMac.version + ')' + (isPr ? ' — PR #' + pr.number + ' beta' : ''));
@@ -1140,7 +1265,7 @@ jobs:
             }
             body += '\n\nRelease channel: ' + (isPr ? 'beta' : 'stable') +
               '\nBuilt and tested release source: ' + source +
-              (isPr ? '\nOriginal PR head: ' + pr.head.sha +
+              (isPr ? '\nOriginal PR head: ' + pr.head.sha + '\nReserved beta tag source: ' + tagSource +
                 '\nBeta preview of [PR #' + pr.number + '](https://github.com/' + process.env.GITHUB_REPOSITORY + '/pull/' + pr.number + ').' : '\nSource branch: main') +
               '\nInstallation download: Evict_' + version + '.zip; root Evict_' + version + '/ contains portable/, windows-x64/ and macOS/, with two native EXEs and a verified native DMG.' +
               '\nmacOS bundle version: ' + process.env.MAC_VERSION +
@@ -1158,7 +1283,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: win-v${{ needs.package.outputs.version }}
-          target_commitish: ${{ needs.package.outputs.source_sha }}
+          target_commitish: ${{ steps.guard.outputs.tag_source }}
           name: ${{ steps.guard.outputs.name }}
           body: ${{ steps.guard.outputs.body }}
           draft: true
@@ -1183,6 +1308,7 @@ jobs:
           RELEASE_SOURCE: ${{ needs.package.outputs.source_sha }}
           RELEASE_ID: ${{ steps.release.outputs.id }}
           RELEASE_ASSET_SIZES: ${{ steps.assets.outputs.sizes }}
+          RELEASE_TAG_SOURCE: ${{ steps.guard.outputs.tag_source }}
         with:
           script: |
             const version = process.env.RELEASE_VERSION;
@@ -1206,7 +1332,10 @@ jobs:
             }
             let target = (await github.rest.git.getRef({...context.repo, ref: 'tags/win-v' + version})).data.object;
             while (target.type === 'tag') target = (await github.rest.git.getTag({...context.repo, tag_sha: target.sha})).data.object;
-            if (target.type !== 'commit' || target.sha !== process.env.RELEASE_SOURCE) throw new Error('Release tag does not identify its tested source.');
+            const expectedTarget = prerelease ? process.env.RELEASE_TAG_SOURCE : process.env.RELEASE_SOURCE;
+            if (!/^[a-f0-9]{40}$/.test(expectedTarget || '') || target.type !== 'commit' || target.sha !== expectedTarget) {
+              throw new Error('Release tag does not identify its tested (or reserved beta) source.');
+            }
             let makeLatest = 'false';
             if (!prerelease) {
               makeLatest = 'true';
@@ -1262,6 +1391,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.package.outputs.version }}
           RELEASE_CHANNEL: ${{ needs.package.outputs.channel }}
           RELEASE_SOURCE_SHA: ${{ needs.package.outputs.source_sha }}
+          BETA_TAG_SOURCE: ${{ needs.package.outputs.beta_tag_source }}
         run: |
           $v = $env:RELEASE_VERSION
           $channel = $env:RELEASE_CHANNEL
@@ -1281,7 +1411,9 @@ jobs:
             $annotated = Invoke-RestMethod -Uri "$api/git/tags/$($target.sha)" -Headers $headers
             $target = $annotated.object
           }
-          if ($target.type -ne "commit" -or $target.sha -ne $env:RELEASE_SOURCE_SHA) {
+          # A beta tag is reserved on the reviewed PR source; the tested source adds only managed version metadata.
+          $expectedTagSource = if ($channel -eq "beta") { $env:BETA_TAG_SOURCE } else { $env:RELEASE_SOURCE_SHA }
+          if ($expectedTagSource -notmatch '^[a-f0-9]{40}$' -or $target.type -ne "commit" -or $target.sha -ne $expectedTagSource) {
             throw "Published release source does not match the reviewed immutable source"
           }
           $names = @("Evict.exe", "Evict.exe.sha256", "Evict-Setup-$v.exe", "Evict-Setup-$v.exe.sha256", "Evict_$v.dmg", "Evict_$v.dmg.sha256", "Evict_$v.zip", "Evict_$v.zip.sha256") | Sort-Object
@@ -1512,9 +1644,11 @@ jobs:
             function transferVersion(match) {
               return match[1].slice('Evict-'.length, -(match[2].length + 1));
             }
-            function previousBetaAttempt(version, run) {
+            function previousBetaAttempt(version, run, currentVersion) {
               if (run.event !== 'pull_request' || context.eventName !== 'pull_request' ||
                   !positiveInteger(run.run_number) || !positiveInteger(context.payload.pull_request?.number)) return false;
+              // BT2: a re-run keeps its reserved short beta version; an older attempt's transfers differ only by source SHA.
+              if (/-beta\d{3}$/.test(version)) return version === currentVersion && run.run_attempt > 1;
               const sequence = version.match(/-beta\.([1-9]\d*)\.([1-9]\d*)\.([1-9]\d*)$/);
               return sequence && sequence.slice(1).every(positiveInteger) &&
                 Number(sequence[1]) === run.run_number &&
@@ -1540,13 +1674,15 @@ jobs:
               // A Mac transfer is eligible only beside a known Windows source pair from that older attempt.
               for (const artifact of artifacts) {
                 const transfer = artifact.name.match(NATIVE_WINDOWS) || artifact.name.match(NATIVE_ZIP);
-                if (transfer && previousBetaAttempt(transferVersion(transfer), run)) {
+                if (transfer && transfer[2] !== windows[2] && previousBetaAttempt(transferVersion(transfer), run, finalIdentity[1])) {
                   names.add(transfer[1] + '-windows');
                   names.add(transfer[1] + '-release-zip');
                   names.add('Evict-macOS-' + transfer[2]);
                 }
                 const previousFinal = artifact.name.match(VERSIONED_FINAL);
-                if (artifact.id !== finals[0].id && previousFinal && previousBetaAttempt(previousFinal[1], run)) {
+                // Same-name finals are replaced by overwrite; only differently named older finals remain to remove.
+                if (artifact.id !== finals[0].id && previousFinal && previousFinal[1] !== finalIdentity[1] &&
+                    previousBetaAttempt(previousFinal[1], run, finalIdentity[1])) {
                   names.add(artifact.name);
                 }
               }
