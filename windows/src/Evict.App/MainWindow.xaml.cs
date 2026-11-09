@@ -86,6 +86,10 @@ public partial class MainWindow : Window
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.F1 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            ((ViewModels.MainViewModel)DataContext).OpenInfoCommand.Execute("build"); e.Handled = true; return;
+        }
         if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
         switch (e.Key)
         {

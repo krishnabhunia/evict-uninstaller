@@ -360,7 +360,12 @@ def package_component(selection: dict, image: Path, digest: str, output: Path,
 
 
 def verify_published(api: GitHub, manifest: dict, windows_version: str, windows_source: str,
-                     expected: tuple[str, str], channel: str, out: Path) -> None:
+                     expected: tuple[str, str], channel: str, out: Path, tag_source: str | None = None) -> None:
+    # A PR beta is published on the tag reserved for its reviewed PR source (BT2); the tested source is that
+    # commit plus managed version metadata. Stable tags identify the tested source itself.
+    if channel == "beta" and (tag_source is None or not SHA.fullmatch(tag_source)):
+        raise RuntimeError("A published beta needs the source of its reserved tag")
+    expected_tag_target = tag_source if channel == "beta" else windows_source
     if (not isinstance(manifest, dict) or manifest.get("schema_version") != 1 or manifest.get("windows_version") != windows_version
             or manifest.get("windows_source") != windows_source or manifest.get("mac_version") != expected[0]
             or manifest.get("mac_build") != expected[1] or manifest.get("packaged_name") != f"Evict_{windows_version}.dmg"
@@ -379,7 +384,7 @@ def verify_published(api: GitHub, manifest: dict, windows_version: str, windows_
     release = api.get("/releases/tags/" + tag)
     if (release.get("tag_name") != tag or release.get("draft") is not False
             or release.get("prerelease") != (channel == "beta")
-            or api.resolve_tag(tag, allow_beta=True) != windows_source
+            or api.resolve_tag(tag, allow_beta=True) != expected_tag_target
             or marker(release.get("body", ""), "Built and tested release source") != windows_source
             or api.source_metadata(windows_source) != expected):
         raise RuntimeError("Published Windows release does not identify the frozen native component source")
@@ -403,6 +408,7 @@ def main() -> None:
     parser.add_argument("--verify-published", action="store_true")
     parser.add_argument("--provenance", type=Path)
     parser.add_argument("--channel", choices=("beta", "stable"))
+    parser.add_argument("--tag-source", help="commit the reserved beta tag points at (beta channel only)")
     args = parser.parse_args()
     if not WINDOWS_VERSION.fullmatch(args.windows_version) or not SHA.fullmatch(args.source_sha) or not 0 <= args.wait_seconds <= 1200:
         parser.error("Invalid version, source identity or wait limit")
@@ -413,7 +419,8 @@ def main() -> None:
             parser.error("Published verification needs --provenance and --channel")
         if args.provenance.is_symlink() or args.provenance.stat().st_size > 16384:
             raise RuntimeError("Unsafe native provenance file")
-        verify_published(api, json.loads(args.provenance.read_text()), args.windows_version, args.source_sha, expected, args.channel, args.out)
+        verify_published(api, json.loads(args.provenance.read_text()), args.windows_version, args.source_sha, expected,
+                         args.channel, args.out, args.tag_source or None)
         return
     deadline = time.monotonic() + args.wait_seconds
     while True:
