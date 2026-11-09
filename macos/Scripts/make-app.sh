@@ -43,6 +43,21 @@ fi
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@BUILD@/$BUILD_NUMBER/g" -e "s/@RELEASE_VERSION@/$RELEASE_VERSION/g" Resources/Info.plist > "$APP/Contents/Info.plist"
 cp Resources/release-notes.md "$APP/Contents/Resources/release-notes.md"
 
+# Info window (IN1): the feature list, this app's changelog and build details, embedded at build time.
+# CI sets EVICT_SOURCE_PR / EVICT_SOURCE_COMMIT / EVICT_RELEASE_TAG; a local build leaves them empty.
+cp ../docs/FEATURES.md "$APP/Contents/Resources/FEATURES.md"
+cp CHANGELOG.md "$APP/Contents/Resources/CHANGELOG.md"
+python3 - "$APP/Contents/Resources/build-info.json" <<'PY'
+import datetime, json, os, sys
+info = {
+    "sourcePr": os.environ.get("EVICT_SOURCE_PR", ""),
+    "sourceCommit": os.environ.get("EVICT_SOURCE_COMMIT", ""),
+    "builtUtc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "releaseTag": os.environ.get("EVICT_RELEASE_TAG", ""),
+}
+with open(sys.argv[1], "w", encoding="utf-8") as stream:
+    json.dump(info, stream, indent=2)
+PY
 # Ad-hoc signature. With a Developer ID in the keychain, set SIGN_IDENTITY to use it instead.
 IDENTITY="${SIGN_IDENTITY:--}"
 echo "==> Signing with identity: $IDENTITY"

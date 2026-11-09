@@ -8,6 +8,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 from unittest.mock import patch
@@ -80,6 +81,7 @@ class WindowsBundleSourceTests(unittest.TestCase):
             release("4.0.0", draft=True), release("5.0.0", prerelease=True),
             release("6.0.0", tag="mac-v6.0.0"),
             release("7.0.0", tag="win-v7.0"), release("8.0.0", tag="win-v8.0.0-beta.1.2.1"),
+            release("8.1.0", tag="win-v8.1.0-beta007"),
             release("1.9.0"), {"tag_name": "win-v9.0.0"},
         ]
         self.assertEqual("1.9.0", bundle.choose_release(candidates, lambda tag: True)[0])
@@ -175,6 +177,38 @@ class WindowsBundleSourceTests(unittest.TestCase):
             self.assertFalse(opener.requests[0].has_header("Authorization"))
             with self.assertRaisesRegex(RuntimeError, "overwrite"):
                 bundle.download_asset(asset, folder, opener)
+
+    def test_transient_cdn_errors_are_retried_with_backoff(self):
+        asset = release()["assets"][0]
+        class FlakyOpener(FakeOpener):
+            def __init__(self, contents, failures):
+                super().__init__(contents)
+                self.failures = list(failures)
+            def open(self, request, timeout):
+                self.requests.append(request)
+                if self.failures:
+                    raise self.failures.pop(0)
+                return io.BytesIO(self.contents)
+        def gateway(code):
+            return urllib.error.HTTPError("https://github.com/x", code, "Gateway Time-out", {}, None)
+        with tempfile.TemporaryDirectory() as temporary:
+            delays = []
+            opener = FlakyOpener(b"0123456789", [gateway(504), TimeoutError("stalled")])
+            path = bundle.download_asset(asset, Path(temporary), opener, sleep=delays.append)
+            self.assertEqual(b"0123456789", path.read_bytes())
+            self.assertEqual([5, 15], delays)
+            self.assertEqual(3, len(opener.requests))
+        with tempfile.TemporaryDirectory() as temporary:
+            delays = []
+            with self.assertRaises(urllib.error.HTTPError):
+                bundle.download_asset(asset, Path(temporary), FlakyOpener(b"x", [gateway(504)] * 3), sleep=delays.append)
+            self.assertEqual([5, 15], delays)
+            self.assertEqual([], list(Path(temporary).iterdir()))
+        with tempfile.TemporaryDirectory() as temporary:
+            delays = []
+            with self.assertRaises(urllib.error.HTTPError):
+                bundle.download_asset(asset, Path(temporary), FlakyOpener(b"x", [gateway(404)]), sleep=delays.append)
+            self.assertEqual([], delays)
 
     def test_truncated_and_oversized_downloads_leave_no_component(self):
         asset = release()["assets"][0]

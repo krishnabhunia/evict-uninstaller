@@ -42,6 +42,11 @@ struct RootView: View {
                 HStack(spacing: 10) {
                     Text("Evict").font(.headline)
                     Text("v\(releases.runningVersion)").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                    // IN1: a "Beta" chip on test builds and the ⓘ Info button right beside the version.
+                    if InfoModel.shared.build.isBeta {
+                        Chip(text: "Beta", tint: .orange)
+                    }
+                    InfoButton().buttonStyle(.borderless)
                     Spacer()
                     Button("What’s New", systemImage: "sparkles") { showReleaseNotes = true }.buttonStyle(.borderless)
                     if releases.hasAvailableUpdate, let version = releases.latestUpdateVersion {

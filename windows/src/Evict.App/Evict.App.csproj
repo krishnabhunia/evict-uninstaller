@@ -44,6 +44,12 @@
     <ProjectReference Include="..\Evict.Core\Evict.Core.csproj" />
   </ItemGroup>
 
+  <!-- Info window: the feature list and this version's changelog section are embedded at build time. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\docs\FEATURES.md" LogicalName="Evict.Info.FEATURES.md" Link="Info\FEATURES.md" />
+    <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="Evict.Info.CHANGELOG.md" Link="Info\CHANGELOG.md" />
+  </ItemGroup>
+
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
     <Resource Include="Assets\app-256.png" />

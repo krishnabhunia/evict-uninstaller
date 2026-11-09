@@ -58,6 +58,7 @@ Uninstalling opens a full-height panel at the right edge of the window: *Confirm
 | **Notification-area icon** | Tray menu (open, scan, widget, record, exit); close/minimize to tray; start with Windows (`--tray`) | ✅ Build 4 |
 | **Installer detection → automatic Install Monitor** | Recognises installers as they start (file name, Inno/NSIS stubs, `msiexec /i`, descriptions); notification or fully automatic recording; waits for the whole process tree | ✅ Build 4 |
 | **Scheduled Health scan** | Daily / weekly Task Scheduler job (`--scheduled-scan`), result as a notification, missed runs caught up | ✅ Build 4 |
+| **Info window** | ⓘ beside the version (or F1, or *Settings → About → Info*): *This build* (version, channel, PR, commit, build time, tag, install type), *What's implemented* (searchable [docs/FEATURES.md](../docs/FEATURES.md)), *What's new* (this version's changelog), *Under the hood*; **Copy build info** | ✅ 4.2 |
 | **System Cleanup** | Orphaned Windows Installer packages (backed up, not deleted), removed Store apps' data, update & Delivery Optimization caches, temp files, error reports, crash dumps, Windows.old | ✅ Build 4 |
 
 ## Running it
@@ -99,7 +100,7 @@ On start (Settings → *Updates*, enabled by default), Evict checks the public G
 
 A newer version shows the update banner. **Update now** opens release notes and the full version label; a beta requires an explicit confirmation before downloading and installing. The SHA-256 checksum is required and verified before any installer starts. Installed copies run the new Setup and restart; portable copies replace their own `Evict.exe`. Update checks do not install anything automatically. An unavailable or incomplete release-list request reports an error.
 
-Trusted Windows PR builds can publish a GitHub prerelease after tests, packaging and checksum checks pass. The tag and installer use a full version such as `1.8.1-beta.10.22.1`, and the release is never marked as the latest stable release. The PR can remain unmerged.
+Trusted Windows PR builds can publish a GitHub prerelease after tests, packaging and checksum checks pass. The tag and installer use a full version such as `4.2.0-beta007` (three-digit number, counted per version across all PRs), and the release is never marked as the latest stable release. The PR can remain unmerged.
 
 Installed Evict 1.8.0 does not contain the beta option. Install a beta-aware build once to gain it; future beta updates then use the normal in-app update flow. Actions artifacts remain available for manual testing. See [Beta updates](../docs/beta-updates.md) for release provenance and validation.
 
@@ -134,7 +135,7 @@ with `Scripts/make-app.sh --universal` followed by `Scripts/make-dmg.sh 1.12.2`.
 
 ```powershell
 build/package.ps1 -MacOSArchive ..\macos\build\Evict_1.12.2.dmg
-# For a beta installer, also pass -Version <complete x.y.z-beta.RUN.PR.ATTEMPT version>.
+# For a beta installer, also pass -Version <complete x.y.z-betaNNN version>.
 ```
 
 Or call the Python helper directly from `windows/`:

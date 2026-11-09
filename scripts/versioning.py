@@ -562,7 +562,7 @@ def sync_sources(root: Path, platform: str, core: CoreVersion, base_tag: str,
 
 def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mode: str,
                event: dict[str, Any] | None = None, main_ref: str = "origin/main",
-               beta_sequence: str | None = None, tag: str | None = None) -> dict[str, Any]:
+               beta_number: str | None = None, tag: str | None = None) -> dict[str, Any]:
     event = event or {}
     head = git.resolve("HEAD")
     if mode not in ("stable", "beta", "tag"):
@@ -660,11 +660,14 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
                 intent = max(intent, bundle_intent(message, None, paths, platform))
                 notes.extend(change_notes(message, []))
         pr_affects = False
+        pr_intent = Bump.NONE
         if mode == "beta":
             pull = event.get("pull_request") or {}
-            if not pull or not beta_sequence or not re.fullmatch(r"[1-9][0-9]*\.[1-9][0-9]*", beta_sequence):
-                raise VersionError("Beta mode requires PR metadata and a numeric run/attempt sequence.")
-            run_number, run_attempt = beta_sequence.split(".")
+            # BT1 A / BT2: the short beta number NNN is reserved in CI (scripts/beta_reservation.py) before the
+            # source is frozen; builds that publish nothing (fork PRs) plan without one.
+            if not pull or (beta_number is not None and (not isinstance(beta_number, str)
+                                                         or not re.fullmatch(r"(?!000)[0-9]{3}", beta_number))):
+                raise VersionError("Beta mode requires PR metadata and, when reserved, a three-digit beta number 001-999.")
             number = pull.get("number") or event.get("number")
             if not isinstance(number, int) or number <= 0:
                 raise VersionError("Beta mode requires a valid pull-request number.")
@@ -674,7 +677,8 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
             pr_paths = git.paths(before, after)
             pr_affects = affects_platform(pr_paths, platform)
             if pr_affects:
-                intent = max(intent, bundle_intent("", pull, pr_paths, platform))
+                pr_intent = bundle_intent("", pull, pr_paths, platform)
+                intent = max(intent, pr_intent)
                 notes.extend(change_notes("", [pull]))
         arithmetic_base = max(base, floor)
         computed = arithmetic_base.bump(intent) if intent != Bump.NONE else base
@@ -693,12 +697,19 @@ def build_plan(git: Git, github: Any, policy: dict[str, Any], platform: str, mod
         publish = core > max(base, floor) and (mode != "beta" or pr_affects)
         version_text = str(core)
         if channel == "beta":
-            version_text += f"-beta{github.next_beta_serial(platform, core):03d}"
+            # A reserved number (scripts/beta_reservation.py, BT2) is used as given. Without one this is
+            # only a preview of the next free number for a build that publishes nothing.
+            serial = int(beta_number) if beta_number is not None else github.next_beta_serial(platform, core)
+            version_text += f"-beta{serial:03d}"
         plan = {"bump": intent.name.lower(), "publish": publish, "core_version": str(core), "version": version_text,
                 "tag": PREFIX[platform] + version_text if mode == "beta" or core != base or not base_tag else base_tag,
                 "base_tag": base_tag, "base_version": str(base), "tag_source_sha": tag_sha,
                 "source_sha": head, "source_version": str(source), "prerelease": channel == "beta",
                 "notes": list(dict.fromkeys(notes))}
+    plan["beta_number"] = (plan["version"].rsplit("-beta", 1)[1] if channel == "beta" else "")
+    plan["beta_reserved"] = channel == "beta" and beta_number is not None
+    # The PR's own release increment (not unreleased main commits); docs/FEATURES.md must change for minor/major.
+    plan["pr_bump"] = pr_intent.name.lower() if mode == "beta" else ""
     plan["release_source_sha"] = release_source_sha
     plan["channel"] = channel
     plan["release_test"] = test_request is not None
@@ -735,7 +746,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--main-ref", default="origin/main")
     parser.add_argument("--event-file", type=Path)
     parser.add_argument("--ref", default=os.environ.get("GITHUB_REF", ""))
-    parser.add_argument("--beta-sequence")
+    parser.add_argument("--beta-number", help="Three-digit beta number (001-999) reserved by scripts/beta_reservation.py; "
+                        "without it a beta plan previews the next free number and is never published.")
+    # Accepted for older callers (macos/Scripts/prepare-release.py); the run/attempt no longer names a beta.
+    parser.add_argument("--beta-sequence", help=argparse.SUPPRESS)
     parser.add_argument("--tag")
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--sync", action="store_true")
@@ -755,7 +769,7 @@ def main(argv: list[str] | None = None) -> int:
         event = json.loads(arguments.event_file.read_text(encoding="utf-8")) if arguments.event_file else {}
         tag = arguments.tag or (arguments.ref.removeprefix("refs/tags/") if arguments.ref.startswith("refs/tags/") else None)
         plan = build_plan(git, github, policy, arguments.platform, arguments.mode, event,
-                          arguments.main_ref, arguments.beta_sequence, tag)
+                          arguments.main_ref, arguments.beta_number, tag)
         if arguments.sync:
             if arguments.mode == "tag":
                 raise VersionError("Tag validation cannot modify its immutable source.")

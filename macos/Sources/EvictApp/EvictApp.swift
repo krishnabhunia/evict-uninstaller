@@ -26,6 +26,8 @@ struct EvictApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) { }
+            // Info window (IN1): F1, like the ⓘ beside the version and Settings → Info.
+            CommandGroup(after: .appInfo) { InfoMenuCommand() }
             CommandGroup(after: .toolbar) {
                 Button("Search Evict…") { state.showSearch = true }
                     .keyboardShortcut("k", modifiers: .command)
@@ -46,6 +48,12 @@ struct EvictApp: App {
         Settings {
             SettingsView().environmentObject(state).frame(minWidth: 660, minHeight: 600)
         }
+
+        Window("Evict · Info", id: InfoModel.windowID) {
+            InfoView()
+                .preferredColorScheme(state.colorScheme)
+        }
+        .defaultSize(width: 820, height: 600)
     }
 }
 
