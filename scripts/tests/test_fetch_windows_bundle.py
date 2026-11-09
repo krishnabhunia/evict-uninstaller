@@ -196,13 +196,13 @@ class WindowsBundleSourceTests(unittest.TestCase):
             opener = FlakyOpener(b"0123456789", [gateway(504), TimeoutError("stalled")])
             path = bundle.download_asset(asset, Path(temporary), opener, sleep=delays.append)
             self.assertEqual(b"0123456789", path.read_bytes())
-            self.assertEqual([5, 15], delays)
+            self.assertEqual([5, 10], delays)
             self.assertEqual(3, len(opener.requests))
         with tempfile.TemporaryDirectory() as temporary:
             delays = []
             with self.assertRaises(urllib.error.HTTPError):
-                bundle.download_asset(asset, Path(temporary), FlakyOpener(b"x", [gateway(504)] * 3), sleep=delays.append)
-            self.assertEqual([5, 15], delays)
+                bundle.download_asset(asset, Path(temporary), FlakyOpener(b"x", [gateway(504)] * 5), sleep=delays.append)
+            self.assertEqual([5, 10, 20, 30], delays)
             self.assertEqual([], list(Path(temporary).iterdir()))
         with tempfile.TemporaryDirectory() as temporary:
             delays = []

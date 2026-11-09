@@ -147,8 +147,8 @@ def expected_assets(version: str, release: dict) -> dict[str, dict]:
 
 
 # GitHub's release download CDN sometimes answers 502/503/504 or stalls; retry those a few times.
-DOWNLOAD_ATTEMPTS = 3
-RETRY_DELAYS = (5, 15)
+DOWNLOAD_ATTEMPTS = 5
+RETRY_DELAYS = (5, 10, 20, 30)
 
 
 def transient_download_error(error: BaseException) -> bool:

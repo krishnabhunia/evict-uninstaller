@@ -1436,7 +1436,15 @@ jobs:
             }
             $out = Join-Path PublishedAssets $asset.name
             # Public asset downloads receive no repository token, including on redirects.
-            Invoke-WebRequest -Uri $uri -OutFile $out -TimeoutSec 120 -MaximumRetryCount 5 -RetryIntervalSec 15
+            # GitHub's release CDN intermittently answers 504 for some assets; retry each download a few times.
+            for ($try = 1; ; $try++) {
+              try { Invoke-WebRequest -Uri $uri -OutFile $out -TimeoutSec 120; break }
+              catch {
+                if ($try -ge 8) { throw }
+                Write-Host "Download of $($asset.name) failed ($($_.Exception.Message)); retry $($try + 1) of 8"
+                Start-Sleep -Seconds (10 * $try)
+              }
+            }
             if ((Get-Item -LiteralPath $out).Length -ne $asset.size) { throw "Downloaded asset size mismatch: $($asset.name)" }
           }
           foreach ($name in @("Evict.exe", "Evict-Setup-$v.exe", "Evict_$v.dmg", "Evict_$v.zip")) {
