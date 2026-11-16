@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.3.0 — 2026-11-16
+
+<!-- Evict automatic release; base: win-v4.2.0 -->
+
+- ChatGPT-Evict-Multi-Source-Software-Updater
+- Only offer updates when the **first three numeric version components** increase. Examples: `25.0.5.0` → `25.0.5.0.3` is **not** an update; `25.0.5` → `25.0.6` is.
+- Query installed **WinGet** (including Microsoft Store `msstore`), **Chocolatey** and **Scoop** in parallel. Validate package output, show each source, and execute through its owning manager.
+- Preserve exclusions, selection, history and retry. Show partial-source failures rather than reporting a clean check when a provider failed; update Software Health consistently.
+- Add provider and version-policy unit tests; update the Windows UI, readme, and feature catalogue.
+
 ## 4.2.0 — 2026-11-16
 
 <!-- Evict automatic release; base: win-v4.1.2 -->
