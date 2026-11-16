@@ -42,3 +42,4 @@ Everything Evict can do, one row per feature. "Since" is the first Evict release
 | 38 | Beta updates | An optional channel that offers tested pull-request builds before they are released. | 1.9.0 | Yes | Yes |
 | 39 | Start-up splash | A small splash screen while settings, history and programs load. | 4.1.0 | Yes | Yes |
 | 40 | Info window | The ⓘ button next to the version (or F1) shows this build, what is implemented, what is new and what the app is made of, and copies the build details. | 4.2.0 | Yes | Yes |
+| 41 | Multi-source software updates | On Windows, checks installed WinGet (including Microsoft Store), Chocolatey and Scoop, runs updates via their source, and offers a new version only when one of the first three numeric version parts increases. | 4.3.0 | Yes | Not yet |

@@ -51,6 +51,8 @@ public sealed class WingetService
 
     public static bool IsAvailable => FindWinget() != null;
 
+    public bool CanRun => _findWinget() != null;
+
     public async Task<(List<UpgradablePackage> Packages, string? Error)> GetUpgradesAsync(bool includeUnknown, CancellationToken ct, Action<string>? onLine = null)
     {
         var winget = _findWinget();

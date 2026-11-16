@@ -18,6 +18,7 @@ public sealed class AppServices
     public BrowserExtensionService Browser { get; } = new();
     public WindowsUpdatesService Updates { get; } = new();
     public WingetService Winget { get; } = new();
+    public SoftwareUpdateSourcesService SoftwareUpdates { get; }
     public InstallMonitorService Monitor { get; } = new();
     public ForceUninstallService Force { get; } = new();
     public FileShredder Shredder { get; } = new();
@@ -27,4 +28,6 @@ public sealed class AppServices
     public UpdateService Updater { get; } = new();
     public ScheduledScanService Scheduler { get; } = new();
     public SystemCleanupService Cleanup { get; } = new();
+
+    public AppServices() => SoftwareUpdates = new(Winget, new ChocolateyService(), new ScoopService());
 }

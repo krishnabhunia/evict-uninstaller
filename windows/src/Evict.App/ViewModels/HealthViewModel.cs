@@ -287,10 +287,14 @@ public sealed partial class HealthViewModel : ObservableObject, IActivatable
 
         var updTask = RunTile("outdated", async () =>
         {
-            if (!WingetService.IsAvailable) { Tile("outdated").Set(0, "winget (App Installer) is not available – install it from the Microsoft Store.", unavailable: true); return false; }
-            var (pkgs, err) = await _services.Winget.GetUpgradesAsync(false, CancellationToken.None);
-            if (pkgs.Count == 0 && err != null) { Tile("outdated").Set(0, err, unavailable: true); return false; }
-            Tile("outdated").Set(pkgs.Count, pkgs.Count == 0 ? "Every program winget knows about is up to date." : string.Join(", ", pkgs.Take(4).Select(p => p.Name)) + (pkgs.Count > 4 ? $" and {pkgs.Count - 4} more" : ""));
+            if (!_services.SoftwareUpdates.IsAvailable) { Tile("outdated").Set(0, "No package manager found (WinGet, Chocolatey or Scoop).", unavailable: true); return false; }
+            var scan = await _services.SoftwareUpdates.GetUpgradesAsync(false, CancellationToken.None);
+            var pkgs = scan.Packages;
+            if (scan.Error != null) { Tile("outdated").Set(0, scan.Error, unavailable: true); return false; }
+            var description = pkgs.Count == 0 ? "No three-part version updates found in checked sources."
+                : string.Join(", ", pkgs.Take(4).Select(p => p.Name)) + (pkgs.Count > 4 ? $" and {pkgs.Count - 4} more" : "");
+            if (scan.Warning != null) description += " Some sources could not be checked.";
+            Tile("outdated").Set(pkgs.Count, description);
             return true;
         });
 
