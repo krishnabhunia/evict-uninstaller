@@ -1,5 +1,39 @@
 # Changelog
 
+## 4.2.0 — 2026-11-16
+
+<!-- Evict automatic release; base: win-v4.1.2 -->
+
+- ChatGPT-Evict-macOS-Windows-Feature-Parity
+- Add the native dashboard, grouped navigation, full release version, contextual update button, embedded What's New notes, startup splash with real progress, Command-K search and menu-bar actions.
+- Extend application discovery with recent, large, rarely-used and source filters, Select All/None and reviewed batch removal; require the exact application and its helper processes to quit gracefully before uninstalling.
+- Add a Homebrew cask Software Updater with verified package identity, installed-versus-provider version evidence, explicit selected upgrades, persistent exclusions and post-install verification.
+- Persist seven-day software-update history with before/target/after versions, command errors, interrupted-state recovery, details, CSV export and stop-after-current queue control.
+- Add Evict Version Manager for native mac-v releases, exact version selection, stable/beta channels, optional older builds, pin/skip preferences and detailed implementation notes.
+- Verify Evict update archives, checksums, universal architectures, bundle identity, exact version and code signature; prepare verified recovery copies and record installation only after matching relaunch evidence.
+- Add explicit Apply/Cancel scheduling through an owned per-user LaunchAgent, verify registration before saving preferences, roll back failed changes and run authorized read-only background inventory scans.
+- Add reviewed cache/log cleanup with protected-path, symlink and identity checks; move selected files to Trash and report actual moved bytes.
+- Add browser profile/extension/permission inspection, bounded before/after install-monitor snapshots with persistent recovery and JSON export, and observed native security status.
+- Add verified Enable/Disable/Remove controls for user LaunchAgents with confirmations and reversible registration changes; protect Apple/system jobs and Evict's scheduled scan.
+- Migrate existing settings using backward-compatible decoding, serialize atomic persistence, surface failures and preserve corrupted preferences until explicit reset.
+- Isolate native macOS releases from Windows version changes, generate three-digit Mac betas with implementation notes, validate universal app/ZIP/DMG packages and require a native launch test before publication.
+- Keep the existing Windows download layout by reusing a provenance-verified Mac installer on Ubuntu instead of rebuilding macOS or publishing an unrelated Mac release.
+- Claude : Feature: short beta names and Info window (BT1 A, IN1, #41) — 4.2.0
+- PR test builds are now named `x.y.z-betaNNN` (for example `4.2.0-beta007`) with the tag `win-vx.y.z-betaNNN`; stable releases are unchanged.
+- The beta number is reserved in CI by `scripts/beta_reservation.py`: it reuses the tag that already points at the PR source (a re-run keeps its number), otherwise creates the next number from 001 to 999 and stops at 1000 with a request to bump the version.
+- The beta prerelease is published on that reserved tag; the build adds only the managed version files on top of the reviewed PR source, and the publish, freeze and post-publication checks verify that.
+- New Info window: the ⓘ button beside the version (tooltip "Info (F1)"), F1 and Settings → About → Info open "Evict · Info" with This build, What's implemented, What's new and Under the hood, plus Copy build info.
+- The main window shows a small "Beta" chip beside the version on test builds, and the "What's new" link after an update opens the Info window.
+- This build lists version, channel, pull request, commit, build time, GitHub tag, download name and install type; CI passes these as build metadata, and a local build says "Local build".
+- The Mac app gets the same Info window beside its version, in the Evict menu (F1) and in Settings, using its own `mac-v` version line.
+- New `docs/FEATURES.md` feature table (40 rows, Windows and Mac columns) embedded in both apps and checked by `scripts/features_check.py`; a PR planned as a minor or major release must update it.
+- Updater tests prove `4.2.0-beta001` ranks above an old long beta of the same version, `beta009` below `beta010`, and every beta below its stable release.
+- Reservation — `scripts/beta_reservation.py`, `scripts/tests/test_beta_reservation.py`, `reserve-beta` job in `.github/workflows/windows.yml`
+- Planner — `scripts/versioning.py` (`--beta-number`, `beta_reserved`, `pr_bump`)
+- Feature list — `docs/FEATURES.md`, `scripts/features_check.py`, `scripts/tests/test_features_check.py`
+- Windows — `Evict.Core/Services/BuildInfo.cs`, `InfoContent.cs`, `Evict.App/Views/InfoWindow.xaml`, `ViewModels/InfoViewModel.cs`, `MainWindow.xaml`, `Directory.Build.props` (AssemblyMetadata)
+- Mac — `EvictKit/InfoContent.swift`, `EvictApp/InfoView.swift`, `RootView.swift`, `SettingsView.swift`, `EvictApp.swift`, `Scripts/make-app.sh`, `.github/workflows/macos.yml`
+
 ## 4.1.2 — 2026-11-05
 
 <!-- Evict automatic release; base: win-v4.1.1 -->
