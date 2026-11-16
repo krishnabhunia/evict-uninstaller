@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -249,9 +250,15 @@ class InlineReservationTests(unittest.TestCase):
     def run_inline(self, fake, core="4.2.0", sha=HEAD):
         state = {"tags": dict(fake.tags), "annotated": dict(fake.annotated), "races": [list(r) for r in fake.races],
                  "createStatus": fake.create_status, "script": inline_reservation_script()}
-        env = {"CORE_VERSION": core, "PREPARED_SOURCE": sha, "RESERVATION_FAKE_STATE": json.dumps(state)}
+        # An explicit env replaces the child environment, including SystemRoot on Windows.
+        # Keep the runtime's environment and override only this test case's inputs.
+        env = os.environ.copy()
+        env.update({"CORE_VERSION": core, "PREPARED_SOURCE": sha, "RESERVATION_FAKE_STATE": json.dumps(state)})
         result = subprocess.run([shutil.which("node"), "-e", NODE_HARNESS],
-                                capture_output=True, text=True, env=env, timeout=60, check=True)
+                                capture_output=True, text=True, env=env, timeout=60, check=False)
+        self.assertEqual(result.returncode, 0,
+                         f"Node harness exited with code {result.returncode}.\n"
+                         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
         return json.loads(result.stdout.strip().splitlines()[-1])
 
     def assert_same(self, make_fake, core="4.2.0", sha=HEAD):
@@ -265,6 +272,33 @@ class InlineReservationTests(unittest.TestCase):
         self.assertEqual({key: str(value).lower() if isinstance(value, bool) else str(value)
                           for key, value in expected.items()}, inline["outputs"])
         return expected, inline
+
+    def test_child_inherits_runtime_environment_and_overrides_case_inputs(self):
+        parent = {
+            "SystemRoot": os.environ.get("SystemRoot", r"C:\Windows"),
+            "EVICT_NODE_ENV_SENTINEL": "inherited",
+            "CORE_VERSION": "9.9.9",
+            "PREPARED_SOURCE": OTHER,
+            "RESERVATION_FAKE_STATE": "stale parent input",
+        }
+        expected = {key: parent[key] for key in ("SystemRoot", "EVICT_NODE_ENV_SENTINEL")}
+        probe = """
+for (const [key, value] of Object.entries(EXPECTED_ENV)) {
+  if (process.env[key] !== value) throw new Error('Missing inherited runtime variable: ' + key);
+}
+""".replace("EXPECTED_ENV", json.dumps(expected))
+        with patch.dict(os.environ, parent), patch(__name__ + ".NODE_HARNESS", probe + NODE_HARNESS):
+            result = self.run_inline(FakeGitHub())
+            self.assertEqual(result["outputs"]["version"], "4.2.0-beta001")
+            self.assertEqual(result["tags"]["win-v4.2.0-beta001"], HEAD)
+            self.assertEqual({key: os.environ[key] for key in parent}, parent)
+
+    def test_child_failure_reports_exit_code_and_stderr(self):
+        harness = "console.error('reservation harness diagnostic'); process.exit(23);"
+        with patch(__name__ + ".NODE_HARNESS", harness):
+            with self.assertRaisesRegex(AssertionError, "Node harness exited with code 23") as caught:
+                self.run_inline(FakeGitHub())
+        self.assertIn("reservation harness diagnostic", str(caught.exception))
 
     def test_same_results_as_the_python_implementation(self):
         cases = {
