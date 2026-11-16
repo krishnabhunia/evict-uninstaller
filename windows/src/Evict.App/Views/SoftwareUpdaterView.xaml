@@ -46,10 +46,10 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,2,0,0" Text="Finds outdated programs and updates them in place, powered by the Windows Package Manager (winget) that ships with Windows 10/11." />
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,2,0,0" Text="Checks installed WinGet (including Microsoft Store), Chocolatey and Scoop sources. Compares major.minor.patch only; extra build digits do not count as updates." />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-                <ToggleButton Style="{StaticResource Button.Chip}" IsChecked="{Binding IncludeUnknown}" IsEnabled="{Binding CanEditSelection}" Content="Include unknown versions" MinHeight="34" ToolTip="Also list programs whose installed version winget cannot determine" />
+                <ToggleButton Style="{StaticResource Button.Chip}" IsChecked="{Binding IncludeUnknown}" IsEnabled="{Binding CanEditSelection}" Content="Include unknown versions" MinHeight="34" ToolTip="Also list programs whose installed version a package manager cannot determine" />
                 <Button Style="{StaticResource Button.Primary}" Command="{Binding CheckCommand}" IsEnabled="{Binding CanEditSelection}" Margin="8,0,0,0" Padding="12,7">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE895;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource Brush.Text.OnAccent}" />
@@ -113,16 +113,16 @@
                 </DockPanel>
             </Border>
 
-            <!-- winget missing -->
-            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,14,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource InvBoolToVis}}">
+            <!-- Supported package managers missing -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,14,0,0" Visibility="{Binding UpdaterAvailable, Converter={StaticResource InvBoolToVis}}">
                 <StackPanel>
-                    <TextBlock Text="winget is not available" Style="{StaticResource Text.Section}" />
-                    <TextBlock Style="{StaticResource Text.Body}" Margin="0,6,0,10" Text="The Software Updater uses Microsoft's Windows Package Manager. Install 'App Installer' from the Microsoft Store (free, by Microsoft), then come back here." />
+                    <TextBlock Text="No supported package manager found" Style="{StaticResource Text.Section}" />
+                    <TextBlock Style="{StaticResource Text.Body}" Margin="0,6,0,10" Text="Install WinGet (App Installer), Chocolatey, or Scoop to check programs installed or tracked by those sources. WinGet includes Microsoft Store packages." />
                     <Button Style="{StaticResource Button.Primary}" Content="Open App Installer in Microsoft Store" Command="{Binding InstallWingetCommand}" HorizontalAlignment="Left" />
                 </StackPanel>
             </Border>
 
-            <Grid Grid.Row="2" Margin="0,12,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource BoolToVis}}">
+            <Grid Grid.Row="2" Margin="0,12,0,0" Visibility="{Binding UpdaterAvailable, Converter={StaticResource BoolToVis}}">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="{Binding Summary}" Style="{StaticResource Text.Body}" FontWeight="SemiBold" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding LastCheckedText}" Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Margin="10,0,0,0" />
@@ -131,7 +131,7 @@
                 <ProgressBar IsIndeterminate="True" Width="220" HorizontalAlignment="Right" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
             </Grid>
 
-            <Border Grid.Row="3" Style="{StaticResource Card}" Padding="0" Margin="0,8,0,0" Visibility="{Binding WingetAvailable, Converter={StaticResource BoolToVis}}">
+            <Border Grid.Row="3" Style="{StaticResource Card}" Padding="0" Margin="0,8,0,0" Visibility="{Binding UpdaterAvailable, Converter={StaticResource BoolToVis}}">
                 <Grid>
                     <DataGrid Style="{StaticResource DataGrid.Flat}" ItemsSource="{Binding Items}">
                         <DataGrid.Columns>
@@ -183,7 +183,7 @@
                 </Grid>
             </Border>
 
-            <Expander Grid.Row="4" Header="winget output" Margin="0,10,0,0" IsExpanded="{Binding IsUpdating, Mode=OneWay}" Foreground="{DynamicResource Brush.Text.Secondary}"
+            <Expander Grid.Row="4" Header="Update manager output" Margin="0,10,0,0" IsExpanded="{Binding IsUpdating, Mode=OneWay}" Foreground="{DynamicResource Brush.Text.Secondary}"
                       Visibility="{Binding LogLines.Count, Converter={StaticResource BoolToVis}}">
                 <ListBox Style="{StaticResource ListBox.Flat}" ItemsSource="{Binding LogLines}" Height="140" Margin="0,6,0,0" FontFamily="{StaticResource Font.Mono}" FontSize="11.5" Background="{DynamicResource Brush.Code.Background}" />
             </Expander>

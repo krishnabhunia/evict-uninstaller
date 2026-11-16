@@ -44,7 +44,7 @@ public sealed class AppSettings
     /// <summary>Opt in to beta and other prerelease updates. Existing settings stay on stable releases.</summary>
     public bool IncludeBetaUpdates { get; set; } = false;
 
-    /// <summary>How many winget upgrades run at the same time (1–6).</summary>
+    /// <summary>How many software package upgrades run at the same time (1–6).</summary>
     public int ParallelUpdates { get; set; } = 3;
 
     /// <summary>Packages hidden from Software Updater until explicitly restored.</summary>

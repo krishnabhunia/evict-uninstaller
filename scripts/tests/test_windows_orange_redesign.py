@@ -94,7 +94,8 @@ class WindowsOrangeRedesignTests(unittest.TestCase):
         for binding in ("HistoryCount", "HistoryView", "HistoryFilter", "ExclusionsLabel"):
             self.assertIn(binding, updater)
         self.assertIn("HISTORY · 7 DAYS", updater)
-        self.assertIn("winget is not available", updater)
+        self.assertIn("No supported package manager found", updater)
+        self.assertIn("UpdaterAvailable", updater)
 
     def test_uninstall_safeguards_rd1_stepper_and_activity_recovery(self) -> None:
         wizard = read(VIEWS / "UninstallWizardWindow.xaml")

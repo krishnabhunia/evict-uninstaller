@@ -43,7 +43,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     public SoftwareUpdaterViewModel(AppServices services)
     {
         _services = services;
-        WingetAvailable = WingetService.IsAvailable;
+        UpdaterAvailable = _services.SoftwareUpdates.IsAvailable;
         foreach (var exclusion in services.Settings.Current.SoftwareUpdateExclusions ?? new())
             Exclusions.Add(exclusion);
         HookHistory();
@@ -55,16 +55,19 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private bool _isUpdating;
     [ObservableProperty] private string _statusText = "";
-    [ObservableProperty] private bool _wingetAvailable;
+    [ObservableProperty] private string? _scanWarning;
+    [ObservableProperty] private bool _updaterAvailable;
     [ObservableProperty] private bool _includeUnknown;
     [ObservableProperty] private int _selectedCount;
     [ObservableProperty] private string? _error;
     [ObservableProperty] private DateTime? _lastChecked;
 
     public string Summary => IsBusy ? "Checking for updates." : Error != null ? "Updates could not be checked."
-        : Items.Count == 0 ? (LastChecked is null ? "Not checked yet." : (Exclusions.Count > 0 ? "No updates available outside your exclusions." : "Everything is up to date.")) : $"{Items.Count} update(s) available";
+        : Items.Count == 0 ? (LastChecked is null ? "Not checked yet." : ScanWarning is not null
+            ? "No updates found in the sources checked successfully."
+            : Exclusions.Count > 0 ? "No updates available outside your exclusions." : "Everything is up to date.") : $"{Items.Count} update(s) available";
 
-    /// <summary>How many updates run concurrently (setting). MSI-based installers still serialise themselves; winget retries those.</summary>
+    /// <summary>How many updates run concurrently (setting). MSI-based installers still serialise themselves; WinGet retries those.</summary>
     public IReadOnlyList<KeyValuePair<int, string>> ParallelOptions { get; } = new[]
     {
         new KeyValuePair<int, string>(1, "1 at a time"),
@@ -85,8 +88,8 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
 
     public void OnActivated()
     {
-        WingetAvailable = WingetService.IsAvailable;
-        if (!_loaded && WingetAvailable) _ = CheckAsync();
+        UpdaterAvailable = _services.SoftwareUpdates.IsAvailable;
+        if (!_loaded && UpdaterAvailable) _ = CheckAsync();
     }
 
     partial void OnIsBusyChanged(bool value) { RefreshCommands(); OnPropertyChanged(nameof(Summary)); }
@@ -104,24 +107,29 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     }
 
     partial void OnErrorChanged(string? value) => OnPropertyChanged(nameof(Summary));
+    partial void OnScanWarningChanged(string? value) => OnPropertyChanged(nameof(Summary));
 
     [RelayCommand]
     public async Task CheckAsync()
     {
-        if (!WingetAvailable || IsBusy || IsUpdating) return;
+        UpdaterAvailable = _services.SoftwareUpdates.IsAvailable;
+        if (!UpdaterAvailable || IsBusy || IsUpdating) return;
         IsBusy = true;
         Error = null;
-        StatusText = "Checking for updates with winget… (this can take a minute)";
+        ScanWarning = null;
+        StatusText = "Checking WinGet, Chocolatey and Scoop where installed…";
         try
         {
-            var (pkgs, err) = await _services.Winget.GetUpgradesAsync(IncludeUnknown, CancellationToken.None);
-            _lastPackages = pkgs.ToList();
+            var scan = await _services.SoftwareUpdates.GetUpgradesAsync(IncludeUnknown, CancellationToken.None);
+            _lastPackages = scan.Packages.ToList();
             RebuildItems();
-            Error = err;
-            if (err is null) LastChecked = DateTime.Now;
-            _loaded = err is null;
+            Error = scan.Error;
+            ScanWarning = scan.Warning;
+            if (scan.Error is null) LastChecked = DateTime.Now;
+            _loaded = scan.Error is null;
             UpdateSelection();
-            StatusText = "";
+            StatusText = scan.Warning is null ? $"Checked: {scan.CheckedSources} · comparing a.b.c"
+                : "Some sources could not be checked: " + scan.Warning;
         }
         catch (Exception ex) { Error = ex.Message; }
         finally
@@ -149,10 +157,15 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         var previous = Items.ToList();
         foreach (var item in previous) item.PropertyChanged -= ItemChanged;
         Items.Clear();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var package in SoftwareUpdateExclusion.Visible(_lastPackages, Exclusions))
         {
             var old = previous.FirstOrDefault(i => i.Id == package.Id && i.Source == (package.Source ?? ""));
-            var item = new UpgradeItemViewModel(package) { IsSelected = old?.IsSelected ?? true };
+            // WinGet may also list apps installed through another manager. Do not preselect
+            // duplicate names and installed versions for simultaneous upgrades.
+            var first = seen.Add(package.Name.Trim() + "|" + package.InstalledVersion);
+            var item = new UpgradeItemViewModel(package) { IsSelected = old?.IsSelected ?? first };
+            if (!first) item.Status = "Also listed by another source; review before selecting.";
             item.PropertyChanged += ItemChanged;
             Items.Add(item);
         }
@@ -212,7 +225,7 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
         await RunUpdatesAsync(targets, targets.Count == 1 ? "You · Update 1 program" : $"You · Update {targets.Count} programs");
     }
 
-    /// <summary>Runs winget for <paramref name="targets"/>; every finished one is written to the update history at once (design SH1·4).</summary>
+    /// <summary>Runs each package's source manager; every finished result is saved to history (design SH1·4).</summary>
     private async Task RunUpdatesAsync(List<UpgradeItemViewModel> targets, string startedBy)
     {
         if (targets.Count == 0 || IsBusy || IsUpdating) return;
@@ -286,12 +299,12 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
                         var entry = live[t];
                         entry.StartedUtc = DateTime.UtcNow;
                         entry.Outcome = SoftwareUpdateOutcome.Running;
-                        entry.Message = "winget is updating it now.";
+                        entry.Message = $"{t.Source} is updating it now.";
                         RebuildHistory();
                         StatusText = $"Updating… {DoneCount} of {TotalCount} done, {targets.Count(i => i.IsUpdating)} running";
                     });
                     await Task.Run(() => _services.UpdateHistory.Add(live[t]));
-                    var result = await _services.Winget.UpgradeWithResultAsync(t.Package, ct, line =>
+                    var result = await _services.SoftwareUpdates.UpgradeWithResultAsync(t.Package, ct, line =>
                     {
                         if (string.IsNullOrWhiteSpace(line)) return;
                         var clean = line.Trim();
@@ -371,6 +384,13 @@ public sealed partial class SoftwareUpdaterViewModel : ObservableObject, IActiva
     private void OpenPackagePage(UpgradeItemViewModel? item)
     {
         if (item is null) return;
-        Dialogs.OpenUrl("https://winget.run/pkg/" + item.Id.Replace('.', '/'));
+        var page = item.Source.ToLowerInvariant() switch
+        {
+            "chocolatey" => "https://community.chocolatey.org/packages/" + Uri.EscapeDataString(item.Id),
+            "scoop" => "https://github.com/search?q=" + Uri.EscapeDataString("repo:ScoopInstaller/Main " + item.Id),
+            "msstore" => "https://apps.microsoft.com/",
+            _ => "https://winget.run/pkg/" + item.Id.Replace('.', '/'),
+        };
+        Dialogs.OpenUrl(page);
     }
 }

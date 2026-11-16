@@ -75,9 +75,9 @@ public sealed partial class SoftwareUpdaterViewModel
     [NotifyPropertyChangedFor(nameof(CanRetrySelected))]
     private UpdateHistoryItemViewModel? _selectedHistoryItem;
 
-    /// <summary>"Try this update again" is shown only when winget can actually run it.</summary>
-    public bool CanRetrySelected => SelectedHistoryItem is { CanRetry: true } && WingetAvailable && CanEditSelection;
-    partial void OnWingetAvailableChanged(bool value) => OnPropertyChanged(nameof(CanRetrySelected));
+    /// <summary>Retry refreshes all installed update sources before offering the matching package.</summary>
+    public bool CanRetrySelected => SelectedHistoryItem is { CanRetry: true } && UpdaterAvailable && CanEditSelection;
+    partial void OnUpdaterAvailableChanged(bool value) => OnPropertyChanged(nameof(CanRetrySelected));
 
     /// <summary>Unfinished rows of the run on screen (Waiting / Updating…), shown on top of the saved history.</summary>
     private readonly Dictionary<Guid, SoftwareUpdateHistoryEntry> _liveEntries = new();
@@ -204,10 +204,10 @@ public sealed partial class SoftwareUpdaterViewModel
     [RelayCommand]
     private async Task RetryHistoryItemAsync()
     {
-        WingetAvailable = WingetService.IsAvailable;
-        if (!WingetAvailable)
+        UpdaterAvailable = _services.SoftwareUpdates.IsAvailable;
+        if (!UpdaterAvailable)
         {
-            // Same path as the Updates tab: point to App Installer instead of recording another failure.
+            // No supported manager can refresh this history item.
             SelectedTab = "Updates";
             return;
         }
